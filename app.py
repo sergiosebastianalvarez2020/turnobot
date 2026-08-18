@@ -1,7 +1,10 @@
+import os
 from collections import defaultdict, deque
+from functools import wraps
 from time import monotonic
 
-from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+from flask import Flask, render_template, render_template_string, request, jsonify, session, redirect, url_for
 
 from services.ai import ask_ai
 from database.database import get_business_settings, get_connection, init_database
@@ -16,27 +19,56 @@ from services.appointments import (
 )
 
 
+load_dotenv()
+
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "cambiar-est_secret_en_produccion")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+
 init_database()
 
 MAX_MESSAGE_LENGTH = 1_000
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CONTENT_LENGTH = 2_000
 CHAT_REQUEST_LIMIT = 20
-CHAT_REQUEST_WINDOW_SECONDS = 60
-chat_requests = defaultdict(deque)
+API_REQUEST_LIMIT = 60
+RATE_LIMIT_WINDOW_SECONDS = 60
+
+rate_limit_state = defaultdict(deque)
 
 
-def is_chat_request_allowed(client_ip):
-    """Limita consultas de chat por IP para evitar abuso de la API de IA."""
+def _is_request_allowed(key, limit):
     now = monotonic()
-    requests = chat_requests[client_ip]
-    while requests and now - requests[0] > CHAT_REQUEST_WINDOW_SECONDS:
+    requests = rate_limit_state[key]
+    while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
         requests.popleft()
-    if len(requests) >= CHAT_REQUEST_LIMIT:
+    if len(requests) >= limit:
         return False
     requests.append(now)
     return True
+
+
+def get_client_ip():
+    if request.access_route:
+        return request.access_route[-1]
+    return request.remote_addr or "unknown"
+
+
+def is_chat_request_allowed(client_ip):
+    return _is_request_allowed(f"chat:{client_ip}", CHAT_REQUEST_LIMIT)
+
+
+def is_api_request_allowed(client_ip):
+    return _is_request_allowed(f"api:{client_ip}", API_REQUEST_LIMIT)
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("admin"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
 
 
 # ============================================================
@@ -79,7 +111,37 @@ def index():
     )
 
 
+# ============================================================
+# LOGIN / LOGOUT ADMIN
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        if session.get("admin"):
+            return redirect(url_for("admin"))
+        return render_template("login.html", error=False)
+
+    password = request.form.get("password", "")
+    if password == ADMIN_PASSWORD:
+        session["admin"] = True
+        return redirect(url_for("admin"))
+
+    return render_template("login.html", error=True)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ============================================================
+# ADMIN
+# ============================================================
+
 @app.route("/admin")
+@admin_required
 def admin():
     settings = get_business_settings()
     return render_template(
@@ -103,7 +165,7 @@ def chat():
         if not isinstance(data, dict):
             return jsonify({"success": False, "error": "El formato enviado no es válido."}), 400
 
-        if not is_chat_request_allowed(request.remote_addr or "unknown"):
+        if not is_chat_request_allowed(get_client_ip()):
             return jsonify({
                 "success": False,
                 "error": "Esperá un momento antes de enviar otro mensaje."
@@ -293,6 +355,12 @@ def api_turnos():
     methods=["POST"]
 )
 def api_reservar():
+
+    if not is_api_request_allowed(get_client_ip()):
+        return jsonify({
+            "success": False,
+            "error": "Demasiadas solicitudes. Esperá un momento."
+        }), 429
 
     try:
 
@@ -491,6 +559,12 @@ def api_reservar():
 )
 def api_cancelar():
 
+    if not is_api_request_allowed(get_client_ip()):
+        return jsonify({
+            "success": False,
+            "error": "Demasiadas solicitudes. Esperá un momento."
+        }), 429
+
     try:
 
         data = request.get_json(silent=True) or {}
@@ -557,6 +631,12 @@ def api_cancelar():
     methods=["POST"]
 )
 def api_reprogramar():
+
+    if not is_api_request_allowed(get_client_ip()):
+        return jsonify({
+            "success": False,
+            "error": "Demasiadas solicitudes. Esperá un momento."
+        }), 429
 
     try:
 
