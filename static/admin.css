@@ -1,0 +1,775 @@
+/* ============================================================
+   RESET
+   ============================================================ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+
+body {
+
+    font-family:
+        Inter,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+    background: #0d0d0d;
+
+    color: #f5f5f5;
+
+    min-height: 100vh;
+}
+
+
+/* ============================================================
+   CONTENEDOR
+   ============================================================ */
+
+.admin-container {
+
+    display: flex;
+
+    min-height: 100vh;
+
+}
+
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+
+.sidebar {
+
+    width: 250px;
+
+    background: #111111;
+
+    border-right: 1px solid #252525;
+
+    padding: 28px 18px;
+
+    display: flex;
+
+    flex-direction: column;
+
+}
+
+
+.brand {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+    padding: 0 10px 35px;
+
+}
+
+
+.brand-logo {
+
+    width: 44px;
+
+    height: 44px;
+
+    border-radius: 12px;
+
+    background: #ffffff;
+
+    color: #111111;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-weight: 800;
+
+    font-size: 14px;
+
+}
+
+
+.brand h1 {
+
+    font-size: 18px;
+
+    margin-bottom: 3px;
+
+}
+
+
+.brand span {
+
+    font-size: 12px;
+
+    color: #777;
+
+}
+
+
+/* ============================================================
+   NAV
+   ============================================================ */
+
+nav {
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 6px;
+
+}
+
+
+.nav-item {
+
+    text-decoration: none;
+
+    color: #888;
+
+    padding: 13px 14px;
+
+    border-radius: 10px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 12px;
+
+    font-size: 14px;
+
+    transition: 0.2s;
+
+}
+
+
+.nav-item:hover {
+
+    background: #1c1c1c;
+
+    color: white;
+
+}
+
+
+.nav-item.active {
+
+    background: #242424;
+
+    color: white;
+
+}
+
+
+.sidebar-footer {
+
+    margin-top: auto;
+
+    padding: 15px 12px;
+
+    color: #777;
+
+    font-size: 12px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+}
+
+
+.status-dot {
+
+    width: 8px;
+
+    height: 8px;
+
+    border-radius: 50%;
+
+    background: #42d392;
+
+}
+
+
+/* ============================================================
+   CONTENIDO
+   ============================================================ */
+
+.main-content {
+
+    flex: 1;
+
+    padding: 40px;
+
+    max-width: 1500px;
+
+}
+
+
+/* ============================================================
+   TOPBAR
+   ============================================================ */
+
+.topbar {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    margin-bottom: 35px;
+
+}
+
+
+.topbar h2 {
+
+    font-size: 30px;
+
+    letter-spacing: -0.5px;
+
+}
+
+
+.topbar p {
+
+    color: #777;
+
+    margin-top: 6px;
+
+    font-size: 14px;
+
+}
+
+
+.topbar-date {
+
+    color: #999;
+
+    background: #151515;
+
+    border: 1px solid #262626;
+
+    padding: 10px 15px;
+
+    border-radius: 10px;
+
+    font-size: 13px;
+
+}
+
+
+/* ============================================================
+   ESTADÍSTICAS
+   ============================================================ */
+
+.stats {
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(3, minmax(0, 1fr));
+
+    gap: 18px;
+
+    margin-bottom: 25px;
+
+}
+
+
+.stat-card {
+
+    background: #151515;
+
+    border: 1px solid #252525;
+
+    border-radius: 16px;
+
+    padding: 22px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 15px;
+
+}
+
+
+.stat-icon {
+
+    width: 48px;
+
+    height: 48px;
+
+    background: #202020;
+
+    border-radius: 12px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 21px;
+
+}
+
+
+.stat-label {
+
+    display: block;
+
+    color: #777;
+
+    font-size: 12px;
+
+    margin-bottom: 5px;
+
+}
+
+
+.stat-card strong {
+
+    font-size: 22px;
+
+}
+
+
+.stat-card strong.online {
+
+    color: #42d392;
+
+    font-size: 17px;
+
+}
+
+
+/* ============================================================
+   TARJETA TURNOS
+   ============================================================ */
+
+.appointments-card {
+
+    background: #151515;
+
+    border: 1px solid #252525;
+
+    border-radius: 18px;
+
+    overflow: hidden;
+
+}
+
+
+.section-header {
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    padding: 24px;
+
+    border-bottom: 1px solid #252525;
+
+}
+
+
+.section-header h3 {
+
+    font-size: 17px;
+
+}
+
+
+.section-header p {
+
+    color: #777;
+
+    font-size: 13px;
+
+    margin-top: 5px;
+
+}
+
+
+.refresh-button {
+
+    border: 1px solid #333;
+
+    background: #202020;
+
+    color: white;
+
+    padding: 9px 14px;
+
+    border-radius: 9px;
+
+    cursor: pointer;
+
+    transition: 0.2s;
+
+}
+
+
+.refresh-button:hover {
+
+    background: #292929;
+
+}
+
+
+/* ============================================================
+   TABLA
+   ============================================================ */
+
+.table-container {
+
+    overflow-x: auto;
+
+}
+
+
+table {
+
+    width: 100%;
+
+    border-collapse: collapse;
+
+}
+
+
+thead {
+
+    background: #121212;
+
+}
+
+
+th {
+
+    text-align: left;
+
+    color: #666;
+
+    font-size: 11px;
+
+    text-transform: uppercase;
+
+    letter-spacing: 0.6px;
+
+    padding: 15px 22px;
+
+}
+
+
+td {
+
+    padding: 17px 22px;
+
+    border-top: 1px solid #222;
+
+    font-size: 13px;
+
+}
+
+
+tbody tr {
+
+    transition: 0.2s;
+
+}
+
+
+tbody tr:hover {
+
+    background: #191919;
+
+}
+
+
+/* ============================================================
+   CLIENTE
+   ============================================================ */
+
+.customer {
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 11px;
+
+}
+
+
+.avatar {
+
+    width: 36px;
+
+    height: 36px;
+
+    border-radius: 50%;
+
+    background: #292929;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-weight: 700;
+
+    font-size: 13px;
+
+}
+
+
+.customer strong {
+
+    display: block;
+
+}
+
+
+.customer small {
+
+    display: block;
+
+    color: #666;
+
+    margin-top: 3px;
+
+}
+
+
+/* ============================================================
+   SERVICIO
+   ============================================================ */
+
+.service {
+
+    color: #ddd;
+
+}
+
+
+/* ============================================================
+   HORA
+   ============================================================ */
+
+.time {
+
+    color: #ddd;
+
+}
+
+
+/* ============================================================
+   ESTADO
+   ============================================================ */
+
+.status {
+
+    display: inline-flex;
+
+    align-items: center;
+
+    gap: 7px;
+
+    color: #8ddbb5;
+
+    background: rgba(66, 211, 146, 0.08);
+
+    border: 1px solid rgba(66, 211, 146, 0.15);
+
+    padding: 6px 10px;
+
+    border-radius: 20px;
+
+    font-size: 11px;
+
+}
+
+
+.status-small-dot {
+
+    width: 6px;
+
+    height: 6px;
+
+    border-radius: 50%;
+
+    background: #42d392;
+
+}
+
+
+/* ============================================================
+   ESTADO VACÍO
+   ============================================================ */
+
+.empty-state {
+
+    text-align: center;
+
+    padding: 70px 20px;
+
+}
+
+
+.empty-icon {
+
+    font-size: 42px;
+
+    margin-bottom: 15px;
+
+}
+
+
+.empty-state h3 {
+
+    margin-bottom: 7px;
+
+}
+
+
+.empty-state p {
+
+    color: #666;
+
+    font-size: 13px;
+
+}
+
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 850px) {
+
+    .sidebar {
+
+        width: 70px;
+
+        padding: 20px 10px;
+
+    }
+
+
+    .brand {
+
+        justify-content: center;
+
+        padding-left: 0;
+
+        padding-right: 0;
+
+    }
+
+
+    .brand > div:last-child {
+
+        display: none;
+
+    }
+
+
+    .nav-item {
+
+        justify-content: center;
+
+        font-size: 0;
+
+    }
+
+
+    .nav-item span {
+
+        font-size: 18px;
+
+    }
+
+
+    .sidebar-footer {
+
+        justify-content: center;
+
+        font-size: 0;
+
+    }
+
+
+    .main-content {
+
+        padding: 25px 18px;
+
+    }
+
+
+    .stats {
+
+        grid-template-columns: 1fr;
+
+    }
+
+}
+
+
+@media (max-width: 600px) {
+
+    .topbar {
+
+        align-items: flex-start;
+
+        flex-direction: column;
+
+        gap: 15px;
+
+    }
+
+
+    .topbar h2 {
+
+        font-size: 25px;
+
+    }
+
+
+    .topbar-date {
+
+        width: 100%;
+
+    }
+
+
+    .section-header {
+
+        align-items: flex-start;
+
+        gap: 15px;
+
+        flex-direction: column;
+
+    }
+
+}

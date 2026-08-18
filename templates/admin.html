@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Administración</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    EC
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="/admin" class="nav-item active">
+                    <span>📅</span>
+                    Turnos
+                </a>
+
+                <a href="/" class="nav-item">
+                    <span>💬</span>
+                    Recepcionista
+                </a>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <div>
+
+                    <h2>Turnos</h2>
+
+                    <p>
+                        Gestioná las reservas de {{ business_name }}
+                    </p>
+
+                </div>
+
+
+                <div class="topbar-date">
+
+                    📅
+
+                    <span id="current-date"></span>
+
+                </div>
+
+            </header>
+
+
+
+            <!-- =================================================
+                 ESTADÍSTICAS
+                 ================================================= -->
+
+            <section class="stats">
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        📅
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            Total de turnos
+                        </span>
+
+                        <strong>
+                            {{ appointments|length }}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ✂️
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            Confirmados
+                        </span>
+
+                        <strong>
+                            {{ appointments|length }}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        🟢
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            Estado
+                        </span>
+
+                        <strong class="online">
+                            Online
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+            </section>
+
+
+
+            <!-- =================================================
+                 TURNOS
+                 ================================================= -->
+
+            <section class="appointments-card">
+
+
+                <div class="section-header">
+
+                    <div>
+
+                        <h3>
+                            Próximos turnos
+                        </h3>
+
+                        <p>
+                            Reservas registradas en el sistema
+                        </p>
+
+                    </div>
+
+
+                    <button
+                        class="refresh-button"
+                        onclick="location.reload()">
+
+                        ↻ Actualizar
+
+                    </button>
+
+                </div>
+
+
+
+                {% if appointments %}
+
+
+                <div class="table-container">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+
+                                <th>
+                                    Cliente
+                                </th>
+
+                                <th>
+                                    Servicio
+                                </th>
+
+                                <th>
+                                    Fecha
+                                </th>
+
+                                <th>
+                                    Horario
+                                </th>
+
+                                <th>
+                                    Estado
+                                </th>
+
+                            </tr>
+
+                        </thead>
+
+
+                        <tbody>
+
+
+                            {% for appointment in appointments %}
+
+                            <tr>
+
+                                <td>
+
+                                    <div class="customer">
+
+                                        <div class="avatar">
+
+                                            {{ appointment.customer_name[0]|upper }}
+
+                                        </div>
+
+                                        <div>
+
+                                            <strong>
+                                                {{ appointment.customer_name }}
+                                            </strong>
+
+                                            {% if appointment.phone %}
+
+                                            <small>
+                                                {{ appointment.phone }}
+                                            </small>
+
+                                            {% endif %}
+
+                                        </div>
+
+                                    </div>
+
+                                </td>
+
+
+                                <td>
+
+                                    <span class="service">
+
+                                        {{ appointment.service }}
+
+                                    </span>
+
+                                </td>
+
+
+                                <td>
+
+                                    <strong>
+                                        {{ appointment.appointment_date }}
+                                    </strong>
+
+                                </td>
+
+
+                                <td>
+
+                                    <span class="time">
+
+                                        🕐
+                                        {{ appointment.appointment_time }}
+
+                                    </span>
+
+                                </td>
+
+
+                                <td>
+
+                                    <span class="status">
+
+                                        <span class="status-small-dot"></span>
+
+                                        Confirmado
+
+                                    </span>
+
+                                </td>
+
+                            </tr>
+
+                            {% endfor %}
+
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+
+                {% else %}
+
+
+                <div class="empty-state">
+
+                    <div class="empty-icon">
+                        📅
+                    </div>
+
+                    <h3>
+                        No hay turnos todavía
+                    </h3>
+
+                    <p>
+                        Cuando un cliente reserve un turno,
+                        aparecerá aquí.
+                    </p>
+
+                </div>
+
+
+                {% endif %}
+
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+
+    <!-- =========================================================
+         JAVASCRIPT
+         ========================================================= -->
+
+    <script>
+
+        const dateElement =
+            document.getElementById("current-date");
+
+
+        const now = new Date();
+
+
+        dateElement.textContent =
+            now.toLocaleDateString(
+                "es-AR",
+                {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric"
+                }
+            );
+
+
+    </script>
+
+
+</body>
+
+</html>

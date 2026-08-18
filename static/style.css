@@ -1,0 +1,807 @@
+/* ============================================================
+   EL CORTE — ESTILO GENERAL
+   ============================================================ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg: #090909;
+    --panel: #111111;
+    --panel-2: #171717;
+    --panel-3: #1d1d1d;
+
+    --gold: #f4d35e;
+    --gold-soft: #d8bd50;
+
+    --text: #f5f5f5;
+    --muted: #929292;
+    --border: rgba(255,255,255,.09);
+
+    --green: #39d98a;
+
+    --radius: 18px;
+}
+
+body {
+    font-family: "DM Sans", Arial, sans-serif;
+    background:
+        radial-gradient(
+            circle at 50% -20%,
+            rgba(244,211,94,.08),
+            transparent 45%
+        ),
+        var(--bg);
+
+    color: var(--text);
+
+    min-height: 100vh;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    padding: 20px;
+}
+
+
+/* ============================================================
+   CONTENEDOR
+   ============================================================ */
+
+.app-shell {
+    width: 100%;
+    max-width: 760px;
+    height: min(900px, calc(100vh - 40px));
+
+    display: flex;
+    flex-direction: column;
+
+    background: rgba(14,14,14,.96);
+
+    border: 1px solid var(--border);
+
+    border-radius: 26px;
+
+    overflow: hidden;
+
+    box-shadow:
+        0 30px 80px rgba(0,0,0,.55),
+        0 0 0 1px rgba(255,255,255,.02);
+}
+
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+
+.chat-header {
+    min-height: 90px;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 18px 24px;
+
+    background: rgba(8,8,8,.96);
+
+    border-bottom: 1px solid var(--border);
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.brand-mark {
+    width: 54px;
+    height: 54px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 16px;
+
+    background: var(--gold);
+
+    color: #111;
+
+    font-family: "Playfair Display", serif;
+    font-size: 20px;
+    font-weight: 700;
+
+    box-shadow:
+        0 8px 25px rgba(244,211,94,.16);
+}
+
+.brand-info h1 {
+    font-family: "Playfair Display", serif;
+    font-size: 24px;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+
+    margin-top: 3px;
+
+    color: var(--muted);
+
+    font-size: 12px;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+
+    border-radius: 50%;
+
+    background: var(--green);
+
+    box-shadow: 0 0 10px rgba(57,217,138,.7);
+}
+
+.header-badge {
+    color: var(--gold);
+
+    font-size: 11px;
+    font-weight: 700;
+
+    letter-spacing: 2px;
+}
+
+
+/* ============================================================
+   CHAT
+   ============================================================ */
+
+.chat {
+    flex: 1;
+
+    padding: 30px 26px;
+
+    overflow-y: auto;
+
+    scrollbar-width: thin;
+    scrollbar-color: #3b3b3b transparent;
+}
+
+.chat::-webkit-scrollbar {
+    width: 6px;
+}
+
+.chat::-webkit-scrollbar-thumb {
+    background: #3b3b3b;
+    border-radius: 10px;
+}
+
+
+/* ============================================================
+   BIENVENIDA
+   ============================================================ */
+
+.welcome {
+    text-align: center;
+
+    padding: 18px 20px 35px;
+}
+
+.welcome-icon {
+    color: var(--gold);
+
+    font-size: 25px;
+
+    margin-bottom: 10px;
+}
+
+.welcome-label {
+    color: var(--gold);
+
+    font-size: 10px;
+    font-weight: 700;
+
+    letter-spacing: 2px;
+
+    margin-bottom: 12px;
+}
+
+.welcome h2 {
+    font-family: "Playfair Display", serif;
+
+    font-size: 30px;
+
+    line-height: 1.15;
+
+    margin-bottom: 12px;
+}
+
+.welcome-text {
+    max-width: 460px;
+
+    margin: auto;
+
+    color: var(--muted);
+
+    font-size: 14px;
+
+    line-height: 1.6;
+}
+
+
+/* ============================================================
+   MENSAJES
+   ============================================================ */
+
+.message {
+    display: flex;
+
+    gap: 10px;
+
+    margin-bottom: 18px;
+}
+
+.message.bot {
+    justify-content: flex-start;
+}
+
+.message.user {
+    justify-content: flex-end;
+}
+
+.avatar {
+    flex-shrink: 0;
+
+    width: 34px;
+    height: 34px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 11px;
+
+    background: var(--gold);
+
+    color: #111;
+
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.message-content {
+    max-width: 82%;
+}
+
+.message-name {
+    display: block;
+
+    margin: 0 0 6px 4px;
+
+    color: var(--muted);
+
+    font-size: 11px;
+}
+
+.bubble {
+    padding: 15px 17px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 17px;
+
+    background: var(--panel-2);
+
+    color: var(--text);
+
+    line-height: 1.55;
+
+    font-size: 14px;
+
+    white-space: pre-wrap;
+
+    overflow: hidden;
+}
+
+.message.bot .bubble {
+    border-bottom-left-radius: 5px;
+}
+
+.message.user .bubble {
+    background: var(--gold);
+
+    color: #171717;
+
+    border: none;
+
+    border-bottom-right-radius: 5px;
+}
+
+
+/* ============================================================
+   FORMULARIOS DENTRO DEL CHAT
+   ============================================================ */
+
+/*
+   Esto es importante para solucionar exactamente
+   lo que aparece en tu captura.
+*/
+
+.bubble input,
+.message-content input {
+    width: 100%;
+
+    height: 44px;
+
+    margin-top: 12px;
+
+    padding: 0 14px;
+
+    border: 1px solid rgba(255,255,255,.12);
+
+    border-radius: 12px;
+
+    outline: none;
+
+    background: #0d0d0d;
+
+    color: white;
+
+    font-family: inherit;
+
+    font-size: 14px;
+
+    transition: .2s;
+}
+
+.bubble input:focus,
+.message-content input:focus {
+    border-color: var(--gold);
+
+    box-shadow:
+        0 0 0 3px rgba(244,211,94,.08);
+}
+
+
+/* Todos los botones generados dentro de los mensajes */
+
+.bubble button,
+.message-content button {
+    min-height: 40px;
+
+    margin-top: 10px;
+    margin-right: 6px;
+
+    padding: 0 15px;
+
+    border: 1px solid rgba(244,211,94,.3);
+
+    border-radius: 10px;
+
+    background: rgba(244,211,94,.1);
+
+    color: var(--gold);
+
+    font-family: inherit;
+
+    font-size: 12px;
+    font-weight: 600;
+
+    cursor: pointer;
+
+    transition: .2s;
+}
+
+.bubble button:hover,
+.message-content button:hover {
+    background: var(--gold);
+
+    color: #111;
+
+    transform: translateY(-1px);
+}
+
+
+/* ============================================================
+   TARJETAS DE TURNOS
+   ============================================================ */
+
+/*
+   Funciona también si tu JS genera los turnos
+   dentro de una burbuja.
+*/
+
+.appointment-card {
+    margin-top: 12px;
+
+    padding: 16px;
+
+    background:
+        linear-gradient(
+            145deg,
+            rgba(255,255,255,.055),
+            rgba(255,255,255,.025)
+        );
+
+    border: 1px solid rgba(255,255,255,.1);
+
+    border-radius: 16px;
+}
+
+.appointment-card:hover {
+    border-color: rgba(244,211,94,.3);
+}
+
+.appointment-title {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+
+    font-size: 15px;
+    font-weight: 700;
+
+    margin-bottom: 14px;
+}
+
+.appointment-title-icon {
+    width: 32px;
+    height: 32px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 10px;
+
+    background: rgba(244,211,94,.12);
+
+    color: var(--gold);
+}
+
+.appointment-info {
+    display: flex;
+    flex-direction: column;
+
+    gap: 8px;
+
+    color: #ddd;
+
+    font-size: 13px;
+}
+
+.appointment-info-row {
+    display: flex;
+    align-items: center;
+
+    gap: 9px;
+}
+
+.appointment-info-row span:first-child {
+    color: var(--gold);
+}
+
+.appointment-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    width: fit-content;
+
+    margin-top: 14px;
+
+    padding: 6px 10px;
+
+    border-radius: 20px;
+
+    background: rgba(57,217,138,.1);
+
+    color: var(--green);
+
+    font-size: 10px;
+    font-weight: 700;
+
+    text-transform: uppercase;
+
+    letter-spacing: .5px;
+}
+
+.appointment-status::before {
+    content: "";
+
+    width: 6px;
+    height: 6px;
+
+    border-radius: 50%;
+
+    background: currentColor;
+}
+
+.appointment-actions {
+    display: flex;
+
+    gap: 8px;
+
+    margin-top: 15px;
+}
+
+.appointment-actions button {
+    flex: 1;
+
+    min-height: 38px;
+
+    margin: 0;
+
+    border-radius: 10px;
+}
+
+.appointment-actions .cancel {
+    border-color: rgba(255,90,90,.25);
+
+    background: rgba(255,90,90,.07);
+
+    color: #ff8585;
+}
+
+.appointment-actions .cancel:hover {
+    background: #d94c4c;
+
+    color: white;
+}
+
+.appointment-actions .reschedule {
+    background: rgba(244,211,94,.12);
+
+    color: var(--gold);
+}
+
+
+/* ============================================================
+   QUICK ACTIONS
+   ============================================================ */
+
+.quick-actions {
+    display: grid;
+
+    grid-template-columns: repeat(4, 1fr);
+
+    gap: 9px;
+
+    padding: 12px 20px;
+
+    border-top: 1px solid var(--border);
+
+    background: rgba(10,10,10,.95);
+}
+
+.quick-action {
+    min-height: 58px;
+
+    border: 1px solid rgba(255,255,255,.09);
+
+    border-radius: 13px;
+
+    background: var(--panel-2);
+
+    color: #ddd;
+
+    cursor: pointer;
+
+    display: flex;
+
+    flex-direction: column;
+
+    align-items: center;
+
+    justify-content: center;
+
+    gap: 4px;
+
+    font-family: inherit;
+
+    font-size: 11px;
+    font-weight: 600;
+
+    transition: .2s;
+}
+
+.quick-action:hover {
+    border-color: rgba(244,211,94,.35);
+
+    background: rgba(244,211,94,.07);
+
+    color: var(--gold);
+
+    transform: translateY(-2px);
+}
+
+.quick-icon {
+    color: var(--gold);
+
+    font-size: 17px;
+}
+
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+
+.input-area {
+    padding: 12px 20px 15px;
+
+    background: #090909;
+}
+
+.input-wrapper {
+    display: flex;
+
+    align-items: center;
+
+    gap: 9px;
+
+    padding: 6px;
+
+    border: 1px solid rgba(255,255,255,.1);
+
+    border-radius: 16px;
+
+    background: #151515;
+
+    transition: .2s;
+}
+
+.input-wrapper:focus-within {
+    border-color: rgba(244,211,94,.5);
+
+    box-shadow:
+        0 0 0 3px rgba(244,211,94,.06);
+}
+
+.input-area input {
+    flex: 1;
+
+    min-width: 0;
+
+    height: 46px;
+
+    padding: 0 12px;
+
+    border: none;
+
+    outline: none;
+
+    background: transparent;
+
+    color: white;
+
+    font-family: inherit;
+
+    font-size: 14px;
+}
+
+.input-area input::placeholder {
+    color: #777;
+}
+
+.send-button {
+    width: 46px;
+    height: 46px;
+
+    flex-shrink: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border: none;
+
+    border-radius: 13px;
+
+    background: var(--gold);
+
+    color: #111;
+
+    cursor: pointer;
+
+    transition: .2s;
+}
+
+.send-button svg {
+    width: 19px;
+    height: 19px;
+}
+
+.send-button:hover {
+    transform: scale(1.04);
+
+    box-shadow:
+        0 5px 20px rgba(244,211,94,.2);
+}
+
+.send-button:disabled {
+    opacity: .5;
+
+    cursor: not-allowed;
+
+    transform: none;
+}
+
+.privacy-note {
+    text-align: center;
+
+    margin-top: 8px;
+
+    color: #666;
+
+    font-size: 10px;
+}
+
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 600px) {
+
+    body {
+        padding: 0;
+    }
+
+    .app-shell {
+        height: 100vh;
+
+        max-width: none;
+
+        border-radius: 0;
+    }
+
+    .chat-header {
+        padding: 15px 17px;
+    }
+
+    .brand-mark {
+        width: 46px;
+        height: 46px;
+    }
+
+    .brand-info h1 {
+        font-size: 21px;
+    }
+
+    .header-badge {
+        font-size: 9px;
+    }
+
+    .chat {
+        padding: 20px 15px;
+    }
+
+    .welcome h2 {
+        font-size: 25px;
+    }
+
+    .message-content {
+        max-width: 86%;
+    }
+
+    .quick-actions {
+        padding: 9px 10px;
+
+        gap: 6px;
+    }
+
+    .quick-action {
+        min-height: 52px;
+
+        font-size: 9px;
+    }
+
+    .input-area {
+        padding: 9px 10px 12px;
+    }
+}

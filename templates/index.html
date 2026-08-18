@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} | Barbería</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+        rel="stylesheet"
+    >
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+</head>
+
+<body>
+
+    <main class="app-shell">
+
+        <!-- ==================================================
+             HEADER
+        =================================================== -->
+
+        <header class="chat-header">
+
+            <div class="brand">
+
+                <div class="brand-mark">
+                    <span>EC</span>
+                </div>
+
+                <div class="brand-info">
+
+                    <h1>{{ business_name }}</h1>
+
+                    <div class="status">
+                        <span class="status-dot"></span>
+                        <span>Recepción online</span>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="header-badge">
+                BARBERÍA
+            </div>
+
+        </header>
+
+
+        <!-- ==================================================
+             CHAT
+        =================================================== -->
+
+        <section
+            id="chat"
+            class="chat"
+            aria-live="polite"
+        >
+
+            <div class="welcome">
+
+                <div class="welcome-icon">
+                    ✦
+                </div>
+
+                <p class="welcome-label">
+                    BIENVENIDO A {{ business_name|upper }}
+                </p>
+
+                <h2>
+                    Tu próximo corte<br>
+                    empieza acá.
+                </h2>
+
+                <p class="welcome-text">
+                    Soy el recepcionista virtual de {{ business_name }}.
+                    Puedo ayudarte con servicios, horarios y turnos.
+                </p>
+
+            </div>
+
+
+            <div class="message bot initial-message">
+
+                <div class="avatar">
+                    EC
+                </div>
+
+                <div class="message-content">
+
+                    <span class="message-name">
+                        {{ business_name }}
+                    </span>
+
+                    <div class="bubble">
+
+                        ¡Hola! 👋
+
+                        <br><br>
+
+                        ¿En qué puedo ayudarte hoy?
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- ==================================================
+             QUICK ACTIONS
+        =================================================== -->
+
+        <div class="quick-actions">
+
+            <button
+                class="quick-action"
+                data-message="¿Qué servicios tienen y cuánto cuestan?"
+            >
+                <span class="quick-icon">✂</span>
+                <span>Servicios</span>
+            </button>
+
+            <button
+                class="quick-action"
+                data-message="¿Qué horarios hay disponibles?"
+            >
+                <span class="quick-icon">◷</span>
+                <span>Disponibilidad</span>
+            </button>
+
+            <button
+                class="quick-action"
+                data-message="Quiero reservar un turno"
+            >
+                <span class="quick-icon">＋</span>
+                <span>Reservar</span>
+            </button>
+
+            <button
+                class="quick-action"
+                data-message="Quiero consultar mis turnos"
+            >
+                <span class="quick-icon">☰</span>
+                <span>Mis turnos</span>
+            </button>
+
+        </div>
+
+
+        <!-- ==================================================
+             INPUT
+        =================================================== -->
+
+        <footer class="input-area">
+
+            <div class="input-wrapper">
+
+                <input
+                    type="text"
+                    id="message"
+                    placeholder="Escribí tu mensaje..."
+                    autocomplete="off"
+                    aria-label="Mensaje"
+                >
+
+                <button
+                    id="send"
+                    class="send-button"
+                    aria-label="Enviar mensaje"
+                >
+
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+                        <path
+                            d="M22 2L11 13"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+
+                        <path
+                            d="M22 2L15 22L11 13L2 9L22 2Z"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                    </svg>
+
+                </button>
+
+            </div>
+
+            <p class="privacy-note">
+                Atención automática · {{ business_name }}
+            </p>
+
+        </footer>
+
+    </main>
+
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+
+</body>
+
+</html>
