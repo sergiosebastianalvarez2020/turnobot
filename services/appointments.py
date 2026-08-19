@@ -26,11 +26,9 @@ def validate_phone(phone):
     if not phone or not isinstance(phone, str):
         return False
     
-    # Remover espacios en blanco
-    phone_clean = phone.strip()
-    
-    # Verificar que solo contenga dígitos
-    if not phone_clean.isdigit():
+    phone_clean = normalize_phone(phone)
+
+    if not phone_clean:
         return False
     
     # Verificar que tenga al menos 7 dígitos
@@ -38,6 +36,16 @@ def validate_phone(phone):
         return False
     
     return True
+
+
+def normalize_phone(phone):
+    """Normaliza teléfonos para aceptar espacios, guiones y prefijo +."""
+    if not phone or not isinstance(phone, str):
+        return ""
+    phone_clean = re.sub(r"[\s()-]", "", phone.strip())
+    if phone_clean.startswith("+"):
+        phone_clean = phone_clean[1:]
+    return phone_clean if phone_clean.isdigit() else ""
 
 
 def validate_customer_name(customer_name):
@@ -170,6 +178,20 @@ def validate_appointment_date(date):
     }
 
 
+def validate_appointment_time(date, time):
+    """Valida HH:MM y evita reservar una hora pasada del día actual."""
+    try:
+        parsed_time = datetime.strptime(time, "%H:%M").time()
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False, "invalid_time"
+
+    now = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+    if appointment_date == now.date() and parsed_time <= now.time().replace(second=0, microsecond=0):
+        return False, "past_time"
+    return True, None
+
+
 # ============================================================
 # CONSULTAR DISPONIBILIDAD
 # ============================================================
@@ -289,6 +311,13 @@ def create_appointment(
             "reason": "invalid_phone",
         }
 
+    if service not in {row["name"] for row in get_active_services()}:
+        return {
+            "success": False,
+            "appointment_id": None,
+            "reason": "invalid_service",
+        }
+
     # --------------------------------------------------------
     # VALIDAR FECHA
     # --------------------------------------------------------
@@ -307,6 +336,14 @@ def create_appointment(
     # --------------------------------------------------------
     # VALIDAR HORARIO
     # --------------------------------------------------------
+
+    valid_time, time_reason = validate_appointment_time(appointment_date, appointment_time)
+    if not valid_time:
+        return {
+            "success": False,
+            "appointment_id": None,
+            "reason": time_reason,
+        }
 
     if appointment_time not in get_available_slots(appointment_date):
         return {
@@ -360,7 +397,7 @@ def create_appointment(
                 (customer_name, phone, service, appointment_date, appointment_time)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (customer_name, phone, service, appointment_date, appointment_time),
+                (customer_name, normalize_phone(phone), service, appointment_date, appointment_time),
             )
 
             connection.commit()
@@ -386,7 +423,7 @@ def create_appointment(
 # OBTENER TODOS LOS TURNOS CONFIRMADOS
 # ============================================================
 
-def get_appointments():
+def get_appointments(status="confirmed", appointment_date=None):
     """
     Devuelve todos los turnos confirmados.
     """
@@ -399,10 +436,12 @@ def get_appointments():
             """
             SELECT *
             FROM appointments
-            WHERE status = 'confirmed'
-            ORDER BY appointment_date, appointment_time
-            """
-        ).fetchall()
+                        WHERE (? IS NULL OR status = ?)
+                            AND (? IS NULL OR appointment_date = ?)
+                        ORDER BY appointment_date, appointment_time
+                        """,
+                        (status, status, appointment_date, appointment_date),
+                ).fetchall()
 
 
         return [
@@ -413,6 +452,23 @@ def get_appointments():
 
     finally:
 
+        connection.close()
+
+
+def get_appointment_counts():
+    """Devuelve métricas agrupadas por estado para el panel administrativo."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT status, COUNT(*) AS total FROM appointments GROUP BY status"
+        ).fetchall()
+        counts = {row["status"]: row["total"] for row in rows}
+        return {
+            "total": sum(counts.values()),
+            "confirmed": counts.get("confirmed", 0),
+            "cancelled": counts.get("cancelled", 0),
+        }
+    finally:
         connection.close()
 
 
@@ -450,7 +506,7 @@ def get_customer_appointments(
                 """,
                 (
                     customer_name,
-                    phone,
+                    normalize_phone(phone),
                 ),
             ).fetchall()
 
@@ -542,7 +598,7 @@ def cancel_appointment(appointment_id, phone):
                 AND phone = ?
                 AND status = 'confirmed'
                 """,
-                (appointment_id_int, phone),
+                (appointment_id_int, normalize_phone(phone)),
             ).fetchone()
 
             if existing is None:
@@ -561,7 +617,7 @@ def cancel_appointment(appointment_id, phone):
                 AND phone = ?
                 AND status = 'confirmed'
                 """,
-                (appointment_id_int, phone),
+                (appointment_id_int, normalize_phone(phone)),
             )
 
             connection.commit()
@@ -651,7 +707,7 @@ def reschedule_appointment(
                 AND phone = ?
                 AND status = 'confirmed'
                 """,
-                (appointment_id_int, phone),
+                (appointment_id_int, normalize_phone(phone)),
             ).fetchone()
 
             if appointment is None:
@@ -726,7 +782,7 @@ def reschedule_appointment(
                 SET appointment_date = ?, appointment_time = ?
                 WHERE id = ? AND phone = ? AND status = 'confirmed'
                 """,
-                (new_date, new_time, appointment_id_int, phone),
+                (new_date, new_time, appointment_id_int, normalize_phone(phone)),
             )
 
             connection.commit()

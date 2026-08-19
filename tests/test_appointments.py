@@ -21,7 +21,7 @@ class TestReservaDisponible(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -48,7 +48,7 @@ class TestReservaOcupada(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -127,7 +127,7 @@ class TestCancelacionTelefonoCorrecto(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -154,7 +154,7 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -181,7 +181,7 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -215,7 +215,7 @@ class TestDobleReservaSimultanea(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date()
+        date = datetime.now().date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()

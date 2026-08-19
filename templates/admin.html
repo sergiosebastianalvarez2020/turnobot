@@ -52,10 +52,13 @@
                     Recepcionista
                 </a>
 
-                <a href="/logout" class="nav-item">
+                <form method="POST" action="/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
                     <span>🚪</span>
                     Cerrar sesión
-                </a>
+                    </button>
+                </form>
 
             </nav>
 
@@ -126,7 +129,7 @@
                         </span>
 
                         <strong>
-                            {{ appointments|length }}
+                            {{ counts.total }}
                         </strong>
 
                     </div>
@@ -148,7 +151,7 @@
                         </span>
 
                         <strong>
-                            {{ appointments|length }}
+                            {{ counts.confirmed }}
                         </strong>
 
                     </div>
@@ -170,7 +173,7 @@
                         </span>
 
                         <strong class="online">
-                            Online
+                            {{ counts.cancelled }} cancelados
                         </strong>
 
                     </div>
@@ -213,6 +216,22 @@
                     </button>
 
                 </div>
+
+                <form method="GET" action="/admin" class="filters">
+                    <label>
+                        Estado
+                        <select name="status">
+                            <option value="confirmed" {% if selected_status == "confirmed" %}selected{% endif %}>Confirmados</option>
+                            <option value="cancelled" {% if selected_status == "cancelled" %}selected{% endif %}>Cancelados</option>
+                        </select>
+                    </label>
+                    <label>
+                        Fecha
+                        <input type="date" name="fecha" value="{{ selected_date }}">
+                    </label>
+                    <button type="submit" class="refresh-button">Filtrar</button>
+                    <a href="/admin" class="refresh-button">Limpiar</a>
+                </form>
 
 
 
@@ -324,11 +343,11 @@
 
                                 <td>
 
-                                    <span class="status">
+                                    <span class="status {% if appointment.status == 'cancelled' %}cancelled{% endif %}">
 
                                         <span class="status-small-dot"></span>
 
-                                        Confirmado
+                                        {{ "Cancelado" if appointment.status == "cancelled" else "Confirmado" }}
 
                                     </span>
 

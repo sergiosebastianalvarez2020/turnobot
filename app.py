@@ -1,10 +1,13 @@
 import os
+import logging
+import secrets
 from collections import defaultdict, deque
 from functools import wraps
 from time import monotonic
 
 from dotenv import load_dotenv
 from flask import Flask, render_template, render_template_string, request, jsonify, session, redirect, url_for
+from werkzeug.security import check_password_hash
 
 from services.ai import ask_ai
 from database.database import get_business_settings, get_connection, init_database
@@ -16,14 +19,28 @@ from services.appointments import (
     cancel_appointment,
     reschedule_appointment,
     get_appointments,
+    get_appointment_counts,
 )
 
 
 load_dotenv()
 
+logger = logging.getLogger("el_corte.web")
+
+if os.getenv("FLASK_ENV") == "production" and not os.getenv("SECRET_KEY"):
+    raise RuntimeError("SECRET_KEY es obligatoria en producción")
+
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "cambiar-est_secret_en_produccion")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+app.secret_key = os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+if os.getenv("FLASK_ENV") == "production" and not ADMIN_PASSWORD_HASH:
+    raise RuntimeError("ADMIN_PASSWORD_HASH es obligatoria en producción")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
+)
 
 init_database()
 
@@ -35,6 +52,27 @@ API_REQUEST_LIMIT = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
 
 rate_limit_state = defaultdict(deque)
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
+
+def csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return session["csrf_token"]
+
+
+def valid_csrf_token(value):
+    return bool(value) and secrets.compare_digest(value, session.get("csrf_token", ""))
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
 
 
 def _is_request_allowed(key, limit):
@@ -95,6 +133,7 @@ def get_active_services():
             }
         return services
     except Exception:
+        logger.exception("Error obteniendo servicios activos")
         return {}
 
 
@@ -122,16 +161,27 @@ def login():
             return redirect(url_for("admin"))
         return render_template("login.html", error=False)
 
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
+
     password = request.form.get("password", "")
-    if password == ADMIN_PASSWORD:
+    authenticated = bool(
+        ADMIN_PASSWORD_HASH and check_password_hash(ADMIN_PASSWORD_HASH, password)
+    )
+    if not authenticated and ADMIN_PASSWORD:
+        authenticated = secrets.compare_digest(password, ADMIN_PASSWORD)
+
+    if authenticated:
         session["admin"] = True
         return redirect(url_for("admin"))
 
     return render_template("login.html", error=True)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
     session.clear()
     return redirect(url_for("login"))
 
@@ -144,9 +194,16 @@ def logout():
 @admin_required
 def admin():
     settings = get_business_settings()
+    status = request.args.get("status") or "confirmed"
+    if status not in {"confirmed", "cancelled"}:
+        status = "confirmed"
+    appointment_date = request.args.get("fecha") or None
     return render_template(
         "admin.html",
-        appointments=get_appointments(),
+        appointments=get_appointments(status=status, appointment_date=appointment_date),
+        counts=get_appointment_counts(),
+        selected_status=status,
+        selected_date=appointment_date or "",
         business_name=settings["business_name"] if settings else "Mi negocio",
     )
 
@@ -222,8 +279,7 @@ def chat():
 
     except Exception as error:
 
-        print("ERROR EN /chat:")
-        print(error)
+        logger.exception("Error procesando /chat")
 
         return jsonify({
             "success": False,
@@ -267,6 +323,9 @@ def api_servicios():
 )
 def api_disponibilidad(fecha):
 
+    if not is_api_request_allowed(get_client_ip()):
+        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+
     try:
 
         horarios = get_available_times(fecha)
@@ -280,8 +339,7 @@ def api_disponibilidad(fecha):
 
     except Exception as error:
 
-        print("ERROR DISPONIBILIDAD:")
-        print(error)
+        logger.exception("Error consultando disponibilidad")
 
         return jsonify({
             "success": False,
@@ -298,6 +356,9 @@ def api_disponibilidad(fecha):
     methods=["GET"]
 )
 def api_turnos():
+
+    if not is_api_request_allowed(get_client_ip()):
+        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     nombre = request.args.get(
         "nombre",
@@ -337,8 +398,7 @@ def api_turnos():
 
     except Exception as error:
 
-        print("ERROR BUSCANDO TURNOS:")
-        print(error)
+        logger.exception("Error buscando turnos")
 
         return jsonify({
             "success": False,
@@ -525,7 +585,21 @@ def api_reservar():
                 ),
 
                 "message": "El turno fue reservado correctamente."
-            })
+            }), 400
+
+        if resultado.get("reason") == "past_time":
+            return jsonify({
+                "success": False,
+                "reason": "past_time",
+                "error": "Ese horario ya pasó.",
+            }), 400
+
+        if resultado.get("reason") == "invalid_service":
+            return jsonify({
+                "success": False,
+                "reason": "invalid_service",
+                "error": "El servicio seleccionado no está disponible.",
+            }), 400
 
 
         # ----------------------------------------------------
@@ -540,8 +614,7 @@ def api_reservar():
 
     except Exception as error:
 
-        print("ERROR RESERVANDO:")
-        print(error)
+        logger.exception("Error reservando turno")
 
         return jsonify({
             "success": False,
@@ -598,7 +671,7 @@ def api_cancelar():
             return jsonify({
                 "success": False,
                 "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente."
-            })
+            }), 400
 
 
         return jsonify({
@@ -613,8 +686,7 @@ def api_cancelar():
 
     except Exception as error:
 
-        print("ERROR CANCELANDO:")
-        print(error)
+        logger.exception("Error cancelando turno")
 
         return jsonify({
             "success": False,
@@ -734,7 +806,14 @@ def api_reprogramar():
                 "reason": "invalid_time",
 
                 "error": "El horario seleccionado no es válido."
-            })
+            }), 400
+
+        if resultado.get("reason") == "past_time":
+            return jsonify({
+                "success": False,
+                "reason": "past_time",
+                "error": "Ese horario ya pasó.",
+            }), 400
                 # ----------------------------------------------------
         # FECHA PASADA
         # ----------------------------------------------------
@@ -799,8 +878,7 @@ def api_reprogramar():
 
     except Exception as error:
 
-        print("ERROR REPROGRAMANDO:")
-        print(error)
+        logger.exception("Error reprogramando turno")
 
         return jsonify({
 

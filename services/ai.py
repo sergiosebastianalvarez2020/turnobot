@@ -40,16 +40,16 @@ logger = logging.getLogger("el_corte")
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not API_KEY:
-    raise ValueError(
-        "No se encontró GEMINI_API_KEY en el archivo .env"
-    )
+client = None
 
 
-client = genai.Client(
-    api_key=API_KEY
-)
+def get_gemini_client():
+    global client
+    if client is None:
+        if not API_KEY:
+            raise RuntimeError("GEMINI_API_KEY no está configurada")
+        client = genai.Client(api_key=API_KEY)
+    return client
 
 
 MODEL = "gemini-3.6-flash"
@@ -537,7 +537,7 @@ def execute_tool(name, arguments):
 
             return {
                 "success": False,
-                "error": str(error),
+                "error": "No se pudo consultar la disponibilidad.",
             }
 
 
@@ -600,7 +600,7 @@ def execute_tool(name, arguments):
 
             return {
                 "success": False,
-                "error": str(error),
+                "error": "No se pudo crear la reserva.",
             }
 
 
@@ -637,7 +637,7 @@ def execute_tool(name, arguments):
 
             return {
                 "success": False,
-                "error": str(error),
+                "error": "No se pudieron consultar los turnos.",
             }
 
 
@@ -692,7 +692,7 @@ def execute_tool(name, arguments):
 
             return {
                 "success": False,
-                "error": str(error),
+                "error": "No se pudo cancelar el turno.",
             }
 
 
@@ -813,7 +813,7 @@ def execute_tool(name, arguments):
 
             return {
                 "success": False,
-                "error": str(error),
+                "error": "No se pudo reprogramar el turno.",
             }
 
 
@@ -986,9 +986,11 @@ def format_reservation_error(
     messages_by_reason = {
         "occupied": "Ese horario ya está ocupado. Elegí otro horario disponible.",
         "past_date": "No podés reservar un turno para una fecha que ya pasó.",
+        "past_time": "Ese horario ya pasó. Elegí otro horario disponible.",
         "closed_day": "Ese día la barbería está cerrada.",
         "invalid_date": "La fecha indicada no es válida.",
         "invalid_time": "Ese horario no está disponible para la fecha elegida.",
+        "invalid_service": "El servicio indicado no está disponible.",
     }
 
     if reason in messages_by_reason:
@@ -1286,7 +1288,7 @@ días de la semana y fechas relativas.
 
     try:
 
-        response = client.models.generate_content(
+        response = get_gemini_client().models.generate_content(
 
             model=MODEL,
 
@@ -1428,7 +1430,7 @@ días de la semana y fechas relativas.
 
                 result = {
                     "success": False,
-                    "error": str(error),
+                    "error": "No se pudo procesar la respuesta del servicio de IA.",
                 }
 
 
@@ -1571,7 +1573,7 @@ días de la semana y fechas relativas.
 
         try:
 
-            response = client.models.generate_content(
+            response = get_gemini_client().models.generate_content(
 
                 model=MODEL,
 
