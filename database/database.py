@@ -11,11 +11,13 @@ MIGRATIONS_DIR = BASE_DIR / "migrations"
 
 
 def get_connection():
-
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(
-        DATABASE_PATH
+        DATABASE_PATH, timeout=10, check_same_thread=False
     )
-
+    connection.execute("PRAGMA busy_timeout = 10000")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA foreign_keys = ON")
     connection.row_factory = sqlite3.Row
 
     return connection
@@ -149,5 +151,20 @@ def get_weekly_schedule(day_of_week):
             "SELECT * FROM weekly_schedules WHERE day_of_week = ?",
             (day_of_week,),
         ).fetchone()
+    finally:
+        connection.close()
+
+
+def update_appointment_status(appointment_id, status):
+    if status not in {"confirmed", "cancelled", "completed", "no_show"}:
+        return False
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "UPDATE appointments SET status = ? WHERE id = ?",
+            (status, appointment_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
     finally:
         connection.close()

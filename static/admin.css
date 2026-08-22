@@ -1,5 +1,5 @@
 /* ============================================================
-   TURNOBOT ADMIN — AZUL PROFESIONAL SaaS
+   TURNOBOT ADMIN — AZUL PREMIUM SaaS
    ============================================================ */
 
 * {
@@ -10,8 +10,8 @@
 
 body {
     font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #F8FAFC;
-    color: #0F172A;
+    background: #EAF4FF;
+    color: #102A56;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
 }
@@ -27,8 +27,10 @@ body {
 
 .sidebar {
     width: 260px;
-    background: #FFFFFF;
-    border-right: 1px solid #E2E8F0;
+    background: rgba(255,255,255,.88);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid #C9DDF8;
     padding: 28px 16px;
     display: flex;
     flex-direction: column;
@@ -47,28 +49,28 @@ body {
 .brand-logo {
     width: 44px;
     height: 44px;
-    border-radius: 12px;
-    background: #2563EB;
+    border-radius: 14px;
+    background: #1463FF;
     color: #FFFFFF;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 800;
     font-size: 14px;
-    box-shadow: 0 4px 14px rgba(37,99,235,.15);
+    box-shadow: 0 4px 16px rgba(20,99,255,.15);
     flex-shrink: 0;
 }
 
 .brand h1 {
     font-size: 17px;
     font-weight: 700;
-    color: #0F172A;
+    color: #0B1B3A;
     margin-bottom: 2px;
 }
 
 .brand span {
     font-size: 12px;
-    color: #64748B;
+    color: #4A6590;
 }
 
 /* NAV */
@@ -81,9 +83,9 @@ nav {
 
 .nav-item {
     text-decoration: none;
-    color: #64748B;
+    color: #4A6590;
     padding: 12px 14px;
-    border-radius: 10px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -99,13 +101,13 @@ nav {
 }
 
 .nav-item:hover {
-    background: #F1F5F9;
-    color: #0F172A;
+    background: #EEF6FF;
+    color: #102A56;
 }
 
 .nav-item.active {
-    background: #EFF6FF;
-    color: #2563EB;
+    background: #DCEBFF;
+    color: #1463FF;
     font-weight: 600;
 }
 
@@ -119,7 +121,7 @@ nav {
 .sidebar-footer {
     margin-top: auto;
     padding: 16px 14px;
-    color: #94A3B8;
+    color: #8DA4C8;
     font-size: 12px;
     display: flex;
     align-items: center;
@@ -156,24 +158,24 @@ nav {
     font-size: 28px;
     font-weight: 700;
     letter-spacing: -0.5px;
-    color: #0F172A;
+    color: #0B1B3A;
 }
 
 .topbar p {
-    color: #64748B;
+    color: #4A6590;
     margin-top: 4px;
     font-size: 14px;
 }
 
 .topbar-date {
-    color: #64748B;
+    color: #4A6590;
     background: #FFFFFF;
-    border: 1px solid #E2E8F0;
+    border: 1px solid #C9DDF8;
     padding: 10px 16px;
-    border-radius: 10px;
+    border-radius: 12px;
     font-size: 13px;
     font-weight: 500;
-    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    box-shadow: 0 1px 4px rgba(11,27,58,.05);
 }
 
 /* ESTADISTICAS */
@@ -187,45 +189,48 @@ nav {
 
 .stat-card {
     background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
+    border: 1px solid #C9DDF8;
+    border-radius: 18px;
     padding: 22px;
     display: flex;
     align-items: center;
     gap: 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    box-shadow: 0 1px 4px rgba(11,27,58,.04);
     transition: border-color .2s, box-shadow .2s;
 }
 
 .stat-card:hover {
-    border-color: #BFDBFE;
-    box-shadow: 0 4px 12px rgba(37,99,235,.06);
+    border-color: #1463FF;
+    box-shadow: 0 4px 16px rgba(20,99,255,.06);
 }
 
 .stat-icon {
-    width: 50px;
-    height: 50px;
-    background: #EFF6FF;
-    border-radius: 14px;
+    width: 52px;
+    height: 52px;
+    background: #EEF6FF;
+    border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 22px;
     flex-shrink: 0;
+    border: 1px solid #DCEBFF;
 }
 
 .stat-label {
     display: block;
-    color: #64748B;
+    color: #4A6590;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     margin-bottom: 4px;
 }
 
 .stat-card strong {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 700;
-    color: #0F172A;
+    color: #0B1B3A;
 }
 
 .stat-card strong.online {
@@ -238,10 +243,10 @@ nav {
 
 .appointments-card {
     background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
+    border: 1px solid #C9DDF8;
+    border-radius: 18px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    box-shadow: 0 1px 4px rgba(11,27,58,.04);
 }
 
 .section-header {
@@ -249,25 +254,25 @@ nav {
     justify-content: space-between;
     align-items: center;
     padding: 24px;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid #C9DDF8;
 }
 
 .section-header h3 {
     font-size: 17px;
     font-weight: 700;
-    color: #0F172A;
+    color: #0B1B3A;
 }
 
 .section-header p {
-    color: #64748B;
+    color: #4A6590;
     font-size: 13px;
     margin-top: 4px;
 }
 
 .refresh-button {
-    border: 1px solid #E2E8F0;
+    border: 1px solid #C9DDF8;
     background: #FFFFFF;
-    color: #64748B;
+    color: #4A6590;
     padding: 9px 16px;
     border-radius: 10px;
     cursor: pointer;
@@ -281,9 +286,9 @@ nav {
 }
 
 .refresh-button:hover {
-    background: #F1F5F9;
-    color: #0F172A;
-    border-color: #CBD5E1;
+    background: #EEF6FF;
+    color: #1463FF;
+    border-color: #1463FF;
 }
 
 /* FILTROS */
@@ -293,17 +298,17 @@ nav {
     align-items: flex-end;
     gap: 14px;
     padding: 18px 24px;
-    border-bottom: 1px solid #E2E8F0;
-    background: #F8FAFC;
+    border-bottom: 1px solid #C9DDF8;
+    background: #EEF6FF;
     flex-wrap: wrap;
 }
 
 .filters label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #64748B;
+    font-size: 11px;
+    font-weight: 700;
+    color: #4A6590;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.6px;
 }
 
 .filters select,
@@ -311,10 +316,10 @@ nav {
     display: block;
     margin-top: 6px;
     padding: 9px 12px;
-    border: 1px solid #E2E8F0;
-    border-radius: 8px;
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
     background: #FFFFFF;
-    color: #0F172A;
+    color: #102A56;
     font-family: inherit;
     font-size: 13px;
     outline: none;
@@ -323,8 +328,8 @@ nav {
 
 .filters select:focus,
 .filters input[type="date"]:focus {
-    border-color: #2563EB;
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    border-color: #1463FF;
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
 }
 
 /* TABLA */
@@ -339,25 +344,25 @@ table {
 }
 
 thead {
-    background: #F8FAFC;
+    background: #EEF6FF;
 }
 
 th {
     text-align: left;
-    color: #64748B;
+    color: #4A6590;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.6px;
     padding: 14px 22px;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid #C9DDF8;
 }
 
 td {
     padding: 16px 22px;
-    border-top: 1px solid #F1F5F9;
+    border-top: 1px solid #EEF6FF;
     font-size: 13px;
-    color: #0F172A;
+    color: #102A56;
 }
 
 tbody tr {
@@ -365,7 +370,7 @@ tbody tr {
 }
 
 tbody tr:hover {
-    background: #F8FAFC;
+    background: #F8FAFF;
 }
 
 /* CLIENTE */
@@ -380,25 +385,26 @@ tbody tr:hover {
     width: 38px;
     height: 38px;
     border-radius: 50%;
-    background: #EFF6FF;
-    color: #2563EB;
+    background: #EEF6FF;
+    color: #1463FF;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
     font-size: 13px;
     flex-shrink: 0;
+    border: 1px solid #DCEBFF;
 }
 
 .customer strong {
     display: block;
     font-size: 13px;
-    color: #0F172A;
+    color: #102A56;
 }
 
 .customer small {
     display: block;
-    color: #94A3B8;
+    color: #8DA4C8;
     margin-top: 2px;
     font-size: 12px;
 }
@@ -406,14 +412,14 @@ tbody tr:hover {
 /* SERVICIO */
 
 .service {
-    color: #334155;
+    color: #102A56;
     font-weight: 500;
 }
 
 /* HORA */
 
 .time {
-    color: #334155;
+    color: #102A56;
 }
 
 /* ESTADO */
@@ -463,12 +469,12 @@ tbody tr:hover {
 
 .empty-state h3 {
     margin-bottom: 7px;
-    color: #0F172A;
+    color: #0B1B3A;
     font-weight: 600;
 }
 
 .empty-state p {
-    color: #94A3B8;
+    color: #8DA4C8;
     font-size: 14px;
 }
 

@@ -21,6 +21,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS unique_confirmed_appointment_slot
 ON appointments (appointment_date, appointment_time)
 WHERE status = 'confirmed';
 
+CREATE INDEX IF NOT EXISTS idx_appointments_phone ON appointments (phone);
+CREATE INDEX IF NOT EXISTS idx_appointments_date_status ON appointments (appointment_date, status);
+CREATE INDEX IF NOT EXISTS idx_appointments_status ON appointments (status);
+
 
 -- ============================================================
 -- CONFIGURACIÓN DEL NEGOCIO

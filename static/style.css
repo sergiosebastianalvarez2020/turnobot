@@ -1,6 +1,6 @@
 /* ============================================================
-   TURNOBOT — ESTILO GENERAL
-   Paleta: Azul profesional SaaS
+   TURNOBOT / EL CORTE — ESTILO GENERAL
+   Paleta: Azul premium SaaS
    ============================================================ */
 
 * {
@@ -10,40 +10,43 @@
 }
 
 :root {
-    --primary: #2563EB;
-    --primary-hover: #1D4ED8;
-    --primary-dark: #1E3A8A;
+    --primary: #1463FF;
+    --primary-dark: #0757E8;
+    --primary-deep: #0B1B3A;
+    --primary-hover: #0757E8;
     --primary-light: #3B82F6;
-    --primary-muted: #DBEAFE;
-    --primary-subtle: #EFF6FF;
 
-    --bg: #F8FAFC;
-    --panel: #FFFFFF;
-    --panel-2: #F1F5F9;
-    --panel-3: #E2E8F0;
+    --blue-50: #EEF6FF;
+    --blue-100: #EAF4FF;
+    --blue-200: #DCEBFF;
+    --blue-border: #C9DDF8;
 
-    --text: #0F172A;
-    --text-secondary: #64748B;
-    --muted: #94A3B8;
-    --border: #E2E8F0;
+    --bg: #EAF4FF;
+    --surface: #FFFFFF;
+    --surface-hover: #F8FAFF;
 
-    --green: #16A34A;
-    --green-bg: #F0FDF4;
-    --green-border: #BBF7D0;
-    --red: #DC2626;
-    --red-bg: #FEF2F2;
-    --red-border: #FECACA;
-    --yellow: #D97706;
-    --yellow-bg: #FFFBEB;
+    --text: #102A56;
+    --text-secondary: #4A6590;
+    --text-muted: #8DA4C8;
+    --border: #C9DDF8;
 
-    --radius: 14px;
-    --radius-sm: 10px;
-    --radius-lg: 20px;
+    --success: #16A34A;
+    --success-bg: #F0FDF4;
+    --success-border: #BBF7D0;
+    --danger: #DC2626;
+    --danger-bg: #FEF2F2;
+    --danger-border: #FECACA;
+    --warning: #D97706;
 
-    --shadow-sm: 0 1px 3px rgba(0,0,0,.06);
-    --shadow-md: 0 4px 12px rgba(0,0,0,.08);
-    --shadow-lg: 0 10px 30px rgba(0,0,0,.1);
-    --shadow-blue: 0 4px 14px rgba(37,99,235,.15);
+    --radius: 16px;
+    --radius-sm: 12px;
+    --radius-lg: 24px;
+
+    --shadow-sm: 0 1px 4px rgba(11,27,58,.06);
+    --shadow-md: 0 4px 16px rgba(11,27,58,.08);
+    --shadow-lg: 0 12px 40px rgba(11,27,58,.10);
+    --shadow-blue: 0 4px 16px rgba(20,99,255,.12);
+    --shadow-glass: 0 8px 32px rgba(11,27,58,.08);
 }
 
 body {
@@ -57,6 +60,35 @@ body {
     padding: 20px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    position: relative;
+    overflow-x: hidden;
+}
+
+/* Decorative background shapes */
+body::before {
+    content: "";
+    position: fixed;
+    top: -120px;
+    right: -100px;
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(20,99,255,.06) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+body::after {
+    content: "";
+    position: fixed;
+    bottom: -150px;
+    left: -80px;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(20,99,255,.04) 0%, transparent 70%);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
 }
 
 
@@ -67,14 +99,16 @@ body {
 .app-shell {
     width: 100%;
     max-width: 760px;
-    height: min(900px, calc(100vh - 40px));
+    height: min(920px, calc(100vh - 40px));
     display: flex;
     flex-direction: column;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: var(--surface);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius-lg);
     overflow: hidden;
     box-shadow: var(--shadow-lg);
+    position: relative;
+    z-index: 1;
 }
 
 
@@ -88,8 +122,10 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 16px 24px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,.85);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--blue-border);
 }
 
 .brand {
@@ -116,7 +152,7 @@ body {
 .brand-info h1 {
     font-size: 22px;
     font-weight: 700;
-    color: var(--text);
+    color: var(--primary-deep);
     letter-spacing: -0.3px;
 }
 
@@ -133,7 +169,7 @@ body {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--green);
+    background: var(--success);
     box-shadow: 0 0 0 3px rgba(22,163,74,.15);
 }
 
@@ -142,8 +178,9 @@ body {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1.5px;
-    background: var(--primary-subtle);
-    padding: 6px 12px;
+    background: var(--blue-50);
+    border: 1px solid var(--blue-border);
+    padding: 6px 14px;
     border-radius: 20px;
 }
 
@@ -157,8 +194,8 @@ body {
     padding: 28px 26px;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
-    background: var(--bg);
+    scrollbar-color: var(--blue-border) transparent;
+    background: linear-gradient(180deg, var(--blue-50) 0%, var(--bg) 100%);
 }
 
 .chat::-webkit-scrollbar {
@@ -166,7 +203,7 @@ body {
 }
 
 .chat::-webkit-scrollbar-thumb {
-    background: #CBD5E1;
+    background: var(--blue-border);
     border-radius: 10px;
 }
 
@@ -177,30 +214,36 @@ body {
 
 .welcome {
     text-align: center;
-    padding: 16px 20px 30px;
+    padding: 20px 20px 32px;
 }
 
 .welcome-icon {
     color: var(--primary);
-    font-size: 28px;
-    margin-bottom: 10px;
+    font-size: 32px;
+    margin-bottom: 12px;
+    display: inline-block;
+    filter: drop-shadow(0 2px 8px rgba(20,99,255,.2));
 }
 
 .welcome-label {
     color: var(--primary);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 2.5px;
-    margin-bottom: 12px;
+    letter-spacing: 3px;
+    margin-bottom: 14px;
 }
 
 .welcome h2 {
-    font-size: 28px;
+    font-size: 30px;
     font-weight: 700;
     line-height: 1.2;
-    margin-bottom: 10px;
-    color: var(--text);
+    margin-bottom: 12px;
+    color: var(--primary-deep);
     letter-spacing: -0.5px;
+}
+
+.welcome h2 .highlight {
+    color: var(--primary);
 }
 
 .welcome-text {
@@ -251,15 +294,15 @@ body {
 .message-name {
     display: block;
     margin: 0 0 6px 4px;
-    color: var(--muted);
+    color: var(--text-muted);
     font-size: 11px;
 }
 
 .bubble {
     padding: 14px 17px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius);
-    background: var(--panel);
+    background: var(--surface);
     color: var(--text);
     line-height: 1.55;
     font-size: 14px;
@@ -294,7 +337,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     outline: none;
-    background: var(--bg);
+    background: var(--blue-50);
     color: var(--text);
     font-family: inherit;
     font-size: 14px;
@@ -304,7 +347,7 @@ body {
 .bubble input:focus,
 .message-content input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
 }
 
 .bubble select,
@@ -316,7 +359,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     outline: none;
-    background: var(--bg);
+    background: var(--blue-50);
     color: var(--text);
     font-family: inherit;
     font-size: 14px;
@@ -325,7 +368,7 @@ body {
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234A6590' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 14px center;
     padding-right: 36px;
@@ -334,7 +377,7 @@ body {
 .bubble select:focus,
 .message-content select:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
 }
 
 .bubble label,
@@ -342,11 +385,11 @@ body {
     display: block;
     margin-top: 14px;
     margin-bottom: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 11px;
+    font-weight: 700;
     color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
 }
 
 .bubble label:first-of-type {
@@ -354,7 +397,7 @@ body {
 }
 
 
-/* Todos los botones generados dentro de los mensajes */
+/* Botones generados dentro de los mensajes */
 
 .bubble button,
 .message-content button {
@@ -362,9 +405,9 @@ body {
     margin-top: 10px;
     margin-right: 6px;
     padding: 0 16px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius-sm);
-    background: var(--panel);
+    background: var(--surface);
     color: var(--primary);
     font-family: inherit;
     font-size: 12px;
@@ -398,8 +441,8 @@ body {
 .appointment-card {
     margin-top: 12px;
     padding: 16px;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: var(--blue-50);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius);
     transition: border-color .2s;
 }
@@ -415,6 +458,7 @@ body {
     font-size: 15px;
     font-weight: 700;
     margin-bottom: 14px;
+    color: var(--primary-deep);
 }
 
 .appointment-title-icon {
@@ -424,7 +468,7 @@ body {
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
-    background: var(--primary-subtle);
+    background: var(--blue-200);
     color: var(--primary);
 }
 
@@ -454,13 +498,13 @@ body {
     margin-top: 14px;
     padding: 6px 12px;
     border-radius: 20px;
-    background: var(--green-bg);
-    color: var(--green);
+    background: var(--success-bg);
+    color: var(--success);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .5px;
-    border: 1px solid var(--green-border);
+    border: 1px solid var(--success-border);
 }
 
 .appointment-status::before {
@@ -486,23 +530,23 @@ body {
 
 .appointment-actions .cancel,
 .appointment-cancel {
-    border-color: var(--red-border);
-    background: var(--red-bg);
-    color: var(--red);
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+    color: var(--danger);
 }
 
 .appointment-actions .cancel:hover,
 .appointment-cancel:hover {
-    background: var(--red);
+    background: var(--danger);
     color: #FFFFFF;
-    border-color: var(--red);
+    border-color: var(--danger);
 }
 
 .appointment-actions .reschedule,
 .appointment-reschedule {
-    background: var(--primary-subtle);
+    background: var(--blue-50);
     color: var(--primary);
-    border-color: var(--primary-muted);
+    border-color: var(--blue-border);
 }
 
 .appointment-actions .reschedule:hover,
@@ -513,9 +557,9 @@ body {
 }
 
 .appointment-reschedule {
-    background: var(--primary-subtle);
+    background: var(--blue-50);
     color: var(--primary);
-    border: 1px solid var(--primary-muted);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius-sm);
     padding: 0 16px;
     min-height: 40px;
@@ -536,8 +580,8 @@ body {
 }
 
 .appointment-cancel {
-    border: 1px solid var(--red-border);
-    background: var(--red-bg);
+    border: 1px solid var(--danger-border);
+    background: var(--danger-bg);
     border-radius: var(--radius-sm);
     padding: 0 16px;
     min-height: 40px;
@@ -550,9 +594,9 @@ body {
 }
 
 .appointment-cancel:hover {
-    background: var(--red);
+    background: var(--danger);
     color: #FFFFFF;
-    border-color: var(--red);
+    border-color: var(--danger);
 }
 
 
@@ -565,39 +609,81 @@ body {
     grid-template-columns: repeat(4, 1fr);
     gap: 10px;
     padding: 14px 20px;
-    border-top: 1px solid var(--border);
-    background: var(--panel);
+    border-top: 1px solid var(--blue-border);
+    background: rgba(255,255,255,.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 .quick-action {
-    min-height: 60px;
-    border: 1px solid var(--border);
+    min-height: 72px;
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius-sm);
-    background: var(--panel);
+    background: var(--surface);
     color: var(--text);
     cursor: pointer;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 4px;
     font-family: inherit;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     transition: all .2s;
+    position: relative;
+    overflow: hidden;
+}
+
+.quick-action::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--primary);
+    transform: scaleX(0);
+    transition: transform .2s;
 }
 
 .quick-action:hover {
-    border-color: var(--primary-light);
-    background: var(--primary-subtle);
+    border-color: var(--primary);
+    background: var(--blue-50);
     color: var(--primary);
     transform: translateY(-2px);
     box-shadow: var(--shadow-blue);
 }
 
+.quick-action:hover::before {
+    transform: scaleX(1);
+}
+
 .quick-icon {
     color: var(--primary);
-    font-size: 18px;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.quick-action-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.quick-action:hover .quick-action-text {
+    color: var(--primary);
+}
+
+.quick-action-sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-muted);
+    line-height: 1.2;
+}
+
+.quick-action:hover .quick-action-sub {
+    color: var(--text-secondary);
 }
 
 
@@ -606,9 +692,9 @@ body {
    ============================================================ */
 
 .input-area {
-    padding: 14px 20px 16px;
-    background: var(--panel);
-    border-top: 1px solid var(--border);
+    padding: 14px 20px 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--blue-border);
 }
 
 .input-wrapper {
@@ -616,15 +702,16 @@ body {
     align-items: center;
     gap: 10px;
     padding: 6px;
-    border: 1px solid var(--border);
+    border: 1.5px solid var(--border);
     border-radius: var(--radius);
-    background: var(--bg);
+    background: var(--blue-50);
     transition: border-color .2s, box-shadow .2s;
 }
 
 .input-wrapper:focus-within {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    box-shadow: 0 0 0 3px rgba(20,99,255,.08);
+    background: var(--surface);
 }
 
 .input-area input {
@@ -641,7 +728,7 @@ body {
 }
 
 .input-area input::placeholder {
-    color: var(--muted);
+    color: var(--text-muted);
 }
 
 .send-button {
@@ -652,7 +739,7 @@ body {
     align-items: center;
     justify-content: center;
     border: none;
-    border-radius: 12px;
+    border-radius: 14px;
     background: var(--primary);
     color: #FFFFFF;
     cursor: pointer;
@@ -665,7 +752,7 @@ body {
 }
 
 .send-button:hover {
-    background: var(--primary-hover);
+    background: var(--primary-dark);
     transform: scale(1.04);
     box-shadow: var(--shadow-blue);
 }
@@ -680,8 +767,31 @@ body {
 .privacy-note {
     text-align: center;
     margin-top: 8px;
-    color: var(--muted);
+    color: var(--text-muted);
     font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.privacy-note::before {
+    content: "\1F6E1";
+    font-size: 11px;
+}
+
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+.app-footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--text-muted);
+    font-size: 11px;
+    background: var(--blue-50);
+    border-top: 1px solid var(--blue-border);
 }
 
 
@@ -702,7 +812,7 @@ body {
 .availability-title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--text);
+    color: var(--primary-deep);
     margin-bottom: 12px;
 }
 
@@ -731,7 +841,7 @@ body {
     padding: 0 14px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--panel);
+    background: var(--surface);
     color: var(--text);
     font-family: inherit;
     font-size: 13px;
@@ -760,7 +870,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     outline: none;
-    background: var(--bg);
+    background: var(--blue-50);
     color: var(--text);
     font-family: inherit;
     font-size: 14px;
@@ -770,7 +880,7 @@ body {
 
 .reservation-select:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
 }
 
 .reservation-submit {
@@ -790,7 +900,7 @@ body {
 }
 
 .reservation-submit:hover {
-    background: var(--primary-hover);
+    background: var(--primary-dark);
     box-shadow: var(--shadow-blue);
 }
 
@@ -806,7 +916,7 @@ body {
     padding: 0 16px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--panel);
+    background: var(--surface);
     color: var(--text-secondary);
     font-family: inherit;
     font-size: 13px;
@@ -816,7 +926,7 @@ body {
 }
 
 .reservation-cancel:hover {
-    background: var(--panel-2);
+    background: var(--blue-100);
     color: var(--text);
 }
 
@@ -828,7 +938,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     outline: none;
-    background: var(--bg);
+    background: var(--blue-50);
     color: var(--text);
     font-family: inherit;
     font-size: 14px;
@@ -837,7 +947,7 @@ body {
 
 .appointment-name-input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
 }
 
 .appointment-search-button {
@@ -857,7 +967,7 @@ body {
 }
 
 .appointment-search-button:hover {
-    background: var(--primary-hover);
+    background: var(--primary-dark);
     box-shadow: var(--shadow-blue);
 }
 
@@ -873,7 +983,7 @@ body {
 .appointment-results-title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--text);
+    color: var(--primary-deep);
     margin-bottom: 14px;
 }
 
@@ -893,7 +1003,7 @@ body {
 .service-list-title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--text);
+    color: var(--primary-deep);
     margin-bottom: 14px;
 }
 
@@ -902,15 +1012,15 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 14px 16px;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: var(--blue-50);
+    border: 1px solid var(--blue-border);
     border-radius: var(--radius-sm);
     margin-bottom: 8px;
     transition: border-color .2s;
 }
 
 .service-card:hover {
-    border-color: var(--primary-light);
+    border-color: var(--primary);
 }
 
 .service-name {
@@ -931,7 +1041,7 @@ body {
    ============================================================ */
 
 .typing-message .bubble {
-    color: var(--muted);
+    color: var(--text-muted);
     font-style: italic;
 }
 
@@ -953,17 +1063,17 @@ body {
     }
 
     .chat-header {
-        padding: 14px 16px;
+        padding: 12px 16px;
     }
 
     .brand-mark {
-        width: 42px;
-        height: 42px;
-        font-size: 14px;
+        width: 40px;
+        height: 40px;
+        font-size: 13px;
     }
 
     .brand-info h1 {
-        font-size: 19px;
+        font-size: 18px;
     }
 
     .header-badge {
@@ -979,6 +1089,10 @@ body {
         font-size: 24px;
     }
 
+    .welcome-text {
+        font-size: 13px;
+    }
+
     .message-content {
         max-width: 88%;
     }
@@ -989,15 +1103,28 @@ body {
     }
 
     .quick-action {
-        min-height: 54px;
+        min-height: 64px;
         font-size: 10px;
     }
 
+    .quick-icon {
+        font-size: 18px;
+    }
+
+    .quick-action-sub {
+        display: none;
+    }
+
     .input-area {
-        padding: 10px 12px 14px;
+        padding: 10px 12px 10px;
     }
 
     .time-grid {
         grid-template-columns: repeat(3, 1fr);
+    }
+
+    .app-footer {
+        padding: 14px;
+        font-size: 10px;
     }
 }

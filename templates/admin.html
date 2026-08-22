@@ -9,6 +9,10 @@
 
     <title>{{ business_name }} - Administración</title>
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <link rel="stylesheet"
           href="{{ url_for('static', filename='admin.css') }}">
 
@@ -266,6 +270,8 @@
                                     Estado
                                 </th>
 
+                                <th>Acciones</th>
+
                             </tr>
 
                         </thead>
@@ -307,7 +313,6 @@
                                     </div>
 
                                 </td>
-
 
                                 <td>
 
@@ -351,6 +356,15 @@
 
                                     </span>
 
+                                </td>
+
+                                <td>
+                                    {% if appointment.status == "confirmed" %}
+                                    <form method="POST" action="{{ url_for('admin_cancel_appointment', appointment_id=appointment.id) }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="refresh-button">Cancelar</button>
+                                    </form>
+                                    {% endif %}
                                 </td>
 
                             </tr>

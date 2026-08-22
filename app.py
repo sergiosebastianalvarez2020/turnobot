@@ -10,7 +10,7 @@ from flask import Flask, render_template, render_template_string, request, jsoni
 from werkzeug.security import check_password_hash
 
 from services.ai import ask_ai
-from database.database import get_business_settings, get_connection, init_database
+from database.database import get_business_settings, get_connection, init_database, update_appointment_status
 
 from services.appointments import (
     get_available_times,
@@ -34,7 +34,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-if os.getenv("FLASK_ENV") == "production" and not ADMIN_PASSWORD_HASH:
+if os.getenv("FLASK_ENV") == "production" and (not ADMIN_PASSWORD_HASH or ADMIN_PASSWORD):
     raise RuntimeError("ADMIN_PASSWORD_HASH es obligatoria en producción")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -87,9 +87,12 @@ def _is_request_allowed(key, limit):
 
 
 def get_client_ip():
-    if request.access_route:
-        return request.access_route[-1]
     return request.remote_addr or "unknown"
+
+
+def json_object():
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else None
 
 
 def is_chat_request_allowed(client_ip):
@@ -150,6 +153,18 @@ def index():
     )
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    try:
+        connection = get_connection()
+        connection.execute("SELECT 1").fetchone()
+        connection.close()
+        return jsonify({"status": "ok", "database": "ok"})
+    except Exception:
+        logger.exception("Health check failed")
+        return jsonify({"status": "error", "database": "error"}), 503
+
+
 # ============================================================
 # LOGIN / LOGOUT ADMIN
 # ============================================================
@@ -208,6 +223,27 @@ def admin():
     )
 
 
+@app.route("/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])
+@admin_required
+def admin_cancel_appointment(appointment_id):
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    update_appointment_status(appointment_id, "cancelled")
+    return redirect(url_for("admin", status="confirmed"))
+
+
+@app.route("/admin/turnos/<int:appointment_id>/estado", methods=["POST"])
+@admin_required
+def admin_update_appointment_status(appointment_id):
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    status = request.form.get("status", "")
+    if status not in {"confirmed", "cancelled", "completed", "no_show"}:
+        return "Estado no válido", 400
+    update_appointment_status(appointment_id, status)
+    return redirect(url_for("admin", status=status if status in {"confirmed", "cancelled"} else "confirmed"))
+
+
 # ============================================================
 # CHAT IA
 # ============================================================
@@ -217,7 +253,9 @@ def chat():
 
     try:
 
-        data = request.get_json(silent=True) or {}
+        data = json_object()
+        if data is None:
+            return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
         if not isinstance(data, dict):
             return jsonify({"success": False, "error": "El formato enviado no es válido."}), 400
@@ -424,17 +462,17 @@ def api_reservar():
 
     try:
 
-        data = request.get_json(silent=True) or {}
+        data = json_object()
+        if data is None:
+            return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
-        nombre = data.get(
-            "nombre",
-            ""
-        ).strip()
+        nombre = data.get("nombre", "")
+        telefono = data.get("telefono", "")
+        if not isinstance(nombre, str) or not isinstance(telefono, str):
+            return jsonify({"success": False, "error": "Nombre y teléfono deben ser texto."}), 400
+        nombre = nombre.strip()
 
-        telefono = data.get(
-            "telefono",
-            ""
-        ).strip()
+        telefono = telefono.strip()
 
         servicio = data.get(
             "servicio"
@@ -585,7 +623,7 @@ def api_reservar():
                 ),
 
                 "message": "El turno fue reservado correctamente."
-            }), 400
+            }), 201
 
         if resultado.get("reason") == "past_time":
             return jsonify({
@@ -640,7 +678,9 @@ def api_cancelar():
 
     try:
 
-        data = request.get_json(silent=True) or {}
+        data = json_object()
+        if data is None:
+            return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
         appointment_id = data.get(
             "appointment_id"
@@ -712,7 +752,9 @@ def api_reprogramar():
 
     try:
 
-        data = request.get_json(silent=True) or {}
+        data = json_object()
+        if data is None:
+            return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
 
         appointment_id = data.get(

@@ -56,7 +56,10 @@ class TestDomainValidation(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_servicio_inactivo_o_inexistente(self):
-        date = (datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)).isoformat()
+        date = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)
+        while date.weekday() == 6:
+            date += timedelta(days=1)
+        date = date.isoformat()
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Servicio inexistente", date, "09:00"
         )
@@ -64,7 +67,10 @@ class TestDomainValidation(unittest.TestCase):
         self.assertEqual(result["reason"], "invalid_service")
 
     def test_telefono_con_formato_se_normaliza(self):
-        date = (datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)).isoformat()
+        date = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)
+        while date.weekday() == 6:
+            date += timedelta(days=1)
+        date = date.isoformat()
         result = appointments.create_appointment(
             "Ana Pérez", "+54 383-843-9222", "Corte", date, "10:00"
         )

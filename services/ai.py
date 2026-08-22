@@ -48,7 +48,11 @@ def get_gemini_client():
     if client is None:
         if not API_KEY:
             raise RuntimeError("GEMINI_API_KEY no está configurada")
-        client = genai.Client(api_key=API_KEY)
+        timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "15000"))
+        client = genai.Client(
+            api_key=API_KEY,
+            http_options=types.HttpOptions(timeout=timeout_ms),
+        )
     return client
 
 

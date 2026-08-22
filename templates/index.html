@@ -79,7 +79,7 @@
 
                 <h2>
                     Tu próximo corte<br>
-                    empieza acá.
+                    empieza <span class="highlight">acá</span>.
                 </h2>
 
                 <p class="welcome-text">
@@ -130,7 +130,8 @@
                 data-message="¿Qué servicios tienen y cuánto cuestan?"
             >
                 <span class="quick-icon">✂</span>
-                <span>Servicios</span>
+                <span class="quick-action-text">Servicios</span>
+                <span class="quick-action-sub">Ver todos los servicios</span>
             </button>
 
             <button
@@ -138,7 +139,8 @@
                 data-message="¿Qué horarios hay disponibles?"
             >
                 <span class="quick-icon">◷</span>
-                <span>Disponibilidad</span>
+                <span class="quick-action-text">Disponibilidad</span>
+                <span class="quick-action-sub">Ver horarios disponibles</span>
             </button>
 
             <button
@@ -146,7 +148,8 @@
                 data-message="Quiero reservar un turno"
             >
                 <span class="quick-icon">＋</span>
-                <span>Reservar</span>
+                <span class="quick-action-text">Reservar</span>
+                <span class="quick-action-sub">Agendar un turno</span>
             </button>
 
             <button
@@ -154,7 +157,8 @@
                 data-message="Quiero consultar mis turnos"
             >
                 <span class="quick-icon">☰</span>
-                <span>Mis turnos</span>
+                <span class="quick-action-text">Mis turnos</span>
+                <span class="quick-action-sub">Ver mis reservas</span>
             </button>
 
         </div>
@@ -209,12 +213,17 @@
             </div>
 
             <p class="privacy-note">
-                Atención automática · {{ business_name }}
+                Tus datos están protegidos y son confidenciales
             </p>
 
         </footer>
 
     </main>
+
+
+    <footer class="app-footer">
+        {{ business_name }} Barbería &copy; 2025 — Todos los derechos reservados
+    </footer>
 
 
     <script src="{{ url_for('static', filename='app.js') }}"></script>
