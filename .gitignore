@@ -2,4 +2,8 @@
 venv/
 __pycache__/
 *.py[cod]
+*.log
+logs/
+.pytest_cache/
 database/*.db
+database/backups/

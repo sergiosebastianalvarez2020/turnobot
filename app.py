@@ -1,5 +1,6 @@
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 import secrets
 from collections import defaultdict, deque
 from functools import wraps
@@ -25,6 +26,18 @@ from services.appointments import (
 
 load_dotenv()
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log_dir = os.getenv("LOG_DIR", "logs")
+os.makedirs(log_dir, exist_ok=True)
+file_handler = RotatingFileHandler(
+    os.path.join(log_dir, "app.log"), maxBytes=5_000_000, backupCount=5, encoding="utf-8"
+)
+file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+logging.getLogger().addHandler(file_handler)
+
 logger = logging.getLogger("el_corte.web")
 
 if os.getenv("FLASK_ENV") == "production" and not os.getenv("SECRET_KEY"):
@@ -34,7 +47,11 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-if os.getenv("FLASK_ENV") == "production" and (not ADMIN_PASSWORD_HASH or ADMIN_PASSWORD):
+if os.getenv("FLASK_ENV") == "production" and ADMIN_PASSWORD:
+    raise RuntimeError("ADMIN_PASSWORD fue eliminado; use ADMIN_PASSWORD_HASH")
+if not ADMIN_PASSWORD_HASH:
+    logger.warning("ADMIN_PASSWORD_HASH no está configurada: acceso administrativo deshabilitado")
+if os.getenv("FLASK_ENV") == "production" and (not ADMIN_PASSWORD_HASH or os.getenv("COOKIE_SECURE") != "1"):
     raise RuntimeError("ADMIN_PASSWORD_HASH es obligatoria en producción")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -59,6 +76,9 @@ def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if os.getenv("FLASK_ENV") == "production":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
@@ -101,6 +121,10 @@ def is_chat_request_allowed(client_ip):
 
 def is_api_request_allowed(client_ip):
     return _is_request_allowed(f"api:{client_ip}", API_REQUEST_LIMIT)
+
+
+def is_login_request_allowed(client_ip):
+    return _is_request_allowed(f"login:{client_ip}", 10)
 
 
 def admin_required(f):
@@ -180,11 +204,9 @@ def login():
         return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
 
     password = request.form.get("password", "")
-    authenticated = bool(
-        ADMIN_PASSWORD_HASH and check_password_hash(ADMIN_PASSWORD_HASH, password)
-    )
-    if not authenticated and ADMIN_PASSWORD:
-        authenticated = secrets.compare_digest(password, ADMIN_PASSWORD)
+    if not is_login_request_allowed(get_client_ip()):
+        return render_template("login.html", error=True, error_message="Demasiados intentos. Esperá unos minutos."), 429
+    authenticated = bool(ADMIN_PASSWORD_HASH and check_password_hash(ADMIN_PASSWORD_HASH, password))
 
     if authenticated:
         session["admin"] = True
