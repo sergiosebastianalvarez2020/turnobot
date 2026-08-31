@@ -54,7 +54,9 @@ body {
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     padding: 20px;
@@ -99,7 +101,10 @@ body::after {
 .app-shell {
     width: 100%;
     max-width: 760px;
-    height: min(920px, calc(100vh - 40px));
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    max-height: 920px;
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -191,6 +196,8 @@ body::after {
 
 .chat {
     flex: 1;
+    min-height: 0;
+    min-width: 0;
     padding: 28px 26px;
     overflow-y: auto;
     scrollbar-width: thin;
@@ -786,6 +793,9 @@ body::after {
    ============================================================ */
 
 .app-footer {
+    width: 100%;
+    max-width: 760px;
+    flex: 0 0 auto;
     text-align: center;
     padding: 20px;
     color: var(--text-muted);
@@ -1054,10 +1064,12 @@ body::after {
 
     body {
         padding: 0;
+        justify-content: flex-start;
     }
 
     .app-shell {
-        height: 100vh;
+        height: auto;
+        min-height: 0;
         max-width: none;
         border-radius: 0;
     }
@@ -1098,6 +1110,7 @@ body::after {
     }
 
     .quick-actions {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         padding: 10px 12px;
         gap: 6px;
     }
@@ -1124,6 +1137,7 @@ body::after {
     }
 
     .app-footer {
+        max-width: none;
         padding: 14px;
         font-size: 10px;
     }
