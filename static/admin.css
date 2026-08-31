@@ -249,6 +249,139 @@ nav {
     box-shadow: 0 1px 4px rgba(11,27,58,.04);
 }
 
+.settings-card {
+    background: #FFFFFF;
+    border: 1px solid #C9DDF8;
+    border-radius: 18px;
+    margin-bottom: 24px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(11,27,58,.04);
+}
+
+.settings-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    padding: 24px;
+}
+
+.settings-form label {
+    color: #4A6590;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.settings-form input,
+.settings-form textarea {
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    color: #102A56;
+    font: inherit;
+    padding: 11px 12px;
+    width: 100%;
+}
+
+.settings-form textarea {
+    resize: vertical;
+}
+
+.settings-wide,
+.settings-actions {
+    grid-column: 1 / -1;
+}
+
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.settings-feedback {
+    margin: 18px 24px 0;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+}
+
+.settings-success {
+    background: #DCFCE7;
+    color: #166534;
+}
+
+.settings-error {
+    background: #FEE2E2;
+    color: #991B1B;
+}
+
+.services-admin-card {
+    margin-bottom: 24px;
+}
+
+.service-form {
+    border-bottom: 1px solid #C9DDF8;
+}
+
+.service-active-field {
+    justify-content: flex-end;
+}
+
+.service-active-field input,
+.service-status input {
+    width: auto;
+    margin-right: 5px;
+}
+
+.services-list {
+    padding: 12px 24px 24px;
+}
+
+.service-row {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr .8fr .8fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #EEF6FF;
+}
+
+.service-row:last-child {
+    border-bottom: 0;
+}
+
+.service-row input[type="text"],
+.service-row input[type="number"] {
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    color: #102A56;
+    font: inherit;
+    padding: 9px 10px;
+    width: 100%;
+}
+
+.service-status {
+    color: #4A6590;
+    font-size: 13px;
+}
+
+.empty-services {
+    color: #4A6590;
+    padding: 14px 0;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .section-header {
     display: flex;
     justify-content: space-between;

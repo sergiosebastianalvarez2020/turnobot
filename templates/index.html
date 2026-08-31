@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>{{ business_name }} | Barbería</title>
+    <title>{{ business_name }} | {{ business_type }}</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,7 +21,7 @@
     >
 </head>
 
-<body>
+<body data-timezone="{{ timezone }}" data-business-name="{{ business_name }}">
 
     <main class="app-shell">
 
@@ -34,7 +34,7 @@
             <div class="brand">
 
                 <div class="brand-mark">
-                    <span>EC</span>
+                    <span>{{ business_initials }}</span>
                 </div>
 
                 <div class="brand-info">
@@ -51,7 +51,7 @@
             </div>
 
             <div class="header-badge">
-                BARBERÍA
+                {{ business_type|upper }}
             </div>
 
         </header>
@@ -78,12 +78,12 @@
                 </p>
 
                 <h2>
-                    Tu próximo corte<br>
+                    Tu próxima visita<br>
                     empieza <span class="highlight">acá</span>.
                 </h2>
 
                 <p class="welcome-text">
-                    Soy el recepcionista virtual de {{ business_name }}.
+                    Soy el recepcionista virtual de {{ business_name }}, {{ business_description|lower }}.
                     Puedo ayudarte con servicios, horarios y turnos.
                 </p>
 
@@ -93,7 +93,7 @@
             <div class="message bot initial-message">
 
                 <div class="avatar">
-                    EC
+                    {{ business_initials }}
                 </div>
 
                 <div class="message-content">
@@ -222,7 +222,7 @@
 
 
     <footer class="app-footer">
-        {{ business_name }} Barbería &copy; 2025 — Todos los derechos reservados
+        {{ business_name }} {{ business_type }} &copy; 2025 — Todos los derechos reservados
     </footer>
 
 

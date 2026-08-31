@@ -58,9 +58,17 @@ def get_gemini_client():
 
 MODEL = "gemini-3.6-flash"
 
-TIMEZONE = ZoneInfo(
-    "America/Argentina/Buenos_Aires"
-)
+DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
+
+
+def get_business_identity():
+    settings = get_business_settings()
+    return settings or {
+        "business_name": "Mi negocio",
+        "business_type": "Negocio",
+        "business_description": "",
+        "timezone": DEFAULT_TIMEZONE,
+    }
 
 MAX_TOOL_ITERATIONS = 5
 
@@ -131,7 +139,7 @@ REGLAS GENERALES
 14. Si el cliente ya proporcionó un dato durante
     la conversación, no vuelvas a pedirlo.
 
-15. Si una pregunta no tiene relación con la barbería,
+15. Si una pregunta no tiene relación con el negocio,
     explicá amablemente que solamente podés ayudar
     con servicios y turnos.
 
@@ -258,7 +266,7 @@ consultar_disponibilidad_declaration = types.FunctionDeclaration(
     name="consultar_disponibilidad",
 
     description=(
-        "Consulta los horarios disponibles de la barbería "
+        "Consulta los horarios disponibles del negocio "
         "para una fecha determinada."
     ),
 
@@ -780,7 +788,7 @@ def execute_tool(name, arguments):
                     "message": (
                         "El horario solicitado "
                         "no pertenece al horario "
-                        "de atención de la barbería."
+                        "de atención del negocio."
                     ),
                 }
 
@@ -923,6 +931,8 @@ def format_reservation_confirmation(
     hora,
 ):
 
+    business_name = get_business_identity()["business_name"]
+
     try:
 
         fecha_obj = datetime.strptime(
@@ -957,7 +967,7 @@ def format_reservation_confirmation(
             f"**{servicio}** quedó reservado correctamente.\n\n"
             f"📅 **{dia_semana} {fecha_formateada}**\n"
             f"🕐 **{hora} hs**\n\n"
-            f"¡Te esperamos en **El Corte**!"
+            f"¡Te esperamos en **{business_name}**!"
         )
 
 
@@ -973,7 +983,7 @@ def format_reservation_confirmation(
             f"**{servicio}** el día "
             f"**{fecha} a las {hora} hs** "
             f"fue reservado correctamente.\n\n"
-            f"¡Te esperamos en **El Corte**!"
+            f"¡Te esperamos en **{business_name}**!"
         )
 
 
@@ -991,7 +1001,7 @@ def format_reservation_error(
         "occupied": "Ese horario ya está ocupado. Elegí otro horario disponible.",
         "past_date": "No podés reservar un turno para una fecha que ya pasó.",
         "past_time": "Ese horario ya pasó. Elegí otro horario disponible.",
-        "closed_day": "Ese día la barbería está cerrada.",
+        "closed_day": "Ese día el negocio está cerrado.",
         "invalid_date": "La fecha indicada no es válida.",
         "invalid_time": "Ese horario no está disponible para la fecha elegida.",
         "invalid_service": "El servicio indicado no está disponible.",
@@ -1049,6 +1059,8 @@ def format_reschedule_confirmation(
     hora,
 ):
 
+    business_name = get_business_identity()["business_name"]
+
     try:
 
         fecha_obj = datetime.strptime(
@@ -1082,7 +1094,7 @@ def format_reschedule_confirmation(
             "Listo. Tu turno fue reprogramado correctamente.\n\n"
             f"📅 **{dia_semana} {fecha_formateada}**\n"
             f"🕐 **{hora} hs**\n\n"
-            "¡Te esperamos en **El Corte**!"
+            f"¡Te esperamos en **{business_name}**!"
         )
 
 
@@ -1189,9 +1201,18 @@ def ask_ai(
     # FECHA ACTUAL
     # ========================================================
 
-    now = datetime.now(
-        TIMEZONE
-    )
+    settings = get_business_settings()
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_type = settings["business_type"] if settings else "Negocio"
+    business_description = settings["business_description"] if settings else ""
+    timezone_name = settings["timezone"] if settings else DEFAULT_TIMEZONE
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except Exception:
+        timezone_name = DEFAULT_TIMEZONE
+        timezone = ZoneInfo(DEFAULT_TIMEZONE)
+
+    now = datetime.now(timezone)
 
 
     current_date = now.strftime(
@@ -1210,9 +1231,6 @@ def ask_ai(
 
     services_text = get_services_prompt()
     business_hours_text = get_business_hours_prompt()
-    settings = get_business_settings()
-    business_name = settings["business_name"] if settings else "Mi negocio"
-
     instructions = f"""
 {SYSTEM_PROMPT}
 
@@ -1221,6 +1239,14 @@ NOMBRE DEL NEGOCIO
 ============================================================
 
 {business_name}
+
+TIPO DE NEGOCIO
+
+{business_type}
+
+DESCRIPCIÓN DEL NEGOCIO
+
+{business_description}
 
 ============================================================
 SERVICIOS ACTUALES
@@ -1246,7 +1272,7 @@ DÍA ACTUAL:
 
 ZONA HORARIA:
 
-America/Argentina/Buenos_Aires
+{timezone_name}
 
 Utilizá esta fecha para interpretar:
 "hoy", "mañana", "pasado mañana",

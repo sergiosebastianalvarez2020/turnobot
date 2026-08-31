@@ -130,16 +130,90 @@ def get_active_services():
         connection.close()
 
 
+def get_all_services():
+    connection = get_connection()
+    try:
+        return connection.execute(
+            "SELECT id, name, price, duration, active FROM services ORDER BY id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def create_service(name, price, duration, active=True):
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "INSERT INTO services (name, price, duration, active) VALUES (?, ?, ?, ?)",
+            (name, price, duration, 1 if active else 0),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def update_service(service_id, name, price, duration, active):
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE services
+            SET name = ?, price = ?, duration = ?, active = ?
+            WHERE id = ?
+            """,
+            (name, price, duration, 1 if active else 0, service_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()
+
+
 def get_business_settings():
     connection = get_connection()
     try:
         return connection.execute(
             """
-            SELECT business_name, slot_duration, break_between_slots
+            SELECT business_name, business_type, business_initials,
+                   business_description, timezone,
+                   slot_duration, break_between_slots
             FROM business_settings
             WHERE id = 1
             """
         ).fetchone()
+    finally:
+        connection.close()
+
+
+def update_business_settings(
+    business_name,
+    business_type,
+    business_initials,
+    business_description,
+    timezone,
+):
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE business_settings
+            SET business_name = ?,
+                business_type = ?,
+                business_initials = ?,
+                business_description = ?,
+                timezone = ?
+            WHERE id = 1
+            """,
+            (
+                business_name,
+                business_type,
+                business_initials,
+                business_description,
+                timezone,
+            ),
+        )
+        connection.commit()
     finally:
         connection.close()
 

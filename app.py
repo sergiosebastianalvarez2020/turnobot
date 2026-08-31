@@ -2,6 +2,8 @@ import os
 import logging
 from logging.handlers import RotatingFileHandler
 import secrets
+import math
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections import defaultdict, deque
 from functools import wraps
 from time import monotonic
@@ -11,7 +13,16 @@ from flask import Flask, render_template, render_template_string, request, jsoni
 from werkzeug.security import check_password_hash
 
 from services.ai import ask_ai
-from database.database import get_business_settings, get_connection, init_database, update_appointment_status
+from database.database import (
+    get_business_settings,
+    get_connection,
+    init_database,
+    update_appointment_status,
+    update_business_settings,
+    get_all_services,
+    create_service,
+    update_service,
+)
 
 from services.appointments import (
     get_available_times,
@@ -60,6 +71,19 @@ app.config.update(
 )
 
 init_database()
+
+
+@app.context_processor
+def inject_business_settings():
+    settings = get_business_settings()
+    return {
+        "business_settings": settings,
+        "business_name": settings["business_name"] if settings else "Mi negocio",
+        "business_type": settings["business_type"] if settings else "Negocio",
+        "business_initials": settings["business_initials"] if settings else "",
+        "business_description": settings["business_description"] if settings else "",
+        "timezone": settings["timezone"] if settings else "UTC",
+    }
 
 MAX_MESSAGE_LENGTH = 1_000
 MAX_HISTORY_MESSAGES = 12
@@ -173,7 +197,12 @@ def index():
     settings = get_business_settings()
     return render_template(
         "index.html",
+        business_settings=settings,
         business_name=settings["business_name"] if settings else "Mi negocio",
+        business_type=settings["business_type"] if settings else "Negocio",
+        business_initials=settings["business_initials"] if settings else "",
+        business_description=settings["business_description"] if settings else "",
+        timezone=settings["timezone"] if settings else "UTC",
     )
 
 
@@ -242,7 +271,126 @@ def admin():
         selected_status=status,
         selected_date=appointment_date or "",
         business_name=settings["business_name"] if settings else "Mi negocio",
+        business_initials=settings["business_initials"] if settings else "",
+        business_settings=settings,
+        config_message=request.args.get("config_message", ""),
+        config_error=request.args.get("config_error", ""),
+        services=get_all_services(),
+        service_message=request.args.get("service_message", ""),
+        service_error=request.args.get("service_error", ""),
     )
+
+
+def _service_form_data(form):
+    name = form.get("name", "").strip()
+    price_raw = form.get("price", "").strip()
+    duration_raw = form.get("duration", "").strip()
+    active = form.get("active") == "1"
+
+    if not name:
+        return None, "El nombre del servicio es obligatorio."
+
+    try:
+        price = float(price_raw)
+    except (TypeError, ValueError):
+        return None, "El precio debe ser numérico y mayor o igual a cero."
+
+    if not math.isfinite(price) or price < 0:
+        return None, "El precio debe ser numérico y mayor o igual a cero."
+
+    try:
+        duration = int(duration_raw)
+    except (TypeError, ValueError):
+        return None, "La duración debe ser un entero mayor que cero."
+
+    if duration <= 0:
+        return None, "La duración debe ser un entero mayor que cero."
+
+    return (name, price, duration, active), None
+
+
+@app.route("/admin/servicios/guardar", methods=["POST"])
+@admin_required
+def admin_save_service():
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    values, error = _service_form_data(request.form)
+    if error:
+        return redirect(url_for("admin", service_error=error))
+
+    service_id = request.form.get("service_id", "").strip()
+    try:
+        if service_id:
+            if not update_service(int(service_id), *values):
+                return redirect(url_for("admin", service_error="No se encontró el servicio."))
+        else:
+            create_service(*values)
+    except (TypeError, ValueError):
+        return redirect(url_for("admin", service_error="El identificador del servicio no es válido."))
+
+    return redirect(url_for("admin", service_message="El servicio se guardó correctamente."))
+
+
+@app.route("/admin/servicios/<int:service_id>/estado", methods=["POST"])
+@admin_required
+def admin_toggle_service(service_id):
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    active = request.form.get("active") == "1"
+    service = next((row for row in get_all_services() if row["id"] == service_id), None)
+    if not service:
+        return redirect(url_for("admin", service_error="No se encontró el servicio."))
+
+    update_service(
+        service_id,
+        service["name"],
+        service["price"],
+        service["duration"],
+        active,
+    )
+    return redirect(url_for("admin", service_message="El estado del servicio se actualizó."))
+
+
+@app.route("/admin/configuracion", methods=["POST"])
+@admin_required
+def admin_update_business_settings():
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    business_name = request.form.get("business_name", "").strip()
+    business_type = request.form.get("business_type", "").strip()
+    business_initials = request.form.get("business_initials", "").strip()
+    business_description = request.form.get("business_description", "").strip()
+    timezone = request.form.get("timezone", "").strip()
+
+    if not business_name or not business_type or not business_initials:
+        return redirect(url_for(
+            "admin",
+            config_error="Nombre, tipo e iniciales son obligatorios.",
+        ))
+
+    try:
+        ZoneInfo(timezone)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return redirect(url_for(
+            "admin",
+            config_error="La zona horaria indicada no es válida.",
+        ))
+
+    update_business_settings(
+        business_name,
+        business_type,
+        business_initials,
+        business_description,
+        timezone,
+    )
+
+    return redirect(url_for(
+        "admin",
+        config_message="La configuración del negocio se guardó correctamente.",
+    ))
 
 
 @app.route("/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])

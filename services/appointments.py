@@ -1,7 +1,7 @@
 import sqlite3
 import re
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database.database import (
     get_active_services,
@@ -9,6 +9,19 @@ from database.database import (
     get_connection,
     get_weekly_schedule,
 )
+
+
+DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
+
+
+def get_business_timezone():
+    settings = get_business_settings()
+    configured_timezone = settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(configured_timezone)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return DEFAULT_TIMEZONE
+    return configured_timezone
 
 
 # ============================================================
@@ -147,7 +160,7 @@ def validate_appointment_date(date):
         }
 
 
-    today = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+    today = datetime.now(ZoneInfo(get_business_timezone())).date()
 
 
     # --------------------------------------------------------
@@ -186,7 +199,7 @@ def validate_appointment_time(date, time):
     except (ValueError, TypeError):
         return False, "invalid_time"
 
-    now = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+    now = datetime.now(ZoneInfo(get_business_timezone()))
     if appointment_date == now.date() and parsed_time <= now.time().replace(second=0, microsecond=0):
         return False, "past_time"
     return True, None

@@ -33,7 +33,7 @@
             <div class="brand">
 
                 <div class="brand-logo">
-                    EC
+                    {{ business_initials }}
                 </div>
 
                 <div>
@@ -184,6 +184,131 @@
 
                 </div>
 
+
+            </section>
+
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Configuración del negocio</h3>
+                        <p>Actualizá la identidad y zona horaria del negocio.</p>
+                    </div>
+                </div>
+
+                {% if config_message %}
+                <div class="settings-feedback settings-success">{{ config_message }}</div>
+                {% endif %}
+
+                {% if config_error %}
+                <div class="settings-feedback settings-error">{{ config_error }}</div>
+                {% endif %}
+
+                <form method="POST" action="/admin/configuracion" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <label>
+                        Nombre del negocio
+                        <input type="text" name="business_name" value="{{ business_settings['business_name'] if business_settings else '' }}" required>
+                    </label>
+
+                    <label>
+                        Tipo de negocio
+                        <input type="text" name="business_type" value="{{ business_settings['business_type'] if business_settings else '' }}" required>
+                    </label>
+
+                    <label>
+                        Iniciales
+                        <input type="text" name="business_initials" value="{{ business_settings['business_initials'] if business_settings else '' }}" required maxlength="10">
+                    </label>
+
+                    <label class="settings-wide">
+                        Descripción
+                        <textarea name="business_description" rows="3">{{ business_settings['business_description'] if business_settings else '' }}</textarea>
+                    </label>
+
+                    <label>
+                        Zona horaria
+                        <input type="text" name="timezone" value="{{ business_settings['timezone'] if business_settings else '' }}" required>
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Guardar configuración</button>
+                    </div>
+                </form>
+
+            </section>
+
+
+            <section class="settings-card services-admin-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Servicios</h3>
+                        <p>Administrá los servicios, precios, duración y estado.</p>
+                    </div>
+                </div>
+
+                {% if service_message %}
+                <div class="settings-feedback settings-success">{{ service_message }}</div>
+                {% endif %}
+                {% if service_error %}
+                <div class="settings-feedback settings-error">{{ service_error }}</div>
+                {% endif %}
+
+                <form method="POST" action="/admin/servicios/guardar" class="settings-form service-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="service_id" value="">
+                    <label>
+                        Nombre
+                        <input type="text" name="name" required>
+                    </label>
+                    <label>
+                        Precio
+                        <input type="number" name="price" min="0" step="0.01" required>
+                    </label>
+                    <label>
+                        Duración (minutos)
+                        <input type="number" name="duration" min="1" step="1" required>
+                    </label>
+                    <label class="service-active-field">
+                        <span>Estado</span>
+                        <span><input type="checkbox" name="active" value="1" checked> Activo</span>
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Agregar servicio</button>
+                    </div>
+                </form>
+
+                <div class="services-list">
+                    {% for service in services %}
+                    <form method="POST" action="/admin/servicios/guardar" class="service-row">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="service_id" value="{{ service.id }}">
+                        <label>
+                            <span class="sr-only">Nombre</span>
+                            <input type="text" name="name" value="{{ service.name }}" required>
+                        </label>
+                        <label>
+                            <span class="sr-only">Precio</span>
+                            <input type="number" name="price" value="{{ service.price }}" min="0" step="0.01" required>
+                        </label>
+                        <label>
+                            <span class="sr-only">Duración</span>
+                            <input type="number" name="duration" value="{{ service.duration }}" min="1" step="1" required>
+                        </label>
+                        <label class="service-status">
+                            <span class="sr-only">Estado</span>
+                            <input type="checkbox" name="active" value="1" {% if service.active %}checked{% endif %}>
+                            {{ "Activo" if service.active else "Inactivo" }}
+                        </label>
+                        <button type="submit" class="refresh-button">Guardar</button>
+                    </form>
+                    {% else %}
+                    <p class="empty-services">No hay servicios cargados.</p>
+                    {% endfor %}
+                </div>
 
             </section>
 

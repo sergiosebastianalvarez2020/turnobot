@@ -27,6 +27,8 @@
 const chat = document.getElementById("chat");
 const messageInput = document.getElementById("message");
 const sendButton = document.getElementById("send");
+const BUSINESS_TIMEZONE = document.body.dataset.timezone || "America/Argentina/Buenos_Aires";
+const BUSINESS_NAME = document.body.dataset.businessName || "Mi negocio";
 
 
 // ============================================================
@@ -51,6 +53,23 @@ const API = {
 const MAX_HISTORY_MESSAGES = 12;
 
 let conversation = [];
+
+function addConversationMessage(role, content) {
+
+    conversation.push({ role, content: String(content ?? "") });
+
+    if (conversation.length > MAX_HISTORY_MESSAGES) {
+
+        conversation = conversation.slice(-MAX_HISTORY_MESSAGES);
+
+    }
+}
+
+
+function recordLocalResponse(content) {
+
+    addConversationMessage("assistant", content);
+}
 
 
 // ============================================================
@@ -271,7 +290,7 @@ function getArgentinaDate() {
             "en-CA",
             {
                 timeZone:
-                    "America/Argentina/Buenos_Aires",
+                    BUSINESS_TIMEZONE,
 
                 year: "numeric",
 
@@ -426,7 +445,7 @@ function getDayName(
             weekday: "long",
 
             timeZone:
-                "America/Argentina/Buenos_Aires"
+                BUSINESS_TIMEZONE
         }
     ).format(date);
 }
@@ -1285,6 +1304,13 @@ async function showServices() {
         return;
     }
 
+    recordLocalResponse(
+        "Se mostró la lista de servicios disponibles: " +
+        data.servicios.map(service =>
+            `${service.nombre}: $${service.precio}, ${service.duracion} minutos`
+        ).join("; ")
+    );
+
 
     const message =
         document.createElement("div");
@@ -1420,6 +1446,13 @@ async function checkAvailability(
 
     const times =
         data.horarios_disponibles || [];
+
+    recordLocalResponse(
+        `Se consultó la disponibilidad para ${formatDate(date)}. ` +
+        (times.length
+            ? `Horarios disponibles: ${times.join(", ")}.`
+            : "No hay horarios disponibles.")
+    );
 
 
     if (
@@ -2551,7 +2584,7 @@ async function loadTimes(
 
                 `🕐 ${hora} hs\n\n` +
 
-                `¡Te esperamos en El Corte!`,
+                `¡Te esperamos en ${BUSINESS_NAME}!`,
 
                 "bot"
             );
@@ -3782,6 +3815,8 @@ async function sendMessage(
         "user"
     );
 
+    addConversationMessage("user", message);
+
 
     messageInput.value =
         "";
@@ -3912,36 +3947,7 @@ async function sendMessage(
     // HISTORIAL
     // --------------------------------------------------------
 
-    conversation.push({
-
-        role:
-            "user",
-
-        content:
-            message
-    });
-
-
-    conversation.push({
-
-        role:
-            "assistant",
-
-        content:
-            data.response
-    });
-
-
-    if (
-        conversation.length >
-        MAX_HISTORY_MESSAGES
-    ) {
-
-        conversation =
-            conversation.slice(
-                -MAX_HISTORY_MESSAGES
-            );
-    }
+    addConversationMessage("assistant", data.response);
 
 
     // --------------------------------------------------------
@@ -3993,6 +3999,8 @@ document
                             "user"
                         );
 
+                        addConversationMessage("user", action);
+
 
                         await showServices();
 
@@ -4014,6 +4022,8 @@ document
                             action,
                             "user"
                         );
+
+                        addConversationMessage("user", action);
 
 
                         showAvailabilityOptions();
@@ -4037,6 +4047,8 @@ document
                             "user"
                         );
 
+                        addConversationMessage("user", action);
+
 
                         await showReservationForm();
 
@@ -4058,6 +4070,8 @@ document
                             action,
                             "user"
                         );
+
+                        addConversationMessage("user", action);
 
 
                         showMyAppointments();
