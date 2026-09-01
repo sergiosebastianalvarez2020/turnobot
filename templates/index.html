@@ -21,7 +21,11 @@
     >
 </head>
 
-<body data-timezone="{{ public_frontend_config.business.timezone }}" data-business-name="{{ public_frontend_config.business.name }}">
+{% set theme = public_frontend_config.theme %}
+{% set allowed_fonts = ['DM Sans', 'Arial', 'Georgia', 'Verdana'] %}
+{% set safe_font = theme.font_family if theme.font_family in allowed_fonts else 'DM Sans' %}
+<body data-timezone="{{ public_frontend_config.business.timezone }}" data-business-name="{{ public_frontend_config.business.name }}"
+    style="--primary: {{ theme.primary|e }}; --primary-deep: {{ theme.secondary|e }}; --bg: {{ theme.background|e }}; --text: {{ theme.text|e }}; --font-family: '{{ safe_font }}';">
     <script id="public-frontend-config" type="application/json">{{ public_frontend_config|tojson }}</script>
 
     <main class="app-shell">

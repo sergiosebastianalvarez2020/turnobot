@@ -47,10 +47,12 @@
     --shadow-lg: 0 12px 40px rgba(11,27,58,.10);
     --shadow-blue: 0 4px 16px rgba(20,99,255,.12);
     --shadow-glass: 0 8px 32px rgba(11,27,58,.08);
+
+    --font-family: "DM Sans";
 }
 
 body {
-    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--font-family), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
