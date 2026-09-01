@@ -27,8 +27,18 @@
 const chat = document.getElementById("chat");
 const messageInput = document.getElementById("message");
 const sendButton = document.getElementById("send");
-const BUSINESS_TIMEZONE = document.body.dataset.timezone || "America/Argentina/Buenos_Aires";
-const BUSINESS_NAME = document.body.dataset.businessName || "Mi negocio";
+const PUBLIC_FRONTEND_CONFIG = (() => {
+    const element = document.getElementById("public-frontend-config");
+    if (!element) return {};
+    try {
+        return JSON.parse(element.textContent || "{}");
+    } catch (error) {
+        return {};
+    }
+})();
+const BUSINESS_CONFIG = PUBLIC_FRONTEND_CONFIG.business || {};
+const BUSINESS_TIMEZONE = BUSINESS_CONFIG.timezone || "America/Argentina/Buenos_Aires";
+const BUSINESS_NAME = BUSINESS_CONFIG.name || "Mi negocio";
 
 
 // ============================================================

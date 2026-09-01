@@ -127,6 +127,49 @@ def inject_business_settings():
     }
 
 MAX_MESSAGE_LENGTH = 1_000
+
+
+def build_public_frontend_config(settings=None):
+    """Construye el contrato público del frontend sin exponer autoridad tenant."""
+    settings = settings or {}
+
+    def value(key, default):
+        try:
+            current = settings[key]
+        except (KeyError, IndexError, TypeError):
+            current = None
+        return current or default
+
+    return {
+        "business": {
+            "name": value("business_name", "Mi negocio"),
+            "type": value("business_type", "Negocio"),
+            "initials": value("business_initials", ""),
+            "description": value("business_description", ""),
+            "timezone": value("timezone", "UTC"),
+        },
+        "content": {
+            "welcome_label": "BIENVENIDO A {business_name}",
+            "welcome_title": "Tu próxima visita empieza acá.",
+            "welcome_description": "Soy el recepcionista virtual de {business_name}, {business_description}. Puedo ayudarte con servicios, horarios y turnos.",
+            "initial_message": "¡Hola! 👋\n\n¿En qué puedo ayudarte hoy?",
+            "quick_actions": [
+                {"label": "Servicios", "sub": "Ver todos los servicios", "message": "¿Qué servicios tienen y cuánto cuestan?"},
+                {"label": "Disponibilidad", "sub": "Ver horarios disponibles", "message": "¿Qué horarios hay disponibles?"},
+                {"label": "Reservar", "sub": "Agendar un turno", "message": "Quiero reservar un turno"},
+                {"label": "Mis turnos", "sub": "Ver mis reservas", "message": "Quiero consultar mis turnos"},
+            ],
+        },
+        "theme": {
+            "primary": "#1463FF",
+            "secondary": "#0B1B3A",
+            "background": "#EAF4FF",
+            "text": "#102A56",
+            "font_family": "DM Sans",
+        },
+    }
+
+
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CONTENT_LENGTH = 2_000
 CHAT_REQUEST_LIMIT = 20
@@ -247,12 +290,7 @@ def index():
     )
     return render_template(
         "index.html",
-        business_settings=settings,
-        business_name=settings["business_name"] if settings else "Mi negocio",
-        business_type=settings["business_type"] if settings else "Negocio",
-        business_initials=settings["business_initials"] if settings else "",
-        business_description=settings["business_description"] if settings else "",
-        timezone=settings["timezone"] if settings else "UTC",
+        public_frontend_config=build_public_frontend_config(settings),
     )
 
 

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>{{ business_name }} | {{ business_type }}</title>
+    <title>{{ public_frontend_config.business.name }} | {{ public_frontend_config.business.type }}</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,7 +21,8 @@
     >
 </head>
 
-<body data-timezone="{{ timezone }}" data-business-name="{{ business_name }}">
+<body data-timezone="{{ public_frontend_config.business.timezone }}" data-business-name="{{ public_frontend_config.business.name }}">
+    <script id="public-frontend-config" type="application/json">{{ public_frontend_config|tojson }}</script>
 
     <main class="app-shell">
 
@@ -34,12 +35,12 @@
             <div class="brand">
 
                 <div class="brand-mark">
-                    <span>{{ business_initials }}</span>
+                    <span>{{ public_frontend_config.business.initials }}</span>
                 </div>
 
                 <div class="brand-info">
 
-                    <h1>{{ business_name }}</h1>
+                    <h1>{{ public_frontend_config.business.name }}</h1>
 
                     <div class="status">
                         <span class="status-dot"></span>
@@ -51,7 +52,7 @@
             </div>
 
             <div class="header-badge">
-                {{ business_type|upper }}
+                {{ public_frontend_config.business.type|upper }}
             </div>
 
         </header>
@@ -74,7 +75,7 @@
                 </div>
 
                 <p class="welcome-label">
-                    BIENVENIDO A {{ business_name|upper }}
+                    {{ public_frontend_config.content.welcome_label|replace('{business_name}', public_frontend_config.business.name|upper) }}
                 </p>
 
                 <h2>
@@ -83,8 +84,7 @@
                 </h2>
 
                 <p class="welcome-text">
-                    Soy el recepcionista virtual de {{ business_name }}, {{ business_description|lower }}.
-                    Puedo ayudarte con servicios, horarios y turnos.
+                    {{ public_frontend_config.content.welcome_description|replace('{business_name}', public_frontend_config.business.name)|replace('{business_description}', public_frontend_config.business.description|lower) }}
                 </p>
 
             </div>
@@ -93,13 +93,13 @@
             <div class="message bot initial-message">
 
                 <div class="avatar">
-                    {{ business_initials }}
+                    {{ public_frontend_config.business.initials }}
                 </div>
 
                 <div class="message-content">
 
                     <span class="message-name">
-                        {{ business_name }}
+                        {{ public_frontend_config.business.name }}
                     </span>
 
                     <div class="bubble">
@@ -222,7 +222,7 @@
 
 
     <footer class="app-footer">
-        {{ business_name }} {{ business_type }} &copy; 2025 — Todos los derechos reservados
+        {{ public_frontend_config.business.name }} {{ public_frontend_config.business.type }} &copy; 2025 — Todos los derechos reservados
     </footer>
 
 
