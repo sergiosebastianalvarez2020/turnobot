@@ -54,6 +54,29 @@ class TestBusinessContext(unittest.TestCase):
                 application.load_current_business()
             self.assertFalse(hasattr(application.g, "current_business"))
 
+    def test_slug_existente_de_negocio_b_usa_su_config_publica(self):
+        business_b = {"id": 2, "name": "Business B", "slug": "business-b"}
+        settings_b = {
+            "business_name": "Business B",
+            "business_type": "Barbería",
+            "business_initials": "BB",
+            "business_description": "Negocio de prueba",
+            "timezone": "America/Argentina/Buenos_Aires",
+            "slot_duration": 60,
+            "break_between_slots": 0,
+        }
+
+        with patch.object(application, "resolve_business", return_value=business_b):
+            with patch.object(application, "get_business_settings_scoped", return_value=settings_b):
+                with application.app.test_client() as client:
+                    response = client.get("/b/business-b")
+                    self.assertEqual(response.status_code, 200)
+                    body = response.get_data(as_text=True)
+                    self.assertIn("Business B", body)
+                    self.assertIn("Negocio de prueba", body)
+                    self.assertIn("BB", body)
+                    self.assertNotIn("El Corte", body)
+
     def test_dos_requests_no_comparten_estado(self):
         second_business = {"id": 2, "name": "Business B", "slug": "business-b"}
         with patch.object(application, "resolve_business", side_effect=[
