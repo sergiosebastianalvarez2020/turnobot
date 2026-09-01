@@ -14,6 +14,7 @@ from services import appointments
 
 class TestAdminSecurity(unittest.TestCase):
     def setUp(self):
+        application.rate_limit_state.clear()
         self.client = application.app.test_client()
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD

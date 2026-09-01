@@ -11,6 +11,7 @@ import database.database as database
 
 class TestAdminBusinessSettings(unittest.TestCase):
     def setUp(self):
+        application.rate_limit_state.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
