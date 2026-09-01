@@ -16,8 +16,11 @@ from services.appointments import (
 )
 from database.database import (
     get_active_services,
+    get_active_services_scoped,
     get_business_settings,
+    get_business_settings_scoped,
     get_weekly_schedule,
+    get_weekly_schedule_scoped,
 )
 
 
@@ -61,8 +64,11 @@ MODEL = "gemini-3.6-flash"
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
 
-def get_business_identity():
-    settings = get_business_settings()
+def get_business_identity(business_id=None):
+    if business_id is not None:
+        settings = get_business_settings_scoped(business_id)
+    else:
+        settings = get_business_settings()
     return settings or {
         "business_name": "Mi negocio",
         "business_type": "Negocio",
@@ -220,9 +226,12 @@ IMPORTANTE
 """
 
 
-def get_services_prompt():
+def get_services_prompt(business_id=None):
     """Genera la lista actual de servicios desde la base de datos."""
-    services = get_active_services()
+    if business_id is not None:
+        services = get_active_services_scoped(business_id)
+    else:
+        services = get_active_services()
     if not services:
         return "No hay servicios habilitados en este momento."
 
@@ -233,7 +242,7 @@ def get_services_prompt():
     )
 
 
-def get_business_hours_prompt():
+def get_business_hours_prompt(business_id=None):
     """Genera los horarios semanales actuales desde la base de datos."""
     day_names = [
         "Lunes", "Martes", "Miércoles", "Jueves",
@@ -241,7 +250,10 @@ def get_business_hours_prompt():
     ]
     lines = []
     for day, name in enumerate(day_names):
-        schedule = get_weekly_schedule(day)
+        if business_id is not None:
+            schedule = get_weekly_schedule_scoped(day, business_id)
+        else:
+            schedule = get_weekly_schedule(day)
         if not schedule or not schedule["is_open"]:
             lines.append(f"- {name}: cerrado")
             continue
@@ -521,7 +533,7 @@ BARBERIA_TOOL = types.Tool(
 # EJECUCIÓN DE HERRAMIENTAS
 # ============================================================
 
-def execute_tool(name, arguments):
+def execute_tool(name, arguments, business_id=None):
 
     # ========================================================
     # CONSULTAR DISPONIBILIDAD
@@ -533,7 +545,7 @@ def execute_tool(name, arguments):
 
         try:
 
-            horarios = get_available_times(fecha)
+            horarios = get_available_times(fecha, business_id)
 
             return {
                 "success": True,
@@ -561,8 +573,13 @@ def execute_tool(name, arguments):
 
         try:
 
+            if business_id is not None:
+                active_services_a = get_active_services_scoped(business_id)
+            else:
+                active_services_a = get_active_services()
+
             if arguments["servicio"] not in {
-                row["name"] for row in get_active_services()
+                row["name"] for row in active_services_a
             }:
                 return {
                     "success": False,
@@ -580,6 +597,7 @@ def execute_tool(name, arguments):
                 appointment_date=arguments["fecha"],
 
                 appointment_time=arguments["hora"],
+                business_id=business_id,
             )
 
 
@@ -632,6 +650,7 @@ def execute_tool(name, arguments):
             turnos = get_customer_appointments(
                 customer_name=nombre,
                 phone=telefono,
+                business_id=business_id,
             )
 
 
@@ -669,6 +688,7 @@ def execute_tool(name, arguments):
             resultado = cancel_appointment(
                 appointment_id,
                 arguments["telefono"],
+                business_id,
             )
 
 
@@ -738,6 +758,7 @@ def execute_tool(name, arguments):
                 new_time=nueva_hora,
 
                 phone=arguments["telefono"],
+                business_id=business_id,
             )
 
 
@@ -1190,6 +1211,7 @@ def format_customer_appointments(
 def ask_ai(
     message,
     conversation=None,
+    business_id=None,
 ):
 
     if conversation is None:
@@ -1201,7 +1223,10 @@ def ask_ai(
     # FECHA ACTUAL
     # ========================================================
 
-    settings = get_business_settings()
+    if business_id is not None:
+        settings = get_business_settings_scoped(business_id)
+    else:
+        settings = get_business_settings()
     business_name = settings["business_name"] if settings else "Mi negocio"
     business_type = settings["business_type"] if settings else "Negocio"
     business_description = settings["business_description"] if settings else ""
@@ -1229,8 +1254,8 @@ def ask_ai(
     # INSTRUCCIONES
     # ========================================================
 
-    services_text = get_services_prompt()
-    business_hours_text = get_business_hours_prompt()
+    services_text = get_services_prompt(business_id)
+    business_hours_text = get_business_hours_prompt(business_id)
     instructions = f"""
 {SYSTEM_PROMPT}
 
@@ -1450,6 +1475,7 @@ días de la semana y fechas relativas.
                 result = execute_tool(
                     tool_name,
                     arguments,
+                    business_id,
                 )
 
             except Exception as error:

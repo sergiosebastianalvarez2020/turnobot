@@ -315,3 +315,92 @@ def update_service_scoped(service_id, business_id, name, price, duration, active
         return cursor.rowcount == 1
     finally:
         connection.close()
+
+
+# ============================================================
+# CONFIGURACIÓN / HORARIOS / TURNOS — CAPA MULTI-NEGOCIO (SCOPED)
+# ============================================================
+
+def get_business_settings_scoped(business_id):
+    """Devuelve la configuración de un negocio específico."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT business_name, business_type, business_initials,
+                   business_description, timezone,
+                   slot_duration, break_between_slots
+            FROM business_settings
+            WHERE business_id = ?
+            """,
+            (business_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def update_business_settings_scoped(
+    business_id,
+    business_name,
+    business_type,
+    business_initials,
+    business_description,
+    timezone,
+):
+    """Actualiza la configuración de un negocio específico."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE business_settings
+            SET business_name = ?,
+                business_type = ?,
+                business_initials = ?,
+                business_description = ?,
+                timezone = ?
+            WHERE business_id = ?
+            """,
+            (
+                business_name,
+                business_type,
+                business_initials,
+                business_description,
+                timezone,
+                business_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def get_weekly_schedule_scoped(day_of_week, business_id):
+    """Devuelve el horario semanal de un negocio específico para un día."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT *
+            FROM weekly_schedules
+            WHERE day_of_week = ? AND business_id = ?
+            """,
+            (day_of_week, business_id),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def update_appointment_status_scoped(appointment_id, status, business_id):
+    """Actualiza el estado de un turno solo si pertenece al negocio indicado."""
+    if status not in {"confirmed", "cancelled", "completed", "no_show"}:
+        return False
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "UPDATE appointments SET status = ? WHERE id = ? AND business_id = ?",
+            (status, appointment_id, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()

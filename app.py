@@ -15,10 +15,13 @@ from werkzeug.security import check_password_hash
 from services.ai import ask_ai
 from database.database import (
     get_business_settings,
+    get_business_settings_scoped,
     get_connection,
     init_database,
     update_appointment_status,
+    update_appointment_status_scoped,
     update_business_settings,
+    update_business_settings_scoped,
     get_all_services,
     create_service,
     update_service,
@@ -108,7 +111,12 @@ def load_current_business():
 
 @app.context_processor
 def inject_business_settings():
-    settings = get_business_settings()
+    business_id = get_current_business_id()
+    settings = (
+        get_business_settings_scoped(business_id)
+        if business_id is not None
+        else get_business_settings()
+    )
     return {
         "business_settings": settings,
         "business_name": settings["business_name"] if settings else "Mi negocio",
@@ -231,7 +239,12 @@ def get_active_services():
 
 @app.route("/")
 def index():
-    settings = get_business_settings()
+    business_id = get_current_business_id()
+    settings = (
+        get_business_settings_scoped(business_id)
+        if business_id is not None
+        else get_business_settings()
+    )
     return render_template(
         "index.html",
         business_settings=settings,
@@ -296,15 +309,20 @@ def logout():
 @app.route("/admin")
 @admin_required
 def admin():
-    settings = get_business_settings()
+    business_id = get_current_business_id()
+    settings = (
+        get_business_settings_scoped(business_id)
+        if business_id is not None
+        else get_business_settings()
+    )
     status = request.args.get("status") or "confirmed"
     if status not in {"confirmed", "cancelled"}:
         status = "confirmed"
     appointment_date = request.args.get("fecha") or None
     return render_template(
         "admin.html",
-        appointments=get_appointments(status=status, appointment_date=appointment_date),
-        counts=get_appointment_counts(),
+        appointments=get_appointments(status=status, appointment_date=appointment_date, business_id=business_id),
+        counts=get_appointment_counts(business_id),
         selected_status=status,
         selected_date=appointment_date or "",
         business_name=settings["business_name"] if settings else "Mi negocio",
@@ -312,7 +330,7 @@ def admin():
         business_settings=settings,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
-        services=get_all_services_scoped(get_current_business_id()),
+        services=get_all_services_scoped(business_id),
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
     )
@@ -423,13 +441,24 @@ def admin_update_business_settings():
             config_error="La zona horaria indicada no es válida.",
         ))
 
-    update_business_settings(
-        business_name,
-        business_type,
-        business_initials,
-        business_description,
-        timezone,
-    )
+    business_id = get_current_business_id()
+    if business_id is not None:
+        update_business_settings_scoped(
+            business_id,
+            business_name,
+            business_type,
+            business_initials,
+            business_description,
+            timezone,
+        )
+    else:
+        update_business_settings(
+            business_name,
+            business_type,
+            business_initials,
+            business_description,
+            timezone,
+        )
 
     return redirect(url_for(
         "admin",
@@ -442,7 +471,11 @@ def admin_update_business_settings():
 def admin_cancel_appointment(appointment_id):
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
-    update_appointment_status(appointment_id, "cancelled")
+    business_id = get_current_business_id()
+    if business_id is not None:
+        update_appointment_status_scoped(appointment_id, "cancelled", business_id)
+    else:
+        update_appointment_status(appointment_id, "cancelled")
     return redirect(url_for("admin", status="confirmed"))
 
 
@@ -454,7 +487,11 @@ def admin_update_appointment_status(appointment_id):
     status = request.form.get("status", "")
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         return "Estado no válido", 400
-    update_appointment_status(appointment_id, status)
+    business_id = get_current_business_id()
+    if business_id is not None:
+        update_appointment_status_scoped(appointment_id, status, business_id)
+    else:
+        update_appointment_status(appointment_id, status)
     return redirect(url_for("admin", status=status if status in {"confirmed", "cancelled"} else "confirmed"))
 
 
@@ -519,7 +556,8 @@ def chat():
 
         response = ask_ai(
             message,
-            conversation
+            conversation,
+            business_id=get_current_business_id(),
         )
 
 
@@ -580,7 +618,7 @@ def api_disponibilidad(fecha):
 
     try:
 
-        horarios = get_available_times(fecha)
+        horarios = get_available_times(fecha, get_current_business_id())
 
         return jsonify({
             "success": True,
@@ -638,7 +676,8 @@ def api_turnos():
 
         turnos = get_customer_appointments(
             nombre,
-            telefono
+            telefono,
+            get_current_business_id(),
         )
 
 
@@ -754,6 +793,8 @@ def api_reservar():
             appointment_date=fecha,
 
             appointment_time=hora,
+
+            business_id=get_current_business_id(),
         )
 
 
@@ -917,6 +958,7 @@ def api_cancelar():
         resultado = cancel_appointment(
             appointment_id,
             telefono,
+            get_current_business_id(),
         )
 
 
@@ -1014,6 +1056,8 @@ def api_reprogramar():
             nueva_hora,
 
             telefono,
+
+            get_current_business_id(),
         )
 
 
