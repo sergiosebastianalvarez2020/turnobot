@@ -242,3 +242,76 @@ def update_appointment_status(appointment_id, status):
         return cursor.rowcount == 1
     finally:
         connection.close()
+
+
+# ============================================================
+# SERVICIOS — CAPA MULTI-NEGOCIO (SCOPED)
+# ============================================================
+
+def get_active_services_scoped(business_id):
+    """Devuelve los servicios activos de un negocio específico."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT name, price, duration
+            FROM services
+            WHERE active = 1 AND business_id = ?
+            ORDER BY id
+            """,
+            (business_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def get_all_services_scoped(business_id):
+    """Devuelve todos los servicios de un negocio específico."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, name, price, duration, active
+            FROM services
+            WHERE business_id = ?
+            ORDER BY id
+            """,
+            (business_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def create_service_scoped(business_id, name, price, duration, active=True):
+    """Crea un servicio asociado explícitamente a un negocio."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO services (business_id, name, price, duration, active)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (business_id, name, price, duration, 1 if active else 0),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def update_service_scoped(service_id, business_id, name, price, duration, active):
+    """Modifica un servicio solo si pertenece al negocio indicado."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE services
+            SET name = ?, price = ?, duration = ?, active = ?
+            WHERE id = ? AND business_id = ?
+            """,
+            (name, price, duration, 1 if active else 0, service_id, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()

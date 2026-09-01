@@ -22,6 +22,9 @@ from database.database import (
     get_all_services,
     create_service,
     update_service,
+    get_all_services_scoped,
+    create_service_scoped,
+    update_service_scoped,
 )
 
 from services.appointments import (
@@ -196,13 +199,17 @@ def admin_required(f):
 
 def get_active_services():
     """
-    Obtiene los servicios activos desde la base de datos.
-    Siempre consulta BD para obtener configuración en vivo.
+    Obtiene los servicios activos del negocio actual.
+    Si business_id no está disponible, retorna vacío (fallback seguro).
     """
-    from database.database import get_active_services as db_get_active_services
+    from database.database import get_active_services_scoped
+
+    business_id = get_current_business_id()
+    if not business_id:
+        return {}
 
     try:
-        rows = db_get_active_services()
+        rows = get_active_services_scoped(business_id)
         if not rows:
             return {}
         
@@ -305,7 +312,7 @@ def admin():
         business_settings=settings,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
-        services=get_all_services(),
+        services=get_all_services_scoped(get_current_business_id()),
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
     )
@@ -352,10 +359,12 @@ def admin_save_service():
     service_id = request.form.get("service_id", "").strip()
     try:
         if service_id:
-            if not update_service(int(service_id), *values):
+            if not update_service_scoped(
+                int(service_id), get_current_business_id(), *values
+            ):
                 return redirect(url_for("admin", service_error="No se encontró el servicio."))
         else:
-            create_service(*values)
+            create_service_scoped(get_current_business_id(), *values)
     except (TypeError, ValueError):
         return redirect(url_for("admin", service_error="El identificador del servicio no es válido."))
 
@@ -369,12 +378,17 @@ def admin_toggle_service(service_id):
         return "Solicitud no válida", 400
 
     active = request.form.get("active") == "1"
-    service = next((row for row in get_all_services() if row["id"] == service_id), None)
+    business_id = get_current_business_id()
+    service = next(
+        (row for row in get_all_services_scoped(business_id) if row["id"] == service_id),
+        None,
+    )
     if not service:
         return redirect(url_for("admin", service_error="No se encontró el servicio."))
 
-    update_service(
+    update_service_scoped(
         service_id,
+        business_id,
         service["name"],
         service["price"],
         service["duration"],

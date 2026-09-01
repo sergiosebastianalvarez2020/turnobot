@@ -55,28 +55,28 @@ class TestAdminServices(unittest.TestCase):
             name="Masaje", price="12000", duration="45"
         )
         self.assertEqual(response.status_code, 302)
-        services = database.get_all_services()
+        services = database.get_all_services_scoped(1)
         service = next(row for row in services if row["name"] == "Masaje")
         self.assertEqual(service["price"], 12000)
         self.assertEqual(service["duration"], 45)
 
     def test_rechazar_nombre_vacio(self):
-        before = len(database.get_all_services())
+        before = len(database.get_all_services_scoped(1))
         self.post_service(name="", price="100", duration="30")
-        self.assertEqual(len(database.get_all_services()), before)
+        self.assertEqual(len(database.get_all_services_scoped(1)), before)
 
     def test_rechazar_precio_invalido(self):
-        before = len(database.get_all_services())
+        before = len(database.get_all_services_scoped(1))
         self.post_service(name="Inválido", price="-1", duration="30")
-        self.assertEqual(len(database.get_all_services()), before)
+        self.assertEqual(len(database.get_all_services_scoped(1)), before)
 
     def test_rechazar_duracion_invalida(self):
-        before = len(database.get_all_services())
+        before = len(database.get_all_services_scoped(1))
         self.post_service(name="Inválido", price="100", duration="0")
-        self.assertEqual(len(database.get_all_services()), before)
+        self.assertEqual(len(database.get_all_services_scoped(1)), before)
 
     def test_editar_servicio(self):
-        service = database.get_all_services()[0]
+        service = database.get_all_services_scoped(1)[0]
         response = self.post_service(
             service_id=str(service["id"]),
             name="Corte actualizado",
@@ -85,21 +85,21 @@ class TestAdminServices(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         updated = next(
-            row for row in database.get_all_services() if row["id"] == service["id"]
+            row for row in database.get_all_services_scoped(1) if row["id"] == service["id"]
         )
         self.assertEqual(updated["name"], "Corte actualizado")
         self.assertEqual(updated["price"], 11000)
         self.assertEqual(updated["duration"], 35)
 
     def test_activar_desactivar_servicio(self):
-        service = database.get_all_services()[0]
+        service = database.get_all_services_scoped(1)[0]
         response = self.client.post(
             f"/admin/servicios/{service['id']}/estado",
             data={"csrf_token": self.csrf_token, "active": "0"},
         )
         self.assertEqual(response.status_code, 302)
         updated = next(
-            row for row in database.get_all_services() if row["id"] == service["id"]
+            row for row in database.get_all_services_scoped(1) if row["id"] == service["id"]
         )
         self.assertEqual(updated["active"], 0)
 
