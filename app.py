@@ -9,7 +9,7 @@ from functools import wraps
 from time import monotonic
 
 from dotenv import load_dotenv
-from flask import Flask, render_template, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, g, render_template, render_template_string, request, jsonify, session, redirect, url_for
 from werkzeug.security import check_password_hash
 
 from services.ai import ask_ai
@@ -71,6 +71,36 @@ app.config.update(
 )
 
 init_database()
+
+
+def resolve_business(slug=None):
+    """Resuelve un negocio existente sin aceptar un identificador del cliente."""
+    connection = get_connection()
+    try:
+        if slug is None:
+            row = connection.execute(
+                "SELECT id, name, slug FROM businesses WHERE id = 1"
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT id, name, slug FROM businesses WHERE slug = ?",
+                (slug,),
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def get_current_business_id():
+    """Devuelve el negocio asociado al request actual, si existe."""
+    business = getattr(g, "current_business", None)
+    return business["id"] if business else None
+
+
+@app.before_request
+def load_current_business():
+    """Carga el contexto request-scoped; por ahora usa El Corte por defecto."""
+    g.current_business = resolve_business()
 
 
 @app.context_processor
