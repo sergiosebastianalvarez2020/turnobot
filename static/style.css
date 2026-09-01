@@ -322,6 +322,10 @@ body::after {
     border-bottom-left-radius: 4px;
 }
 
+.initial-message .bubble {
+    white-space: normal;
+}
+
 .message.user .bubble {
     background: var(--primary);
     color: #FFFFFF;
@@ -1061,6 +1065,10 @@ body::after {
    ============================================================ */
 
 @media (max-width: 600px) {
+
+    .initial-message .bubble br + br {
+        display: none;
+    }
 
     body {
         padding: 0;
