@@ -25,6 +25,35 @@ class TestBusinessContext(unittest.TestCase):
     def test_slug_inexistente_devuelve_resultado_controlado(self):
         self.assertIsNone(application.resolve_business("no-existe"))
 
+    def test_root_sigue_funcionando_y_mantiene_el_corte(self):
+        with application.app.test_client() as client:
+            response = client.get("/")
+            self.assertEqual(response.status_code, 200)
+        with application.app.test_request_context("/"):
+            application.load_current_business()
+            self.assertEqual(application.get_current_business_id(), 1)
+            self.assertEqual(application.g.current_business["slug"], "el-corte")
+
+    def test_slug_route_resuelve_el_corte(self):
+        with application.app.test_client() as client:
+            response = client.get("/b/el-corte")
+            self.assertEqual(response.status_code, 200)
+
+        with application.app.test_request_context("/b/el-corte"):
+            application.load_current_business()
+            self.assertEqual(application.get_current_business_id(), 1)
+            self.assertEqual(application.g.current_business["slug"], "el-corte")
+
+    def test_slug_inexistente_devuelve_404_y_no_fallback_al_corte(self):
+        with application.app.test_client() as client:
+            response = client.get("/b/slug-inexistente")
+            self.assertEqual(response.status_code, 404)
+
+        with application.app.test_request_context("/b/slug-inexistente"):
+            with self.assertRaises(Exception):
+                application.load_current_business()
+            self.assertFalse(hasattr(application.g, "current_business"))
+
     def test_dos_requests_no_comparten_estado(self):
         second_business = {"id": 2, "name": "Business B", "slug": "business-b"}
         with patch.object(application, "resolve_business", side_effect=[

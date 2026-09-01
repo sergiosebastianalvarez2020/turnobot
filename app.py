@@ -9,7 +9,7 @@ from functools import wraps
 from time import monotonic
 
 from dotenv import load_dotenv
-from flask import Flask, g, render_template, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, abort, g, render_template, render_template_string, request, jsonify, session, redirect, url_for
 from werkzeug.security import check_password_hash
 
 from services.ai import ask_ai
@@ -105,8 +105,18 @@ def get_current_business_id():
 
 @app.before_request
 def load_current_business():
-    """Carga el contexto request-scoped; por ahora usa El Corte por defecto."""
+    """Carga el contexto request-scoped en función del slug de la URL o del fallback por defecto."""
+    if request.path.startswith("/b/"):
+        slug = request.view_args.get("slug")
+        g.current_business = resolve_business(slug)
+        if g.current_business is None:
+            if hasattr(g, "current_business"):
+                delattr(g, "current_business")
+            return abort(404)
+        return None
+
     g.current_business = resolve_business()
+    return None
 
 
 @app.context_processor
@@ -282,6 +292,24 @@ def get_active_services():
 
 @app.route("/")
 def index():
+    business_id = get_current_business_id()
+    settings = (
+        get_business_settings_scoped(business_id)
+        if business_id is not None
+        else get_business_settings()
+    )
+    return render_template(
+        "index.html",
+        public_frontend_config=build_public_frontend_config(settings),
+    )
+
+
+@app.route("/b/<slug>")
+def business_index(slug):
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+
     business_id = get_current_business_id()
     settings = (
         get_business_settings_scoped(business_id)
