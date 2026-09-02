@@ -733,12 +733,7 @@ def business_api_disponibilidad(slug, fecha):
 # API - BUSCAR TURNOS
 # ============================================================
 
-@app.route(
-    "/api/turnos",
-    methods=["GET"]
-)
-def api_turnos():
-
+def _get_public_appointments_response(business_id):
     if not is_api_request_allowed(get_client_ip()):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
@@ -769,7 +764,7 @@ def api_turnos():
         turnos = get_customer_appointments(
             nombre,
             telefono,
-            get_current_business_id(),
+            business_id,
         )
 
 
@@ -779,7 +774,7 @@ def api_turnos():
         })
 
 
-    except Exception as error:
+    except Exception:
 
         logger.exception("Error buscando turnos")
 
@@ -787,6 +782,31 @@ def api_turnos():
             "success": False,
             "error": "No se pudieron consultar los turnos."
         }), 500
+
+
+@app.route(
+    "/api/turnos",
+    methods=["GET"]
+)
+def api_turnos():
+    return _get_public_appointments_response(get_current_business_id())
+
+
+@app.route(
+    "/b/<slug>/api/turnos",
+    methods=["GET"]
+)
+def business_api_turnos(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _get_public_appointments_response(business_id)
 
 
 # ============================================================

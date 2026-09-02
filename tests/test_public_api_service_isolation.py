@@ -24,6 +24,9 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         database.init_database()
 
         self._execute(
+            "UPDATE businesses SET name = 'Business A', slug = 'business-a' WHERE id = 1"
+        )
+        self._execute(
             "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
         )
         self._execute(
@@ -90,6 +93,12 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         finally:
             connection.close()
 
+    def _insert_confirmed_appointment(self, name, phone, business_id):
+        self._execute(
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)",
+            (name, phone, "Servicio", self.valid_date, "09:00", business_id),
+        )
+
     def _business(self, business_id):
         return {
             1: {"id": 1, "name": "El Corte", "slug": "el-corte"},
@@ -125,6 +134,143 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertNotIn("Corte", {item["nombre"] for item in data["servicios"]})
         self.assertNotIn("Corte + barba", {item["nombre"] for item in data["servicios"]})
         self.assertNotIn("Barba", {item["nombre"] for item in data["servicios"]})
+
+    def test_api_turnos_business_a_ve_solo_sus_turnos(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(len(data["turnos"]), 1)
+        self.assertEqual(data["turnos"][0]["customer_name"], "Cliente A")
+
+    def test_api_turnos_business_b_ve_solo_sus_turnos(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(len(data["turnos"]), 1)
+        self.assertEqual(data["turnos"][0]["customer_name"], "Cliente B")
+
+    def test_api_turnos_no_cruza_de_a_a_b(self):
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["turnos"], [])
+
+    def test_api_turnos_no_cruza_de_b_a_a(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.get(
+            f"/b/business-b/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["turnos"], [])
+
+    def test_api_turnos_cambiar_telefono_no_cruza_de_business(self):
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["turnos"], [])
+
+    def test_api_turnos_cambiar_nombre_no_cruza_de_business(self):
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["turnos"], [])
+
+    def test_api_turnos_business_id_artificial_no_cambia_el_tenant(self):
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222&business_id=2"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["turnos"], [])
+
+    def test_api_turnos_slug_inexistente_devuelve_404_sin_fallback(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.get(
+            f"/b/slug-inexistente/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_api_turnos_legacy_continua_funcionando(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.get(
+            f"/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(len(response.get_json()["turnos"]), 1)
+
+    def test_api_turnos_el_corte_continua_funcionando(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._execute(
+            "UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1"
+        )
+
+        response = self.client.get(
+            f"/b/el-corte/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_turnos_dos_requests_consecutivos_mantienen_tenant(self):
+        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response_a = self.client.get(
+            f"/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111"
+        )
+        response_b = self.client.get(
+            f"/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222"
+        )
+
+        self.assertEqual(response_a.get_json()["turnos"][0]["customer_name"], "Cliente A")
+        self.assertEqual(response_b.get_json()["turnos"][0]["customer_name"], "Cliente B")
+
+    def test_api_turnos_mantiene_estructura_json_y_validaciones(self):
+        response = self.client.get("/b/business-a/api/turnos")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "El nombre es obligatorio.")
+
+        response = self.client.get("/b/business-a/api/turnos?nombre=Cliente+A")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"],
+            "El teléfono es obligatorio para consultar tus turnos.",
+        )
 
     def test_api_reservar_business_a_puede_reservar_servicio_de_a(self):
         payload = {
