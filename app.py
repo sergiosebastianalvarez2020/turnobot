@@ -813,11 +813,7 @@ def business_api_turnos(slug):
 # API - RESERVAR
 # ============================================================
 
-@app.route(
-    "/api/reservar",
-    methods=["POST"]
-)
-def api_reservar():
+def _create_public_appointment_response(business_id):
 
     if not is_api_request_allowed(get_client_ip()):
         return jsonify({
@@ -872,7 +868,6 @@ def api_reservar():
             }), 400
 
 
-        business_id = get_current_business_id()
         services = get_active_services_scoped(business_id) if business_id is not None else []
         allowed_services = {row["name"] for row in services}
 
@@ -908,7 +903,7 @@ def api_reservar():
 
             appointment_time=hora,
 
-            business_id=get_current_business_id(),
+            business_id=business_id,
         )
 
 
@@ -1027,6 +1022,31 @@ def api_reservar():
             "success": False,
             "error": "No se pudo realizar la reserva."
         }), 500
+
+
+@app.route(
+    "/api/reservar",
+    methods=["POST"]
+)
+def api_reservar():
+    return _create_public_appointment_response(get_current_business_id())
+
+
+@app.route(
+    "/b/<slug>/api/reservar",
+    methods=["POST"]
+)
+def business_api_reservar(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _create_public_appointment_response(business_id)
 
 
 # ============================================================

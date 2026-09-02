@@ -272,6 +272,190 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             "El teléfono es obligatorio para consultar tus turnos.",
         )
 
+    def _reservation_payload(self, service, name="Cliente", phone="123456789", **extra):
+        payload = {
+            "nombre": name,
+            "telefono": phone,
+            "servicio": service,
+            "fecha": self.valid_date,
+            "hora": "09:00",
+        }
+        payload.update(extra)
+        return payload
+
+    def test_api_reservar_scoped_business_a_crea_turno_propio(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", name="Cliente A"),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("appointment_id", data)
+        self.assertEqual(
+            self._query("SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],))[0][0],
+            1,
+        )
+
+    def test_api_reservar_scoped_business_b_crea_turno_propio(self):
+        response = self.client.post(
+            "/b/business-b/api/reservar",
+            json=self._reservation_payload("Servicio B", name="Cliente B", phone="987654321"),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual(
+            self._query("SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],))[0][0],
+            2,
+        )
+
+    def test_api_reservar_scoped_rechaza_servicio_de_otro_business(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Servicio B"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "El servicio seleccionado no es válido.")
+        self.assertEqual(self._query("SELECT COUNT(*) FROM appointments")[0][0], 0)
+
+    def test_api_reservar_scoped_business_b_rechaza_servicio_de_a(self):
+        response = self.client.post(
+            "/b/business-b/api/reservar",
+            json=self._reservation_payload("Corte"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "El servicio seleccionado no es válido.")
+        self.assertEqual(self._query("SELECT COUNT(*) FROM appointments")[0][0], 0)
+
+    def test_api_reservar_business_id_json_no_cambia_el_tenant(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", business_id=2),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertEqual(
+            self._query("SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],))[0][0],
+            1,
+        )
+
+    def test_api_reservar_precio_del_cliente_no_controla_backend(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", precio=0),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        appointment = self._query(
+            "SELECT business_id, service FROM appointments WHERE id = ?",
+            (data["appointment_id"],),
+        )[0]
+        self.assertEqual(appointment["business_id"], 1)
+        self.assertEqual(appointment["service"], "Corte")
+
+    def test_api_reservar_duracion_del_cliente_no_controla_backend(self):
+        response = self.client.post(
+            "/b/business-b/api/reservar",
+            json=self._reservation_payload("Servicio B", duracion=1),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        appointment = self._query(
+            "SELECT business_id, service FROM appointments WHERE id = ?",
+            (data["appointment_id"],),
+        )[0]
+        self.assertEqual(appointment["business_id"], 2)
+        self.assertEqual(appointment["service"], "Servicio B")
+
+    def test_api_reservar_misma_hora_permitida_entre_businesses(self):
+        response_a = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", name="Cliente A"),
+        )
+        response_b = self.client.post(
+            "/b/business-b/api/reservar",
+            json=self._reservation_payload("Servicio B", name="Cliente B"),
+        )
+
+        self.assertEqual(response_a.status_code, 201)
+        self.assertEqual(response_b.status_code, 201)
+
+    def test_api_reservar_doble_reserva_mismo_business_continua_bloqueada(self):
+        payload_a = self._reservation_payload("Corte", name="Cliente A")
+        response_first = self.client.post("/b/business-a/api/reservar", json=payload_a)
+        response_second = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", name="Cliente A 2", phone="987654321"),
+        )
+
+        self.assertEqual(response_first.status_code, 201)
+        self.assertEqual(response_second.status_code, 400)
+        self.assertEqual(response_second.get_json()["reason"], "occupied")
+
+    def test_api_reservar_slug_inexistente_devuelve_404_y_no_crea_turno(self):
+        response = self.client.post(
+            "/b/slug-inexistente/api/reservar",
+            json=self._reservation_payload("Corte"),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self._query("SELECT COUNT(*) FROM appointments")[0][0], 0)
+
+    def test_api_reservar_el_corte_scoped_continua_funcionando(self):
+        self._execute(
+            "UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1"
+        )
+        response = self.client.post(
+            "/b/el-corte/api/reservar",
+            json=self._reservation_payload("Corte"),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_reservar_dos_requests_consecutivos_no_contaminan_tenant(self):
+        response_a = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", name="Cliente A"),
+        )
+        response_b = self.client.post(
+            "/b/business-b/api/reservar",
+            json=self._reservation_payload("Servicio B", name="Cliente B"),
+        )
+
+        self.assertEqual(response_a.status_code, 201)
+        self.assertEqual(response_b.status_code, 201)
+        rows = self._query(
+            "SELECT customer_name, business_id FROM appointments ORDER BY id"
+        )
+        self.assertEqual([(row["customer_name"], row["business_id"]) for row in rows], [
+            ("Cliente A", 1),
+            ("Cliente B", 2),
+        ])
+
+    def test_api_reservar_estructura_y_razones_de_error_compatibles(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", fecha="fecha-invalida"),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_date")
+
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", hora="hora-invalida"),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_time")
+
     def test_api_reservar_business_a_puede_reservar_servicio_de_a(self):
         payload = {
             "nombre": "Cliente A",
