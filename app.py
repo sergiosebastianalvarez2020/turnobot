@@ -648,9 +648,7 @@ def chat():
 # API - SERVICIOS
 # ============================================================
 
-@app.route("/api/servicios", methods=["GET"])
-def api_servicios():
-    business_id = get_current_business_id()
+def _get_public_services_response(business_id):
     if business_id is None:
         return jsonify({
             "success": False,
@@ -658,7 +656,6 @@ def api_servicios():
         }), 404
 
     services = get_active_services_scoped(business_id)
-
     servicios = []
     for row in services:
         servicios.append({
@@ -671,6 +668,21 @@ def api_servicios():
         "success": True,
         "servicios": servicios
     })
+
+
+@app.route("/api/servicios", methods=["GET"])
+def api_servicios():
+    return _get_public_services_response(get_current_business_id())
+
+
+@app.route("/b/<slug>/api/servicios", methods=["GET"])
+def business_api_servicios(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    return _get_public_services_response(get_current_business_id())
 
 
 # ============================================================
