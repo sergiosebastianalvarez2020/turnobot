@@ -98,6 +98,10 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)",
             (name, phone, "Servicio", self.valid_date, "09:00", business_id),
         )
+        return self._query(
+            "SELECT id FROM appointments WHERE customer_name = ? AND phone = ? AND business_id = ? ORDER BY id DESC LIMIT 1",
+            (name, phone, business_id),
+        )[0]["id"]
 
     def _business(self, business_id):
         return {
@@ -455,6 +459,184 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["reason"], "invalid_time")
+
+    def test_api_cancelar_business_a_cancela_su_turno(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "cancelled",
+        )
+
+    def test_api_cancelar_business_b_cancela_su_turno(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-b/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "222222222"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "cancelled",
+        )
+
+    def test_api_cancelar_business_a_no_cancela_turno_de_b(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "222222222"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_business_b_no_cancela_turno_de_a(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-b/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_business_id_artificial_no_cambia_tenant(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={
+                "appointment_id": appointment_id,
+                "telefono": "222222222",
+                "business_id": 2,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_telefono_incorrecto_no_cancela(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "999999999"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_appointment_id_incorrecto_no_cancela_otro(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={"appointment_id": appointment_id + 999, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_turno_ya_cancelado_conserva_comportamiento(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        payload = {"appointment_id": appointment_id, "telefono": "111111111"}
+
+        first_response = self.client.post("/b/business-a/api/cancelar", json=payload)
+        second_response = self.client.post("/b/business-a/api/cancelar", json=payload)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertFalse(second_response.get_json()["success"])
+
+    def test_api_cancelar_slug_inexistente_devuelve_404_y_no_modifica(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/slug-inexistente/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0]["status"],
+            "confirmed",
+        )
+
+    def test_api_cancelar_legacy_continua_funcionando(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_cancelar_el_corte_scoped_continua_funcionando(self):
+        self._execute(
+            "UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1"
+        )
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/el-corte/api/cancelar",
+            json={"appointment_id": appointment_id, "telefono": "111111111"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_cancelar_dos_requests_consecutivos_mantienen_tenants(self):
+        appointment_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        appointment_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response_a = self.client.post(
+            "/b/business-a/api/cancelar",
+            json={"appointment_id": appointment_a, "telefono": "111111111"},
+        )
+        response_b = self.client.post(
+            "/b/business-b/api/cancelar",
+            json={"appointment_id": appointment_b, "telefono": "222222222"},
+        )
+
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
+        rows = self._query(
+            "SELECT business_id, status FROM appointments WHERE id IN (?, ?) ORDER BY business_id",
+            (appointment_a, appointment_b),
+        )
+        self.assertEqual([(row["business_id"], row["status"]) for row in rows], [
+            (1, "cancelled"),
+            (2, "cancelled"),
+        ])
 
     def test_api_reservar_business_a_puede_reservar_servicio_de_a(self):
         payload = {

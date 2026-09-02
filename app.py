@@ -1053,12 +1053,7 @@ def business_api_reservar(slug):
 # API - CANCELAR
 # ============================================================
 
-@app.route(
-    "/api/cancelar",
-    methods=["POST"]
-)
-def api_cancelar():
-
+def _cancel_public_appointment_response(business_id):
     if not is_api_request_allowed(get_client_ip()):
         return jsonify({
             "success": False,
@@ -1092,7 +1087,7 @@ def api_cancelar():
         resultado = cancel_appointment(
             appointment_id,
             telefono,
-            get_current_business_id(),
+            business_id,
         )
 
 
@@ -1114,7 +1109,7 @@ def api_cancelar():
         })
 
 
-    except Exception as error:
+    except Exception:
 
         logger.exception("Error cancelando turno")
 
@@ -1122,6 +1117,31 @@ def api_cancelar():
             "success": False,
             "error": "No se pudo cancelar el turno."
         }), 500
+
+
+@app.route(
+    "/api/cancelar",
+    methods=["POST"]
+)
+def api_cancelar():
+    return _cancel_public_appointment_response(get_current_business_id())
+
+
+@app.route(
+    "/b/<slug>/api/cancelar",
+    methods=["POST"]
+)
+def business_api_cancelar(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _cancel_public_appointment_response(business_id)
 
 
 # ============================================================
