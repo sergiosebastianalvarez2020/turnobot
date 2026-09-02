@@ -689,34 +689,44 @@ def business_api_servicios(slug):
 # API - DISPONIBILIDAD
 # ============================================================
 
-@app.route(
-    "/api/disponibilidad/<fecha>",
-    methods=["GET"]
-)
-def api_disponibilidad(fecha):
-
+def _get_public_availability_response(fecha, business_id):
     if not is_api_request_allowed(get_client_ip()):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     try:
-
-        horarios = get_available_times(fecha, get_current_business_id())
-
+        horarios = get_available_times(fecha, business_id)
         return jsonify({
             "success": True,
             "fecha": fecha,
             "horarios_disponibles": horarios
         })
-
-
-    except Exception as error:
-
+    except Exception:
         logger.exception("Error consultando disponibilidad")
-
         return jsonify({
             "success": False,
             "error": "No se pudo consultar la disponibilidad."
         }), 500
+
+
+@app.route(
+    "/api/disponibilidad/<fecha>",
+    methods=["GET"]
+)
+def api_disponibilidad(fecha):
+    return _get_public_availability_response(fecha, get_current_business_id())
+
+
+@app.route(
+    "/b/<slug>/api/disponibilidad/<fecha>",
+    methods=["GET"]
+)
+def business_api_disponibilidad(slug, fecha):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    return _get_public_availability_response(fecha, get_current_business_id())
 
 
 # ============================================================

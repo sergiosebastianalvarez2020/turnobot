@@ -247,5 +247,174 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(nombres, ["Corte", "Corte + barba", "Barba"])
 
 
+class TestPublicApiAvailabilityIsolation(unittest.TestCase):
+    def setUp(self):
+        application.rate_limit_state.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_database_path = database.DATABASE_PATH
+        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+        database.init_database()
+
+        weekday = next_open_day()
+        day_index = datetime.fromisoformat(weekday).weekday()
+
+        self._execute(
+            "UPDATE businesses SET name = 'Business A', slug = 'business-a' WHERE id = 1"
+        )
+        self._execute(
+            "UPDATE business_settings SET business_name = 'Business A', business_type = 'Barbería', business_initials = 'BA', business_description = 'Negocio A', timezone = 'America/Argentina/Buenos_Aires', slot_duration = 30, break_between_slots = 0, business_id = 1 WHERE id = 1"
+        )
+        self._execute(
+            "UPDATE services SET name = 'Corte A', price = 20000, duration = 30, active = 1, business_id = 1 WHERE id = 1"
+        )
+        self._execute(
+            "UPDATE services SET name = 'Barba A', price = 15000, duration = 20, active = 1, business_id = 1 WHERE id = 2"
+        )
+        self._execute(
+            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '10:30', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
+            (day_index,),
+        )
+
+        self._execute(
+            "INSERT OR REPLACE INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
+        )
+        self._execute(
+            "INSERT OR REPLACE INTO services (id, name, price, duration, active, business_id) VALUES (4, 'Corte B', 22000, 60, 1, 2)"
+        )
+        self._execute(
+            "INSERT OR REPLACE INTO weekly_schedules (id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end, business_id) VALUES (10, ?, 1, '11:00', '12:00', NULL, NULL, 2)",
+            (day_index,),
+        )
+
+        self.valid_date = weekday
+        self.client = application.app.test_client()
+
+    def tearDown(self):
+        database.DATABASE_PATH = self.original_database_path
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _execute(sql, params=None):
+        connection = database.get_connection()
+        try:
+            connection.execute(sql, params or ())
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_api_disponibilidad_uses_business_a_when_route_is_business_a(self):
+        api_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(api_response.status_code, 200)
+        data = api_response.get_json()
+        self.assertIn("09:00", data["horarios_disponibles"])
+        self.assertIn("09:30", data["horarios_disponibles"])
+        self.assertIn("10:00", data["horarios_disponibles"])
+        self.assertNotIn("11:00", data["horarios_disponibles"])
+
+    def test_api_disponibilidad_uses_business_b_when_route_is_business_b(self):
+        api_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(api_response.status_code, 200)
+        data = api_response.get_json()
+        self.assertIn("11:00", data["horarios_disponibles"])
+        self.assertNotIn("09:00", data["horarios_disponibles"])
+
+    def test_business_a_slots_do_not_appear_for_business_b(self):
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        slots_a = set(a_response.get_json()["horarios_disponibles"])
+
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        slots_b = set(b_response.get_json()["horarios_disponibles"])
+
+        self.assertTrue(slots_a.isdisjoint(slots_b))
+        self.assertNotIn("11:00", slots_a)
+        self.assertNotIn("09:00", slots_b)
+
+    def test_business_b_slots_do_not_appear_for_business_a(self):
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        slots_b = set(b_response.get_json()["horarios_disponibles"])
+
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        slots_a = set(a_response.get_json()["horarios_disponibles"])
+
+        self.assertTrue(slots_a.isdisjoint(slots_b))
+        self.assertNotIn("11:00", slots_a)
+        self.assertNotIn("09:00", slots_b)
+
+    def test_confirmed_appointment_in_a_blocks_only_a(self):
+        self._execute(
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', 1)",
+            ("Cliente A", "123456789", "Corte A", self.valid_date, "09:00",),
+        )
+
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        self.assertNotIn("09:00", a_response.get_json()["horarios_disponibles"])
+
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        self.assertIn("11:00", b_response.get_json()["horarios_disponibles"])
+
+    def test_confirmed_appointment_in_b_blocks_only_b(self):
+        self._execute(
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', 2)",
+            ("Cliente B", "987654321", "Corte B", self.valid_date, "11:00",),
+        )
+
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        self.assertNotIn("11:00", b_response.get_json()["horarios_disponibles"])
+
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        self.assertIn("09:00", a_response.get_json()["horarios_disponibles"])
+
+    def test_closed_day_for_a_does_not_return_business_b_slots(self):
+        self._execute(
+            "UPDATE weekly_schedules SET is_open = 0, morning_start = NULL, morning_end = NULL, afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
+            (datetime.fromisoformat(self.valid_date).weekday(),),
+        )
+
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(a_response.get_json()["horarios_disponibles"], [])
+
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        self.assertIn("11:00", b_response.get_json()["horarios_disponibles"])
+
+    def test_slot_duration_does_not_mix_between_businesses(self):
+        a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
+        a_slots = set(a_response.get_json()["horarios_disponibles"])
+
+        b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
+        b_slots = set(b_response.get_json()["horarios_disponibles"])
+
+        self.assertIn("09:00", a_slots)
+        self.assertIn("09:30", a_slots)
+        self.assertIn("11:00", b_slots)
+        self.assertNotIn("09:00", b_slots)
+
+    def test_business_id_from_client_is_ignored(self):
+        response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}?business_id=2")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn("09:00", data["horarios_disponibles"])
+        self.assertNotIn("11:00", data["horarios_disponibles"])
+
+    def test_legacy_api_disponibilidad_still_works(self):
+        response = self.client.get(f"/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("horarios_disponibles", response.get_json())
+
+    def test_business_el_corte_api_disponibilidad_still_works(self):
+        self._execute(
+            "UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1"
+        )
+        self._execute(
+            "UPDATE business_settings SET business_name = 'El Corte', business_type = 'Barbería', business_initials = 'EC', business_description = 'Negocio principal', timezone = 'America/Argentina/Buenos_Aires', slot_duration = 30, break_between_slots = 0, business_id = 1 WHERE id = 1"
+        )
+        response = self.client.get(f"/b/el-corte/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("horarios_disponibles", response.get_json())
+
+    def test_slug_inexistente_deve_devolver_404(self):
+        response = self.client.get(f"/b/slug-inexistente/api/disponibilidad/{self.valid_date}")
+        self.assertEqual(response.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()
