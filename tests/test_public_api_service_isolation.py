@@ -93,10 +93,10 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         finally:
             connection.close()
 
-    def _insert_confirmed_appointment(self, name, phone, business_id):
+    def _insert_confirmed_appointment(self, name, phone, business_id, appointment_time="09:00"):
         self._execute(
             "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)",
-            (name, phone, "Servicio", self.valid_date, "09:00", business_id),
+            (name, phone, "Servicio", self.valid_date, appointment_time, business_id),
         )
         return self._query(
             "SELECT id FROM appointments WHERE customer_name = ? AND phone = ? AND business_id = ? ORDER BY id DESC LIMIT 1",
@@ -636,6 +636,272 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual([(row["business_id"], row["status"]) for row in rows], [
             (1, "cancelled"),
             (2, "cancelled"),
+        ])
+
+    def _reschedule_payload(self, appointment_id, phone, new_date=None, new_time="10:00", **extra):
+        payload = {
+            "appointment_id": appointment_id,
+            "telefono": phone,
+            "nueva_fecha": new_date or self.valid_date,
+            "nueva_hora": new_time,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_api_reprogramar_business_a_mueve_su_turno(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        appointment = self._query(
+            "SELECT appointment_date, appointment_time, business_id FROM appointments WHERE id = ?",
+            (appointment_id,),
+        )[0]
+        self.assertEqual(appointment["appointment_time"], "10:00")
+        self.assertEqual(appointment["business_id"], 1)
+
+    def test_api_reprogramar_business_b_mueve_su_turno(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-b/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "222222222"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        appointment = self._query(
+            "SELECT appointment_time, business_id FROM appointments WHERE id = ?",
+            (appointment_id,),
+        )[0]
+        self.assertEqual(appointment["appointment_time"], "10:00")
+        self.assertEqual(appointment["business_id"], 2)
+
+    def test_api_reprogramar_business_a_no_mueve_turno_de_b(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "222222222"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+        self.assertEqual(
+            self._query("SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,))[0]["appointment_time"],
+            "09:00",
+        )
+
+    def test_api_reprogramar_business_b_no_mueve_turno_de_a(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-b/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+
+    def test_api_reprogramar_business_id_artificial_no_cambia_tenant(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "222222222", business_id=2),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+
+    def test_api_reprogramar_appointment_id_ajeno_no_cruza_tenant(self):
+        appointment_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        appointment_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_b, "222222222"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+        self.assertEqual(
+            self._query("SELECT appointment_time FROM appointments WHERE id = ?", (appointment_a,))[0]["appointment_time"],
+            "09:00",
+        )
+
+    def test_api_reprogramar_telefono_ajeno_no_cruza_tenant(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "222222222"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+
+    def test_api_reprogramar_horario_ocupado_en_a_bloquea_a(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._insert_confirmed_appointment("Otro A", "333333333", 1, appointment_time="10:00")
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "occupied")
+
+    def test_api_reprogramar_horario_ocupado_en_b_no_bloquea_a(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_reprogramar_misma_hora_permitida_entre_businesses(self):
+        appointment_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        appointment_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response_a = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_a, "111111111"),
+        )
+        response_b = self.client.post(
+            "/b/business-b/api/reprogramar",
+            json=self._reschedule_payload(appointment_b, "222222222"),
+        )
+
+        self.assertTrue(response_a.get_json()["success"])
+        self.assertTrue(response_b.get_json()["success"])
+
+    def test_api_reprogramar_turno_cancelado_no_se_mueve(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        self._execute(
+            "UPDATE appointments SET status = 'cancelled' WHERE id = ?",
+            (appointment_id,),
+        )
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+
+    def test_api_reprogramar_slug_inexistente_no_modifica_turno(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/slug-inexistente/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            self._query("SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,))[0]["appointment_time"],
+            "09:00",
+        )
+
+    def test_api_reprogramar_fecha_pasada_conserva_razon(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(
+                appointment_id,
+                "111111111",
+                new_date=(datetime.now() - timedelta(days=1)).date().isoformat(),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "past_date")
+
+    def test_api_reprogramar_dia_cerrado_conserva_razon(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        sunday = datetime.now().date()
+        while sunday.weekday() != 6:
+            sunday += timedelta(days=1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111", new_date=sunday.isoformat()),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "closed_day")
+
+    def test_api_reprogramar_horario_fuera_de_jornada_conserva_razon(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111", new_time="22:00"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_time")
+
+    def test_api_reprogramar_legacy_continua_funcionando(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_reprogramar_el_corte_scoped_continua_funcionando(self):
+        self._execute(
+            "UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1"
+        )
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/el-corte/api/reprogramar",
+            json=self._reschedule_payload(appointment_id, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+
+    def test_api_reprogramar_dos_requests_consecutivos_mantienen_tenants(self):
+        appointment_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        appointment_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+
+        response_a = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(appointment_a, "111111111"),
+        )
+        response_b = self.client.post(
+            "/b/business-b/api/reprogramar",
+            json=self._reschedule_payload(appointment_b, "222222222"),
+        )
+
+        self.assertTrue(response_a.get_json()["success"])
+        self.assertTrue(response_b.get_json()["success"])
+        rows = self._query(
+            "SELECT business_id, appointment_time FROM appointments WHERE id IN (?, ?) ORDER BY business_id",
+            (appointment_a, appointment_b),
+        )
+        self.assertEqual([(row["business_id"], row["appointment_time"]) for row in rows], [
+            (1, "10:00"),
+            (2, "10:00"),
         ])
 
     def test_api_reservar_business_a_puede_reservar_servicio_de_a(self):

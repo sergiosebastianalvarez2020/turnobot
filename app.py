@@ -1148,11 +1148,7 @@ def business_api_cancelar(slug):
 # API - REPROGRAMAR
 # ============================================================
 
-@app.route(
-    "/api/reprogramar",
-    methods=["POST"]
-)
-def api_reprogramar():
+def _get_public_reschedule_response(business_id):
 
     if not is_api_request_allowed(get_client_ip()):
         return jsonify({
@@ -1211,7 +1207,7 @@ def api_reprogramar():
 
             telefono,
 
-            get_current_business_id(),
+            business_id,
         )
 
 
@@ -1340,6 +1336,31 @@ def api_reprogramar():
 
             "error": "No se pudo reprogramar el turno."
         }), 500
+
+
+@app.route(
+    "/api/reprogramar",
+    methods=["POST"]
+)
+def api_reprogramar():
+    return _get_public_reschedule_response(get_current_business_id())
+
+
+@app.route(
+    "/b/<slug>/api/reprogramar",
+    methods=["POST"]
+)
+def business_api_reprogramar(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _get_public_reschedule_response(business_id)
 
 
 # ============================================================
