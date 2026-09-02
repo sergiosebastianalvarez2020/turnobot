@@ -25,6 +25,7 @@ from database.database import (
     get_all_services,
     create_service,
     update_service,
+    get_active_services_scoped,
     get_all_services_scoped,
     create_service_scoped,
     update_service_scoped,
@@ -649,19 +650,22 @@ def chat():
 
 @app.route("/api/servicios", methods=["GET"])
 def api_servicios():
+    business_id = get_current_business_id()
+    if business_id is None:
+        return jsonify({
+            "success": False,
+            "error": "No hay un negocio activo para esta solicitud."
+        }), 404
 
-    services = get_active_services()
+    services = get_active_services_scoped(business_id)
 
     servicios = []
-
-    for nombre, info in services.items():
-
+    for row in services:
         servicios.append({
-            "nombre": nombre,
-            "precio": info["price"],
-            "duracion": info["duration"]
+            "nombre": row["name"],
+            "precio": row["price"],
+            "duracion": row["duration"]
         })
-
 
     return jsonify({
         "success": True,
@@ -826,9 +830,11 @@ def api_reservar():
             }), 400
 
 
-        services = get_active_services()
+        business_id = get_current_business_id()
+        services = get_active_services_scoped(business_id) if business_id is not None else []
+        allowed_services = {row["name"] for row in services}
 
-        if servicio not in services:
+        if servicio not in allowed_services:
 
             return jsonify({
                 "success": False,
