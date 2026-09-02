@@ -801,6 +801,15 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["reason"], "not_found")
 
+    def test_api_reprogramar_appointment_inexistente_conserva_razon(self):
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload(999999, "111111111"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["reason"], "not_found")
+
     def test_api_reprogramar_slug_inexistente_no_modifica_turno(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
 
