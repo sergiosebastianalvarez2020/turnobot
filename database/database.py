@@ -404,3 +404,169 @@ def update_appointment_status_scoped(appointment_id, status, business_id):
         return cursor.rowcount == 1
     finally:
         connection.close()
+
+
+# ============================================================
+# AUTENTICACIÓN / AUTORIZACIÓN MULTINEGOCIO
+#
+# El tenant SIEMPRE se deriva del slug de la URL (resolve_business) y la
+# autorización se comprueba contra business_users. Nunca se confía en
+# business_id/role provenientes del cliente.
+# ============================================================
+
+def get_user_by_email_scoped(email):
+    """Devuelve un usuario por email (con su id y estado)."""
+    if not email:
+        return None
+    connection = get_connection()
+    try:
+        return connection.execute(
+            "SELECT id, email, password_hash, active FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def get_user_by_id_scoped(user_id):
+    """Devuelve un usuario por id."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            "SELECT id, email, password_hash, active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def set_user_password_scoped(user_id, password_hash):
+    """Actualiza el hash de contraseña de un usuario."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def create_user_scoped(email, password_hash, active=True):
+    """Crea un usuario. Devuelve el id creado o None si el email existe."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "INSERT INTO users (email, password_hash, active) VALUES (?, ?, ?)",
+            (email, password_hash, 1 if active else 0),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return None
+    finally:
+        connection.close()
+
+
+def get_role_id_scoped(role_name):
+    """Devuelve el id del rol por nombre."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT id FROM roles WHERE name = ?", (role_name,)
+        ).fetchone()
+        return row["id"] if row else None
+    finally:
+        connection.close()
+
+
+def get_membership_scoped(user_id, business_id):
+    """Devuelve la membresía (user+business+rol) de un usuario en un negocio."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT bu.user_id, bu.business_id, r.name AS role_name
+            FROM business_users bu
+            JOIN roles r ON r.id = bu.role_id
+            WHERE bu.user_id = ? AND bu.business_id = ?
+            """,
+            (user_id, business_id),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def create_membership_scoped(user_id, business_id, role_name):
+    """Asocia un usuario a un negocio con un rol. Devuelve True/False."""
+    role_id = get_role_id_scoped(role_name)
+    if role_id is None:
+        return False
+    connection = get_connection()
+    try:
+        try:
+            connection.execute(
+                """
+                INSERT INTO business_users (user_id, business_id, role_id)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, business_id, role_id),
+            )
+            connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
+    finally:
+        connection.close()
+
+
+def create_session_scoped(user_id, token_hash, expires_at):
+    """Crea una sesión persistente. Devuelve el id de sesión."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO sessions (user_id, token_hash, expires_at, revoked)
+            VALUES (?, ?, ?, 0)
+            """,
+            (user_id, token_hash, expires_at),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def revoke_all_sessions_scoped(user_id):
+    """Revoca todas las sesiones activas de un usuario (logout completo)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
+            (user_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def is_session_valid_scoped(user_id, token_hash, now_iso):
+    """Devuelve True si existe una sesión activa, no revocada y no expirada."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT id FROM sessions
+            WHERE user_id = ?
+            AND token_hash = ?
+            AND revoked = 0
+            AND expires_at > ?
+            """,
+            (user_id, token_hash, now_iso),
+        ).fetchone()
+        return row is not None
+    finally:
+        connection.close()

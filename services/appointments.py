@@ -1,5 +1,7 @@
 import sqlite3
 import re
+import hashlib
+import secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -524,12 +526,14 @@ def create_appointment(
             # CREAR TURNO
             # ------------------------------------------------
 
+            management_token = secrets.token_urlsafe(32)
+            management_token_hash = hashlib.sha256(management_token.encode("utf-8")).hexdigest()
             cursor = connection.execute(
                 """
                 INSERT INTO appointments
-                (customer_name, phone, service, appointment_date,
-                 appointment_time, appointment_end, duration, business_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (customer_name, phone, service, appointment_date, appointment_time,
+                 appointment_end, duration, business_id, management_token_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     customer_name,
@@ -540,6 +544,7 @@ def create_appointment(
                     appointment_end,
                     duration,
                     business_id,
+                    management_token_hash,
                 ),
             )
 
@@ -548,6 +553,7 @@ def create_appointment(
             return {
                 "success": True,
                 "appointment_id": cursor.lastrowid,
+                "management_token": management_token,
                 "reason": "created",
             }
 
@@ -744,7 +750,7 @@ def get_customer_appointments(
 # CANCELAR TURNO
 # ============================================================
 
-def cancel_appointment(appointment_id, phone, business_id=None):
+def cancel_appointment(appointment_id, phone, business_id=None, management_token=None):
     """
     Cancela un turno confirmado.
 
@@ -769,7 +775,9 @@ def cancel_appointment(appointment_id, phone, business_id=None):
     # VALIDAR TELÉFONO
     # --------------------------------------------------------
 
-    if not validate_phone(phone):
+    if management_token is not None and (not isinstance(management_token, str) or not management_token):
+        return False
+    if management_token is None and not validate_phone(phone):
         return False
 
     # --------------------------------------------------------
@@ -802,11 +810,13 @@ def cancel_appointment(appointment_id, phone, business_id=None):
                     SELECT id
                     FROM appointments
                     WHERE id = ?
-                    AND phone = ?
                     AND status = 'confirmed'
                     AND business_id = ?
+                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                     """,
-                    (appointment_id_int, normalize_phone(phone), business_id),
+                    (appointment_id_int, business_id,
+                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                     management_token, normalize_phone(phone)),
                 ).fetchone()
             else:
                 existing = connection.execute(
@@ -814,10 +824,12 @@ def cancel_appointment(appointment_id, phone, business_id=None):
                     SELECT id
                     FROM appointments
                     WHERE id = ?
-                    AND phone = ?
                     AND status = 'confirmed'
+                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                     """,
-                    (appointment_id_int, normalize_phone(phone)),
+                    (appointment_id_int,
+                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                     management_token, normalize_phone(phone)),
                 ).fetchone()
 
             if existing is None:
@@ -834,11 +846,13 @@ def cancel_appointment(appointment_id, phone, business_id=None):
                     UPDATE appointments
                     SET status = 'cancelled'
                     WHERE id = ?
-                    AND phone = ?
                     AND status = 'confirmed'
                     AND business_id = ?
+                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                     """,
-                    (appointment_id_int, normalize_phone(phone), business_id),
+                    (appointment_id_int, business_id,
+                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                     management_token, normalize_phone(phone)),
                 )
             else:
                 cursor = connection.execute(
@@ -846,10 +860,12 @@ def cancel_appointment(appointment_id, phone, business_id=None):
                     UPDATE appointments
                     SET status = 'cancelled'
                     WHERE id = ?
-                    AND phone = ?
                     AND status = 'confirmed'
+                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                     """,
-                    (appointment_id_int, normalize_phone(phone)),
+                    (appointment_id_int,
+                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                     management_token, normalize_phone(phone)),
                 )
 
             connection.commit()
@@ -874,6 +890,7 @@ def reschedule_appointment(
     new_time,
     phone,
     business_id=None,
+    management_token=None,
 ):
     """
     Cambia la fecha y hora de un turno confirmado.
@@ -899,7 +916,9 @@ def reschedule_appointment(
     # VALIDAR TELÉFONO
     # --------------------------------------------------------
 
-    if not validate_phone(phone):
+    if management_token is not None and (not isinstance(management_token, str) or not management_token):
+        return {"success": False, "reason": "not_found"}
+    if management_token is None and not validate_phone(phone):
         return {
             "success": False,
             "reason": "invalid_phone",
@@ -940,11 +959,13 @@ def reschedule_appointment(
                 SELECT *
                 FROM appointments
                 WHERE id = ?
-                AND phone = ?
                 AND status = 'confirmed'
                 AND business_id = ?
+                AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                 """,
-                (appointment_id_int, normalize_phone(phone), business_id),
+                (appointment_id_int, business_id,
+                 hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                 management_token, normalize_phone(phone)),
             ).fetchone()
 
             if appointment is None:
@@ -1041,9 +1062,12 @@ def reschedule_appointment(
                 """
                 UPDATE appointments
                 SET appointment_date = ?, appointment_time = ?, appointment_end = ?
-                WHERE id = ? AND phone = ? AND status = 'confirmed' AND business_id = ?
+                WHERE id = ? AND status = 'confirmed' AND business_id = ?
+                AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
                 """,
-                (new_date, new_time, new_end, appointment_id_int, normalize_phone(phone), business_id),
+                (new_date, new_time, new_end, appointment_id_int, business_id,
+                 hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
+                 management_token, normalize_phone(phone)),
             )
 
             connection.commit()

@@ -196,8 +196,18 @@
         <div class="error-msg">{{ error_message or "Contraseña incorrecta. Intentá nuevamente." }}</div>
         {% endif %}
 
-        <form method="POST" action="/login">
+        <form method="POST" action="{{ admin_prefix or '' }}/login">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="email">Email (opcional)</label>
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    placeholder="te@servicio.com"
+                    autofocus
+                >
+            </div>
             <div class="form-group">
                 <label for="password">Contraseña</label>
                 <input
@@ -205,7 +215,6 @@
                     id="password"
                     name="password"
                     placeholder="Ingresá la contraseña"
-                    autofocus
                     required
                 >
             </div>
@@ -213,7 +222,7 @@
             <button type="submit" class="btn-login">Ingresar</button>
         </form>
 
-        <a href="/" class="back-link">Volver al chat</a>
+        <a href="{{ admin_prefix or '' }}/" class="back-link">Volver al chat</a>
     </div>
 </body>
 </html>

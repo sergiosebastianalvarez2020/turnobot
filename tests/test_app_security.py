@@ -44,6 +44,17 @@ class TestAdminSecurity(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/admin", response.location)
 
+    def test_post_administrativo_sin_csrf_no_modifica_estado(self):
+        login_page = self.client.get("/login")
+        token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        login = self.client.post("/login", data={"password": "correcta", "csrf_token": token})
+        self.assertEqual(login.status_code, 302)
+        response = self.client.post(
+            "/admin/configuracion",
+            data={"business_name": "atacante", "business_type": "x", "business_initials": "X", "timezone": "UTC"},
+        )
+        self.assertEqual(response.status_code, 400)
+
 
 class TestDomainValidation(unittest.TestCase):
     def setUp(self):

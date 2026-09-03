@@ -458,6 +458,12 @@ cancelar_turno_declaration = types.FunctionDeclaration(
 )
 
 
+# Gemini receives the H5 secret explicitly; the service enforces it for new appointments.
+cancelar_turno_declaration.parameters_json_schema["properties"]["management_token"] = {
+    "type": "string",
+    "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
+}
+
 # ============================================================
 # HERRAMIENTA 5
 # REPROGRAMAR TURNO
@@ -489,6 +495,11 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
             "telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
+            },
+
+            "management_token": {
+                "type": "string",
+                "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
             },
 
             "nueva_fecha": {
@@ -622,6 +633,7 @@ def execute_tool(name, arguments, business_id=None):
                 "success": True,
 
                 "appointment_id": resultado["appointment_id"],
+                "management_token": resultado.get("management_token"),
 
                 "message": (
                     "El turno fue reservado "
@@ -697,6 +709,7 @@ def execute_tool(name, arguments, business_id=None):
                 appointment_id,
                 arguments["telefono"],
                 business_id,
+                arguments.get("management_token"),
             )
 
 
@@ -767,6 +780,7 @@ def execute_tool(name, arguments, business_id=None):
 
                 phone=arguments["telefono"],
                 business_id=business_id,
+                management_token=arguments.get("management_token"),
             )
 
 

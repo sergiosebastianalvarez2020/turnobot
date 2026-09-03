@@ -1,16 +1,20 @@
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+import hashlib
 import secrets
 import math
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections import defaultdict, deque
 from functools import wraps
 from time import monotonic
+import datetime
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from dotenv import load_dotenv
 from flask import Flask, abort, g, render_template, render_template_string, request, jsonify, session, redirect, url_for
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from services.ai import ask_ai
 from database.database import (
@@ -40,6 +44,15 @@ from services.appointments import (
     get_appointments,
     get_appointment_counts,
 )
+from database.database import (
+    get_user_by_email_scoped,
+    get_user_by_id_scoped,
+    get_membership_scoped,
+    create_session_scoped,
+    revoke_all_sessions_scoped,
+    is_session_valid_scoped,
+)
+from database.seed_auth import migrate_owner_from_module_hash
 
 
 load_dotenv()
@@ -76,6 +89,28 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
 )
+
+# X-Forwarded-* is trusted only when an explicitly configured reverse proxy is
+# in front of the application.  With the default of zero, request.remote_addr
+# remains the peer address and client-supplied forwarding headers are ignored.
+try:
+    TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
+except ValueError as error:
+    raise RuntimeError("TRUSTED_PROXY_COUNT debe ser un entero >= 0") from error
+if TRUSTED_PROXY_COUNT < 0:
+    raise RuntimeError("TRUSTED_PROXY_COUNT debe ser un entero >= 0")
+if TRUSTED_PROXY_COUNT:
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=TRUSTED_PROXY_COUNT,
+        x_proto=TRUSTED_PROXY_COUNT,
+        x_host=TRUSTED_PROXY_COUNT,
+        x_port=TRUSTED_PROXY_COUNT,
+        x_prefix=TRUSTED_PROXY_COUNT,
+    )
+
+default_lifetime = int(os.getenv("SESSION_LIFETIME_SECONDS", "86400"))
+app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(seconds=default_lifetime)
 
 init_database()
 
@@ -118,6 +153,16 @@ def load_current_business():
 
     g.current_business = resolve_business()
     return None
+
+
+@app.context_processor
+def inject_admin_prefix():
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1 and business.get("slug"):
+        admin_prefix = f"/b/{business['slug']}"
+    else:
+        admin_prefix = ""
+    return {"admin_prefix": admin_prefix}
 
 
 @app.context_processor
@@ -234,26 +279,112 @@ def json_object():
     return data if isinstance(data, dict) else None
 
 
-def is_chat_request_allowed(client_ip):
-    return _is_request_allowed(f"chat:{client_ip}", CHAT_REQUEST_LIMIT)
+def _rate_limit_key(endpoint, client_ip, business_id=None, user_id=None):
+    # Values come only from Flask's resolved request/session context, never
+    # from request data supplied by the caller.
+    scope = f"user:{user_id}:business:{business_id}" if user_id else f"ip:{client_ip}:business:{business_id}"
+    return f"{endpoint}:{scope}"
 
 
-def is_api_request_allowed(client_ip):
-    return _is_request_allowed(f"api:{client_ip}", API_REQUEST_LIMIT)
+def is_chat_request_allowed(client_ip, business_id=None):
+    return _is_request_allowed(_rate_limit_key("chat", client_ip, business_id), CHAT_REQUEST_LIMIT)
+
+
+def is_api_request_allowed(client_ip, endpoint="api", business_id=None, user_id=None):
+    return _is_request_allowed(
+        _rate_limit_key(endpoint, client_ip, business_id, user_id), API_REQUEST_LIMIT
+    )
 
 
 def is_login_request_allowed(client_ip):
-    return _is_request_allowed(f"login:{client_ip}", 10)
+    return _is_request_allowed(_rate_limit_key("login", client_ip), 10)
 
 
-def admin_required(f):
+def _hash_session_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _login_url():
+    business_id = get_current_business_id()
+    if business_id == 1:
+        return url_for("login")
+    return url_for("login_slug", slug=g.current_business["slug"])
+
+
+def _is_authenticated():
+    """Valida una sesión activa (usuario y sesión persistente válida para el negocio actual)."""
+    user_id = session.get("user_id")
+    token = session.get("session_token")
+    if not user_id or not token:
+        return False
+
+    user = get_user_by_id_scoped(user_id)
+    if not user or not user["active"]:
+        return False
+
+    # La sesión persistente también está restringida al negocio actual:
+    # se crea tras autenticar contra business_users, y se revoca en logout.
+    if not is_session_valid_scoped(user_id, _hash_session_token(token), _now_iso()):
+        return False
+
+    return True
+
+
+def login_required(f):
+    """Requiere una sesión activa (sin restringir el negocio objetivo)."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("admin") or session.get("admin_business_id") != get_current_business_id():
+        if not _is_authenticated():
             session.clear()
-            return redirect(url_for("login"))
+            return redirect(_login_url())
         return f(*args, **kwargs)
     return decorated
+
+
+def membership_required(*role_names):
+    """Requiere que el usuario autenticado tenga una membresía con rol(es)
+    permitido(s) en el negocio resuelto por el slug de la URL (nunca del cliente)."""
+    allowed = set(role_names)
+
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not _is_authenticated():
+                session.clear()
+                return redirect(_login_url())
+
+            user_id = session.get("user_id")
+            business_id = get_current_business_id()
+            membership = get_membership_scoped(user_id, business_id) if business_id else None
+            if not membership or membership["role_name"] not in allowed:
+                session.clear()
+                return redirect(_login_url())
+
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+def _require_admin_membership():
+    """
+    Comprueba autenticación + membresía administrativa (owner/admin) para el
+    negocio resuelto por el slug. Retorna None si es válido, o una respuesta
+    redirigida de login si no.
+    """
+    if not _is_authenticated():
+        session.clear()
+        return redirect(_login_url())
+    user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    membership = get_membership_scoped(user_id, business_id) if business_id else None
+    if not membership or membership["role_name"] not in {"owner", "admin"}:
+        session.clear()
+        return redirect(_login_url())
+    return None
 
 
 # ============================================================
@@ -340,35 +471,133 @@ def health():
 # LOGIN / LOGOUT ADMIN
 # ============================================================
 
+def _establish_session(user_id):
+    """Crea una sesión persistente tras un login exitoso y regenera la sesión HTTP."""
+    old_csrf = session.get("csrf_token")
+    session.clear()
+    session["user_id"] = user_id
+    token = secrets.token_urlsafe(48)
+    session["session_token"] = token
+    session.permanent = True
+    lifetime = app.config["PERMANENT_SESSION_LIFETIME"]
+    expires_at = (
+        datetime.datetime.now(datetime.timezone.utc) + lifetime
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    create_session_scoped(user_id, _hash_session_token(token), expires_at)
+    # mantenemos el mismo token CSRF para no invalidar formularios ya abiertos
+    session["csrf_token"] = old_csrf or csrf_token()
+
+
+def _authenticate_login(business, email, password):
+    """
+    Autentica email+password contra users/business_users para el negocio dado.
+    Retorna (user_id, None) o (None, mensaje_error).
+    """
+    if not is_login_request_allowed(get_client_ip()):
+        return None, "Demasiados intentos. Esperá unos minutos."
+
+    if business is None:
+        return None, "Negocio no encontrado."
+
+    email = (email or "").strip().lower()
+    user = get_user_by_email_scoped(email) if email else None
+
+    if user is not None:
+        if not user["active"]:
+            return None, "Credenciales inválidas."
+        membership = get_membership_scoped(user["id"], business["id"])
+        if not membership or membership["role_name"] == "customer":
+            return None, "No tenés acceso administrativo a este negocio."
+        if not password or not check_password_hash(user["password_hash"], password):
+            return None, "Credenciales inválidas."
+        return user["id"], None
+
+    # --- Bootstrap de migración (negocio 1 solamente) -------------------------
+    # Convierte la credencial administrativa histórica (module/env
+    # ADMIN_PASSWORD_HASH) en el owner del negocio 1 dentro del modelo
+    # users/business_users. MECANISMO DE MIGRACIÓN: una vez migrado, la
+    # autenticación normal usa users/business_users/sessions.
+    if business["id"] == 1 and ADMIN_PASSWORD_HASH:
+        if password and check_password_hash(ADMIN_PASSWORD_HASH, password):
+            user_id = migrate_owner_from_module_hash(
+                1, email or "admin@turnobot.local", ADMIN_PASSWORD_HASH
+            )
+            if user_id is not None:
+                return user_id, None
+    return None, "Credenciales inválidas."
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == "GET":
-        if session.get("admin"):
-            return redirect(url_for("admin"))
-        return render_template("login.html", error=False)
-
-    if not valid_csrf_token(request.form.get("csrf_token")):
-        return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
-
-    password = request.form.get("password", "")
-    if not is_login_request_allowed(get_client_ip()):
-        return render_template("login.html", error=True, error_message="Demasiados intentos. Esperá unos minutos."), 429
-    authenticated = bool(ADMIN_PASSWORD_HASH and check_password_hash(ADMIN_PASSWORD_HASH, password))
-
-    if authenticated:
-        session["admin"] = True
-        session["admin_business_id"] = get_current_business_id()
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
+        user_id, error = _authenticate_login(
+            g.current_business,
+            request.form.get("email", ""),
+            request.form.get("password", ""),
+        )
+        if user_id is None:
+            return render_template("login.html", error=True, error_message=error), (
+                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
+            )
+        _establish_session(user_id)
         return redirect(url_for("admin"))
 
-    return render_template("login.html", error=True)
+    if session.get("user_id"):
+        return redirect(url_for("admin"))
+    return render_template("login.html", error=False)
+
+
+@app.route("/b/<slug>/login", methods=["GET", "POST"])
+def login_slug(slug):
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
+        user_id, error = _authenticate_login(
+            business,
+            request.form.get("email", ""),
+            request.form.get("password", ""),
+        )
+        if user_id is None:
+            return render_template("login.html", error=True, error_message=error), (
+                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
+            )
+        _establish_session(user_id)
+        return redirect(url_for("admin_slug", slug=business["slug"]))
+
+    if session.get("user_id"):
+        return redirect(url_for("admin_slug", slug=business["slug"]))
+    return render_template("login.html", error=False)
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
+    user_id = session.get("user_id")
+    if user_id:
+        revoke_all_sessions_scoped(user_id)
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/b/<slug>/logout", methods=["POST"])
+def logout_slug(slug):
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user_id = session.get("user_id")
+    if user_id:
+        revoke_all_sessions_scoped(user_id)
+    session.clear()
+    return redirect(url_for("login_slug", slug=business["slug"]))
 
 
 # ============================================================
@@ -376,12 +605,37 @@ def logout():
 # ============================================================
 
 @app.route("/admin")
-@admin_required
 def admin():
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    return _render_admin()
+
+
+@app.route("/b/<slug>/admin")
+def admin_slug(slug):
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    return _render_admin()
+
+
+def _render_admin():
     business_id = get_current_business_id()
     settings = get_business_settings_scoped(business_id)
-    if business_id is None or settings is None:
+    if business_id is None:
         abort(404)
+    if settings is None:
+        settings = {
+            "business_name": "Mi negocio",
+            "business_initials": "",
+            "business_type": "Negocio",
+            "business_description": "",
+            "timezone": "UTC",
+        }
     status = request.args.get("status") or "confirmed"
     if status not in {"confirmed", "cancelled"}:
         status = "confirmed"
@@ -431,15 +685,26 @@ def _service_form_data(form):
     return (name, price, duration, active), None
 
 
+def _admin_url(**kwargs):
+    """Devuelve la URL del panel admin, con prefijo de slug si aplica."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_slug", slug=business["slug"], **kwargs)
+    return url_for("admin", **kwargs)
+
+
 @app.route("/admin/servicios/guardar", methods=["POST"])
-@admin_required
-def admin_save_service():
+@app.route("/b/<slug>/admin/servicios/guardar", methods=["POST"])
+def admin_save_service(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
 
     values, error = _service_form_data(request.form)
     if error:
-        return redirect(url_for("admin", service_error=error))
+        return redirect(_admin_url(service_error=error))
 
     service_id = request.form.get("service_id", "").strip()
     try:
@@ -447,18 +712,21 @@ def admin_save_service():
             if not update_service_scoped(
                 int(service_id), get_current_business_id(), *values
             ):
-                return redirect(url_for("admin", service_error="No se encontró el servicio."))
+                return redirect(_admin_url(service_error="No se encontró el servicio."))
         else:
             create_service_scoped(get_current_business_id(), *values)
     except (TypeError, ValueError):
-        return redirect(url_for("admin", service_error="El identificador del servicio no es válido."))
+        return redirect(_admin_url(service_error="El identificador del servicio no es válido."))
 
-    return redirect(url_for("admin", service_message="El servicio se guardó correctamente."))
+    return redirect(_admin_url(service_message="El servicio se guardó correctamente."))
 
 
 @app.route("/admin/servicios/<int:service_id>/estado", methods=["POST"])
-@admin_required
-def admin_toggle_service(service_id):
+@app.route("/b/<slug>/admin/servicios/<int:service_id>/estado", methods=["POST"])
+def admin_toggle_service(service_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
 
@@ -469,7 +737,7 @@ def admin_toggle_service(service_id):
         None,
     )
     if not service:
-        return redirect(url_for("admin", service_error="No se encontró el servicio."))
+        return redirect(_admin_url(service_error="No se encontró el servicio."))
 
     update_service_scoped(
         service_id,
@@ -479,12 +747,15 @@ def admin_toggle_service(service_id):
         service["duration"],
         active,
     )
-    return redirect(url_for("admin", service_message="El estado del servicio se actualizó."))
+    return redirect(_admin_url(service_message="El estado del servicio se actualizó."))
 
 
 @app.route("/admin/configuracion", methods=["POST"])
-@admin_required
-def admin_update_business_settings():
+@app.route("/b/<slug>/admin/configuracion", methods=["POST"])
+def admin_update_business_settings(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
 
@@ -495,16 +766,14 @@ def admin_update_business_settings():
     timezone = request.form.get("timezone", "").strip()
 
     if not business_name or not business_type or not business_initials:
-        return redirect(url_for(
-            "admin",
+        return redirect(_admin_url(
             config_error="Nombre, tipo e iniciales son obligatorios.",
         ))
 
     try:
         ZoneInfo(timezone)
     except (TypeError, ValueError, ZoneInfoNotFoundError):
-        return redirect(url_for(
-            "admin",
+        return redirect(_admin_url(
             config_error="La zona horaria indicada no es válida.",
         ))
 
@@ -520,27 +789,32 @@ def admin_update_business_settings():
         timezone,
     )
 
-    return redirect(url_for(
-        "admin",
+    return redirect(_admin_url(
         config_message="La configuración del negocio se guardó correctamente.",
     ))
 
 
 @app.route("/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])
-@admin_required
-def admin_cancel_appointment(appointment_id):
+@app.route("/b/<slug>/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])
+def admin_cancel_appointment(appointment_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, "cancelled", business_id)
-    return redirect(url_for("admin", status="confirmed"))
+    return redirect(_admin_url(status="confirmed"))
 
 
 @app.route("/admin/turnos/<int:appointment_id>/estado", methods=["POST"])
-@admin_required
-def admin_update_appointment_status(appointment_id):
+@app.route("/b/<slug>/admin/turnos/<int:appointment_id>/estado", methods=["POST"])
+def admin_update_appointment_status(appointment_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
     status = request.form.get("status", "")
@@ -550,7 +824,7 @@ def admin_update_appointment_status(appointment_id):
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, status, business_id)
-    return redirect(url_for("admin", status=status if status in {"confirmed", "cancelled"} else "confirmed"))
+    return redirect(_admin_url(status=status if status in {"confirmed", "cancelled"} else "confirmed"))
 
 
 # ============================================================
@@ -569,7 +843,7 @@ def chat():
         if not isinstance(data, dict):
             return jsonify({"success": False, "error": "El formato enviado no es válido."}), 400
 
-        if not is_chat_request_allowed(get_client_ip()):
+        if not is_chat_request_allowed(get_client_ip(), get_current_business_id()):
             return jsonify({
                 "success": False,
                 "error": "Esperá un momento antes de enviar otro mensaje."
@@ -640,6 +914,8 @@ def chat():
 # ============================================================
 
 def _get_public_services_response(business_id):
+    if not is_api_request_allowed(get_client_ip(), "api:servicios", business_id):
+        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
     if business_id is None:
         return jsonify({
             "success": False,
@@ -681,7 +957,7 @@ def business_api_servicios(slug):
 # ============================================================
 
 def _get_public_availability_response(fecha, business_id):
-    if not is_api_request_allowed(get_client_ip()):
+    if not is_api_request_allowed(get_client_ip(), "api:disponibilidad", business_id):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     try:
@@ -725,7 +1001,7 @@ def business_api_disponibilidad(slug, fecha):
 # ============================================================
 
 def _get_public_appointments_response(business_id):
-    if not is_api_request_allowed(get_client_ip()):
+    if not is_api_request_allowed(get_client_ip(), "api:turnos", business_id):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     nombre = request.args.get(
@@ -806,7 +1082,7 @@ def business_api_turnos(slug):
 
 def _create_public_appointment_response(business_id):
 
-    if not is_api_request_allowed(get_client_ip()):
+    if not is_api_request_allowed(get_client_ip(), "api:reservar", business_id):
         return jsonify({
             "success": False,
             "error": "Demasiadas solicitudes. Esperá un momento."
@@ -976,6 +1252,7 @@ def _create_public_appointment_response(business_id):
                 "appointment_id": resultado.get(
                     "appointment_id"
                 ),
+                "management_token": resultado.get("management_token"),
 
                 "message": "El turno fue reservado correctamente."
             }), 201
@@ -1045,7 +1322,7 @@ def business_api_reservar(slug):
 # ============================================================
 
 def _cancel_public_appointment_response(business_id):
-    if not is_api_request_allowed(get_client_ip()):
+    if not is_api_request_allowed(get_client_ip(), "api:cancelar", business_id):
         return jsonify({
             "success": False,
             "error": "Demasiadas solicitudes. Esperá un momento."
@@ -1071,6 +1348,10 @@ def _cancel_public_appointment_response(business_id):
                 "error": "Falta el ID del turno."
             }), 400
 
+        management_token = data.get("management_token")
+        if management_token is not None and (not isinstance(management_token, str) or not management_token):
+            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+
         if not telefono:
             return jsonify({"success": False, "error": "El teléfono es obligatorio."}), 400
 
@@ -1079,6 +1360,7 @@ def _cancel_public_appointment_response(business_id):
             appointment_id,
             telefono,
             business_id,
+            management_token,
         )
 
 
@@ -1141,7 +1423,7 @@ def business_api_cancelar(slug):
 
 def _get_public_reschedule_response(business_id):
 
-    if not is_api_request_allowed(get_client_ip()):
+    if not is_api_request_allowed(get_client_ip(), "api:reprogramar", business_id):
         return jsonify({
             "success": False,
             "error": "Demasiadas solicitudes. Esperá un momento."
@@ -1176,6 +1458,10 @@ def _get_public_reschedule_response(business_id):
                 "error": "Falta el ID del turno."
             }), 400
 
+        management_token = data.get("management_token")
+        if management_token is not None and (not isinstance(management_token, str) or not management_token):
+            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+
 
         if not nueva_fecha or not nueva_hora:
 
@@ -1199,6 +1485,7 @@ def _get_public_reschedule_response(business_id):
             telefono,
 
             business_id,
+            management_token,
         )
 
 
