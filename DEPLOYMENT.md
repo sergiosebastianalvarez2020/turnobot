@@ -57,6 +57,14 @@ CSRF porque no usan la sesión administrativa como autenticación; cancelación 
 reprogramación usan `management_token`. Este token es independiente del token
 CSRF y no debe confundirse con él.
 
+## Provisioning
+
+La creación de negocios se realiza actualmente mediante el comando controlado
+`python scripts/provision_business.py "Nombre" email contraseña`. La operación
+crea negocio, owner, membership, configuración y horarios iniciales dentro de
+una única transacción. No se expone como endpoint público hasta contar con un
+modelo de platform-admin, invitaciones y controles de abuso adecuados.
+
 ## Backups
 
 Con la aplicación detenida o en una tarea programada:

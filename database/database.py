@@ -1,6 +1,8 @@
 import os
 import sqlite3
+import re
 from pathlib import Path
+from werkzeug.security import generate_password_hash
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -108,6 +110,76 @@ def apply_migrations():
 
 def init_database():
     apply_migrations()
+
+
+def create_business_with_owner(name, email, password):
+    """Provisiona un negocio completo en una única transacción.
+
+    Esta operación está destinada a un comando/controlador de plataforma
+    confiable; no acepta IDs ni roles del cliente.
+    """
+    name = name.strip() if isinstance(name, str) else ""
+    email = email.strip().lower() if isinstance(email, str) else ""
+    password = password if isinstance(password, str) else ""
+    if not 2 <= len(name) <= 120:
+        raise ValueError("nombre de negocio inválido")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("email inválido")
+    if len(password) < 12:
+        raise ValueError("la contraseña debe tener al menos 12 caracteres")
+
+    base_slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-") or "negocio"
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        slug = base_slug
+        suffix = 2
+        while connection.execute("SELECT 1 FROM businesses WHERE slug = ?", (slug,)).fetchone():
+            slug = f"{base_slug}-{suffix}"
+            suffix += 1
+
+        business_cursor = connection.execute(
+            "INSERT INTO businesses (name, slug) VALUES (?, ?)", (name, slug)
+        )
+        business_id = business_cursor.lastrowid
+        user_cursor = connection.execute(
+            "INSERT INTO users (email, password_hash, active) VALUES (?, ?, 1)",
+            (email, generate_password_hash(password)),
+        )
+        user_id = user_cursor.lastrowid
+        owner_role = connection.execute(
+            "SELECT id FROM roles WHERE name = 'owner'"
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)",
+            (user_id, business_id, owner_role["id"]),
+        )
+        connection.execute(
+            """INSERT INTO business_settings
+               (business_name, slot_duration, break_between_slots, business_type,
+                business_initials, business_description, timezone, business_id)
+               VALUES (?, 60, 0, 'Negocio', ?, '', 'America/Argentina/Buenos_Aires', ?)""",
+            (name, "".join(word[0] for word in name.split())[:3].upper(), business_id),
+        )
+        for day in range(6):
+            connection.execute(
+                """INSERT INTO weekly_schedules
+                   (day_of_week, is_open, morning_start, morning_end,
+                    afternoon_start, afternoon_end, business_id)
+                   VALUES (?, 1, '09:00', '13:00', '15:00', '20:00', ?)""",
+                (day, business_id),
+            )
+        connection.execute(
+            "INSERT INTO weekly_schedules (day_of_week, is_open, business_id) VALUES (6, 0, ?)",
+            (business_id,),
+        )
+        connection.commit()
+        return {"business_id": business_id, "slug": slug, "user_id": user_id}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 # ============================================================
