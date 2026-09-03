@@ -553,7 +553,7 @@ def execute_tool(name, arguments, business_id=None):
 
         try:
 
-            horarios = get_available_times(fecha, business_id)
+            horarios = get_available_times(fecha, business_id, arguments.get("servicio"))
 
             return {
                 "success": True,

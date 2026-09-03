@@ -685,7 +685,7 @@ def _get_public_availability_response(fecha, business_id):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     try:
-        horarios = get_available_times(fecha, business_id)
+        horarios = get_available_times(fecha, business_id, request.args.get("servicio"))
         return jsonify({
             "success": True,
             "fecha": fecha,

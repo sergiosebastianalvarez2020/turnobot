@@ -93,10 +93,13 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         finally:
             connection.close()
 
-    def _insert_confirmed_appointment(self, name, phone, business_id, appointment_time="09:00"):
+    def _insert_confirmed_appointment(self, name, phone, business_id, appointment_time="09:00", duration=30):
+        hours, minutes = map(int, appointment_time.split(":"))
+        end_minutes = (hours * 60 + minutes + duration) % (24 * 60)
+        appointment_end = "{:02d}:{:02d}".format(end_minutes // 60, end_minutes % 60)
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)",
-            (name, phone, "Servicio", self.valid_date, appointment_time, business_id),
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)",
+            (name, phone, "Servicio", self.valid_date, appointment_time, appointment_end, duration, business_id),
         )
         return self._query(
             "SELECT id FROM appointments WHERE customer_name = ? AND phone = ? AND business_id = ? ORDER BY id DESC LIMIT 1",
@@ -1129,8 +1132,8 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
 
     def test_confirmed_appointment_in_a_blocks_only_a(self):
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', 1)",
-            ("Cliente A", "123456789", "Corte A", self.valid_date, "09:00",),
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 1)",
+            ("Cliente A", "123456789", "Corte A", self.valid_date, "09:00", "09:30", 30),
         )
 
         a_response = self.client.get(f"/b/business-a/api/disponibilidad/{self.valid_date}")
@@ -1141,8 +1144,8 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
 
     def test_confirmed_appointment_in_b_blocks_only_b(self):
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, status, business_id) VALUES (?, ?, ?, ?, ?, 'confirmed', 2)",
-            ("Cliente B", "987654321", "Corte B", self.valid_date, "11:00",),
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 2)",
+            ("Cliente B", "987654321", "Corte B", self.valid_date, "11:00", "12:00", 60),
         )
 
         b_response = self.client.get(f"/b/business-b/api/disponibilidad/{self.valid_date}")
