@@ -65,6 +65,8 @@ DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
 
 def get_business_identity(business_id=None):
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     if business_id is not None:
         settings = get_business_settings_scoped(business_id)
     else:
@@ -228,6 +230,8 @@ IMPORTANTE
 
 def get_services_prompt(business_id=None):
     """Genera la lista actual de servicios desde la base de datos."""
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     if business_id is not None:
         services = get_active_services_scoped(business_id)
     else:
@@ -244,6 +248,8 @@ def get_services_prompt(business_id=None):
 
 def get_business_hours_prompt(business_id=None):
     """Genera los horarios semanales actuales desde la base de datos."""
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     day_names = [
         "Lunes", "Martes", "Miércoles", "Jueves",
         "Viernes", "Sábado", "Domingo",
@@ -534,6 +540,8 @@ BARBERIA_TOOL = types.Tool(
 # ============================================================
 
 def execute_tool(name, arguments, business_id=None):
+    if business_id is None:
+        return {"success": False, "error": "Contexto de negocio inválido."}
 
     # ========================================================
     # CONSULTAR DISPONIBILIDAD
@@ -1213,6 +1221,9 @@ def ask_ai(
     conversation=None,
     business_id=None,
 ):
+
+    if business_id is None:
+        return "Disculpá, no se pudo identificar el negocio solicitado."
 
     if conversation is None:
 

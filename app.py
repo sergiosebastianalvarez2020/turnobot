@@ -249,7 +249,8 @@ def is_login_request_allowed(client_ip):
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("admin"):
+        if not session.get("admin") or session.get("admin_business_id") != get_current_business_id():
+            session.clear()
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -356,6 +357,7 @@ def login():
 
     if authenticated:
         session["admin"] = True
+        session["admin_business_id"] = get_current_business_id()
         return redirect(url_for("admin"))
 
     return render_template("login.html", error=True)
@@ -377,11 +379,9 @@ def logout():
 @admin_required
 def admin():
     business_id = get_current_business_id()
-    settings = (
-        get_business_settings_scoped(business_id)
-        if business_id is not None
-        else get_business_settings()
-    )
+    settings = get_business_settings_scoped(business_id)
+    if business_id is None or settings is None:
+        abort(404)
     status = request.args.get("status") or "confirmed"
     if status not in {"confirmed", "cancelled"}:
         status = "confirmed"
@@ -392,8 +392,8 @@ def admin():
         counts=get_appointment_counts(business_id),
         selected_status=status,
         selected_date=appointment_date or "",
-        business_name=settings["business_name"] if settings else "Mi negocio",
-        business_initials=settings["business_initials"] if settings else "",
+        business_name=settings["business_name"],
+        business_initials=settings["business_initials"],
         business_settings=settings,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
@@ -509,23 +509,16 @@ def admin_update_business_settings():
         ))
 
     business_id = get_current_business_id()
-    if business_id is not None:
-        update_business_settings_scoped(
-            business_id,
-            business_name,
-            business_type,
-            business_initials,
-            business_description,
-            timezone,
-        )
-    else:
-        update_business_settings(
-            business_name,
-            business_type,
-            business_initials,
-            business_description,
-            timezone,
-        )
+    if business_id is None:
+        abort(404)
+    update_business_settings_scoped(
+        business_id,
+        business_name,
+        business_type,
+        business_initials,
+        business_description,
+        timezone,
+    )
 
     return redirect(url_for(
         "admin",
@@ -539,10 +532,9 @@ def admin_cancel_appointment(appointment_id):
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
     business_id = get_current_business_id()
-    if business_id is not None:
-        update_appointment_status_scoped(appointment_id, "cancelled", business_id)
-    else:
-        update_appointment_status(appointment_id, "cancelled")
+    if business_id is None:
+        abort(404)
+    update_appointment_status_scoped(appointment_id, "cancelled", business_id)
     return redirect(url_for("admin", status="confirmed"))
 
 
@@ -555,10 +547,9 @@ def admin_update_appointment_status(appointment_id):
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         return "Estado no válido", 400
     business_id = get_current_business_id()
-    if business_id is not None:
-        update_appointment_status_scoped(appointment_id, status, business_id)
-    else:
-        update_appointment_status(appointment_id, status)
+    if business_id is None:
+        abort(404)
+    update_appointment_status_scoped(appointment_id, status, business_id)
     return redirect(url_for("admin", status=status if status in {"confirmed", "cancelled"} else "confirmed"))
 
 

@@ -28,7 +28,7 @@ class TestReservaDisponible(unittest.TestCase):
 
     def test_reserva_en_horario_disponible(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         self.assertTrue(result["success"])
         self.assertIsNotNone(result["appointment_id"])
@@ -55,10 +55,10 @@ class TestReservaOcupada(unittest.TestCase):
 
     def test_reserva_en_horario_ocupado(self):
         appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         result = appointments.create_appointment(
-            "Juan López", "3838439333", "Corte", self.valid_date, "09:00"
+            "Juan López", "3838439333", "Corte", self.valid_date, "09:00", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "occupied")
@@ -80,7 +80,7 @@ class TestDomingoCerrado(unittest.TestCase):
         while sunday.weekday() != 6:
             sunday += timedelta(days=1)
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", sunday.isoformat(), "09:00"
+            "Ana Pérez", "3838439222", "Corte", sunday.isoformat(), "09:00", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "closed_day")
@@ -99,7 +99,7 @@ class TestFechaInvalida(unittest.TestCase):
 
     def test_reserva_con_fecha_mal_formateada(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", "2025/08/18", "09:00"
+            "Ana Pérez", "3838439222", "Corte", "2025/08/18", "09:00", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "invalid_date")
@@ -107,7 +107,7 @@ class TestFechaInvalida(unittest.TestCase):
     def test_reserva_con_fecha_pasada(self):
         yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", yesterday, "09:00"
+            "Ana Pérez", "3838439222", "Corte", yesterday, "09:00", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "past_date")
@@ -134,10 +134,10 @@ class TestCancelacionTelefonoCorrecto(unittest.TestCase):
 
     def test_cancelar_con_telefono_correcto(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertTrue(appointments.cancel_appointment(appointment_id, "3838439222"))
+        self.assertTrue(appointments.cancel_appointment(appointment_id, "3838439222", 1))
 
 
 class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
@@ -161,10 +161,10 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
 
     def test_cancelar_con_telefono_incorrecto(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertFalse(appointments.cancel_appointment(appointment_id, "9999999999"))
+        self.assertFalse(appointments.cancel_appointment(appointment_id, "9999999999", 1))
 
 
 class TestReprogramacionHorarioOcupado(unittest.TestCase):
@@ -188,14 +188,14 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
 
     def test_reprogramar_a_horario_ocupado(self):
         appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         result2 = appointments.create_appointment(
-            "Juan López", "3838439333", "Corte", self.valid_date, "15:00"
+            "Juan López", "3838439333", "Corte", self.valid_date, "15:00", 1
         )
         appointment_id = result2["appointment_id"]
         result = appointments.reschedule_appointment(
-            appointment_id, self.valid_date, "09:00", "3838439333"
+            appointment_id, self.valid_date, "09:00", "3838439333", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "occupied")
@@ -222,10 +222,10 @@ class TestDobleReservaSimultanea(unittest.TestCase):
 
     def test_doble_reserva_mismo_horario(self):
         result1 = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00"
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         result2 = appointments.create_appointment(
-            "Juan López", "3838439333", "Corte", self.valid_date, "09:00"
+            "Juan López", "3838439333", "Corte", self.valid_date, "09:00", 1
         )
         self.assertTrue(result1["success"])
         self.assertFalse(result2["success"])

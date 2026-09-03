@@ -35,7 +35,7 @@ class TestBusinessSettings(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        self.assertEqual(get_business_timezone(), "UTC")
+        self.assertEqual(get_business_timezone(1), "UTC")
 
     def test_timezone_invalido_usa_fallback(self):
         connection = database.get_connection()
@@ -46,7 +46,7 @@ class TestBusinessSettings(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        self.assertEqual(get_business_timezone(), DEFAULT_TIMEZONE)
+        self.assertEqual(get_business_timezone(1), DEFAULT_TIMEZONE)
 
     def test_frontend_recibe_configuracion_del_negocio(self):
         from app import app

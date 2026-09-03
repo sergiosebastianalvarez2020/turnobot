@@ -17,11 +17,8 @@ from database.database import (
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
 
-def get_business_timezone(business_id=None):
-    if business_id is not None:
-        settings = get_business_settings_scoped(business_id)
-    else:
-        settings = get_business_settings()
+def get_business_timezone(business_id):
+    settings = get_business_settings_scoped(business_id)
     configured_timezone = settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
     try:
         ZoneInfo(configured_timezone)
@@ -92,25 +89,18 @@ def validate_customer_name(customer_name):
 # HORARIOS DISPONIBLES
 # ============================================================
 
-def get_available_slots(date, business_id=None):
+def get_available_slots(date, business_id):
     """Construye los horarios a partir de la configuración del negocio."""
     appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-    if business_id is not None:
-        schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
-        settings = get_business_settings_scoped(business_id)
-    else:
-        schedule = get_weekly_schedule(appointment_date.weekday())
-        settings = get_business_settings()
+    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
+    settings = get_business_settings_scoped(business_id)
 
     if not schedule or not schedule["is_open"]:
         return []
 
     slot_duration = settings["slot_duration"] if settings else 60
     break_between_slots = settings["break_between_slots"] if settings else 0
-    if business_id is not None:
-        services = get_active_services_scoped(business_id)
-    else:
-        services = get_active_services()
+    services = get_active_services_scoped(business_id)
     longest_service = max(
         (service["duration"] for service in services),
         default=slot_duration,
@@ -226,6 +216,8 @@ def validate_appointment_time(date, time, business_id=None):
 # ============================================================
 
 def get_available_times(date, business_id=None):
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     """
     Devuelve los horarios que todavía están libres
     para una determinada fecha.
@@ -297,7 +289,7 @@ def create_appointment(
     service,
     appointment_date,
     appointment_time,
-    business_id=None,
+    business_id,
 ):
     """
     Crea un turno.
@@ -353,10 +345,7 @@ def create_appointment(
             "reason": "invalid_phone",
         }
 
-    if business_id is not None:
-        active_services = get_active_services_scoped(business_id)
-    else:
-        active_services = get_active_services()
+    active_services = get_active_services_scoped(business_id)
     if service not in {row["name"] for row in active_services}:
         return {
             "success": False,
@@ -502,6 +491,8 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
     Devuelve todos los turnos confirmados.
     """
 
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     connection = get_connection()
 
     try:
@@ -544,6 +535,8 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
 
 def get_appointment_counts(business_id=None):
     """Devuelve métricas agrupadas por estado para el panel administrativo."""
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     connection = get_connection()
     try:
         if business_id is not None:
@@ -583,6 +576,8 @@ def get_customer_appointments(
     se utiliza como filtro adicional.
     """
 
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
     connection = get_connection()
 
     try:
@@ -686,6 +681,9 @@ def cancel_appointment(appointment_id, phone, business_id=None):
         True  -> cancelado correctamente
         False -> validación falló o no existe o ya no está confirmado
     """
+
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
 
     # --------------------------------------------------------
     # VALIDAR TELÉFONO
@@ -813,6 +811,9 @@ def reschedule_appointment(
     Usa BEGIN IMMEDIATE para transacción atómica.
     Hace ROLLBACK si algo falla.
     """
+
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
 
     # --------------------------------------------------------
     # VALIDAR TELÉFONO

@@ -62,7 +62,7 @@ class TestDomainValidation(unittest.TestCase):
             date += timedelta(days=1)
         date = date.isoformat()
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Servicio inexistente", date, "09:00"
+            "Ana Pérez", "3838439222", "Servicio inexistente", date, "09:00", 1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "invalid_service")
@@ -73,7 +73,7 @@ class TestDomainValidation(unittest.TestCase):
             date += timedelta(days=1)
         date = date.isoformat()
         result = appointments.create_appointment(
-            "Ana Pérez", "+54 383-843-9222", "Corte", date, "10:00"
+            "Ana Pérez", "+54 383-843-9222", "Corte", date, "10:00", 1
         )
         self.assertTrue(result["success"])
 
