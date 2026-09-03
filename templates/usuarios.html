@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Usuarios</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span>📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item active">
+                    <span>👥</span>
+                    Usuarios
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span>💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span>🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <div>
+
+                    <h2>Usuarios</h2>
+
+                    <p>
+                        Gestioná los miembros y accesos de {{ business_name }}
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            {% if error %}
+            <div class="settings-feedback settings-error">{{ error }}</div>
+            {% endif %}
+
+            {% if message %}
+            <div class="settings-feedback settings-success">{{ message }}</div>
+            {% endif %}
+
+
+            <!-- =================================================
+                 INVITAR USUARIO
+                 ================================================= -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Invitar usuario</h3>
+                        <p>Agregá un miembro por email y asignale un rol.</p>
+                    </div>
+                </div>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/usuarios/invitar" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <label>
+                        Email
+                        <input type="email" name="email" required placeholder="nombre@ejemplo.com">
+                    </label>
+
+                    <label>
+                        Rol
+                        <select name="role_name" class="member-role-select">
+                            <option value="admin">Admin</option>
+                            <option value="staff">Staff</option>
+                            <option value="customer">Customer</option>
+                        </select>
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Invitar</button>
+                    </div>
+                </form>
+
+                <p class="invite-note">
+                    El invitado podrá acceder a este negocio según el rol asignado.
+                </p>
+
+            </section>
+
+
+            <!-- =================================================
+                 MIEMBROS
+                 ================================================= -->
+
+            <section class="settings-card members-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Miembros</h3>
+                        <p>Personas con acceso a {{ business_name }}.</p>
+                    </div>
+                </div>
+
+                {% if members %}
+
+                <div class="table-container">
+
+                    <table class="members-table">
+
+                        <thead>
+
+                            <tr>
+
+                                <th>
+                                    Usuario
+                                </th>
+
+                                <th>
+                                    Rol
+                                </th>
+
+                                <th>
+                                    Estado
+                                </th>
+
+                                <th>Acciones</th>
+
+                            </tr>
+
+                        </thead>
+
+
+                        <tbody>
+
+                            {% for member in members %}
+
+                            <tr>
+
+                                <td>
+
+                                    <div class="customer">
+
+                                        <div class="avatar">
+
+                                            {{ member['email'][0]|upper }}
+
+                                        </div>
+
+                                        <div>
+
+                                            <strong>
+                                                {{ member['email'] }}
+                                            </strong>
+
+                                            {% if member['user_id'] == current_user_id %}
+
+                                            <small>
+                                                Tú
+                                            </small>
+
+                                            {% endif %}
+
+                                        </div>
+
+                                    </div>
+
+                                </td>
+
+                                <td>
+
+                                    <span class="status role-{{ member['role_name'] }}">
+                                        <span class="status-small-dot"></span>
+                                        {{ member['role_name']|capitalize }}
+                                    </span>
+
+                                </td>
+
+                                <td>
+
+                                    {% if member['active'] %}
+
+                                    <span class="status">
+                                        <span class="status-small-dot"></span>
+                                        Activo
+                                    </span>
+
+                                    {% else %}
+
+                                    <span class="status cancelled">
+                                        <span class="status-small-dot"></span>
+                                        Inactivo
+                                    </span>
+
+                                    {% endif %}
+
+                                </td>
+
+                                <td>
+
+                                    <div class="member-actions">
+
+                                        <form method="POST" action="{{ admin_prefix or '' }}/admin/usuarios/{{ member['user_id'] }}/rol"
+                                              class="member-role-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <select name="role_name" class="member-role-select">
+                                                <option value="admin" {% if member['role_name'] == 'admin' %}selected{% endif %}>Admin</option>
+                                                <option value="staff" {% if member['role_name'] == 'staff' %}selected{% endif %}>Staff</option>
+                                                <option value="customer" {% if member['role_name'] == 'customer' %}selected{% endif %}>Customer</option>
+                                            </select>
+                                            <button type="submit" class="refresh-button">Guardar</button>
+                                        </form>
+
+                                        {% if member['user_id'] != current_user_id %}
+                                        <form method="POST" action="{{ admin_prefix or '' }}/admin/usuarios/{{ member['user_id'] }}/revocar"
+                                              class="member-revoke-form"
+                                              onsubmit="return confirm('¿Revocar el acceso de {{ member['email'] }} a este negocio?');">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="danger-button">Revocar</button>
+                                        </form>
+                                        {% endif %}
+
+                                    </div>
+
+                                </td>
+
+                            </tr>
+
+                            {% endfor %}
+
+                        </tbody>
+
+                    </table>
+
+                </div>
+
+                {% else %}
+
+                <div class="empty-state">
+
+                    <div class="empty-icon">
+                        👥
+                    </div>
+
+                    <h3>
+                        No hay miembros todavía
+                    </h3>
+
+                    <p>
+                        Invitá al primer miembro usando el formulario.
+                    </p>
+
+                </div>
+
+                {% endif %}
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+</body>
+
+</html>

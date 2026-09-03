@@ -13,7 +13,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from dotenv import load_dotenv
-from flask import Flask, abort, g, render_template, render_template_string, request, jsonify, session, redirect, url_for
+from flask import Flask, abort, g, render_template, request, jsonify, session, redirect, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from services.ai import ask_ai
@@ -52,7 +52,11 @@ from database.database import (
     revoke_all_sessions_scoped,
     is_session_valid_scoped,
 )
+from database.database import (
+    create_user_scoped,
+)
 from database.seed_auth import migrate_owner_from_module_hash
+from services import memberships
 
 
 load_dotenv()
@@ -640,6 +644,12 @@ def _render_admin():
     if status not in {"confirmed", "cancelled"}:
         status = "confirmed"
     appointment_date = request.args.get("fecha") or None
+    actor_user_id = session.get("user_id")
+    can_manage_memberships = bool(
+        actor_user_id
+        and business_id
+        and memberships.can_manage_memberships(actor_user_id, business_id)
+    )
     return render_template(
         "admin.html",
         appointments=get_appointments(status=status, appointment_date=appointment_date, business_id=business_id),
@@ -654,6 +664,7 @@ def _render_admin():
         services=get_all_services_scoped(business_id),
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
+        can_manage_memberships=can_manage_memberships,
     )
 
 
@@ -691,6 +702,14 @@ def _admin_url(**kwargs):
     if business is not None and business.get("id") != 1:
         return url_for("admin_slug", slug=business["slug"], **kwargs)
     return url_for("admin", **kwargs)
+
+
+def _usuarios_url(**kwargs):
+    """Devuelve la URL de la página de usuarios, con prefijo de slug si aplica."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_usuarios", slug=business["slug"], **kwargs)
+    return url_for("admin_usuarios", **kwargs)
 
 
 @app.route("/admin/servicios/guardar", methods=["POST"])
@@ -825,6 +844,138 @@ def admin_update_appointment_status(appointment_id, slug=None):
         abort(404)
     update_appointment_status_scoped(appointment_id, status, business_id)
     return redirect(_admin_url(status=status if status in {"confirmed", "cancelled"} else "confirmed"))
+
+
+# ============================================================
+# GESTIÓN DE USUARIOS / MEMBERSHIPS
+# ============================================================
+
+def _admin_usuarios_gate():
+    """Autenticación administrativa para gestionar memberships.
+
+    Solo valida sesión + membresía administrativa (owner/admin) del negocio
+    actual. La política owner-only se delega a services.memberships para no
+    duplicar reglas en la capa HTTP.
+    """
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    return None
+
+
+@app.route("/admin/usuarios")
+@app.route("/b/<slug>/admin/usuarios")
+def admin_usuarios(slug=None):
+    denied = _admin_usuarios_gate()
+    if denied:
+        return denied
+    actor_user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    result = memberships.list_members(actor_user_id, business_id)
+    if not result["success"]:
+        return redirect(_admin_url(usuarios_error=result["reason"]))
+    settings = get_business_settings_scoped(business_id)
+    business_name = (
+        settings["business_name"] if settings and settings["business_name"] else "Mi negocio"
+    )
+    business_initials = (
+        settings["business_initials"] if settings and settings["business_initials"] else ""
+    )
+    return render_template(
+        "usuarios.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        members=result["members"],
+        current_user_id=actor_user_id,
+        message=request.args.get("usuarios_message", ""),
+        error=request.args.get("usuarios_error", ""),
+    )
+
+
+@app.route("/admin/usuarios/invitar", methods=["POST"])
+@app.route("/b/<slug>/admin/usuarios/invitar", methods=["POST"])
+def admin_usuarios_invitar(slug=None):
+    denied = _admin_usuarios_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    actor_user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    email = request.form.get("email", "").strip().lower()
+    role_name = request.form.get("role_name", "").strip()
+
+    if not email:
+        return redirect(_usuarios_url(usuarios_error="El email es obligatorio."))
+
+    user = get_user_by_email_scoped(email)
+    if user is None:
+        # Usuario nuevo: se crea sin contraseña útil (placeholder). El
+        # flujo de asignación de contraseña/invitación por email queda
+        # pendiente (fuera de alcance de esta fase).
+        placeholder_hash = generate_password_hash(secrets.token_urlsafe(24))
+        user_id = create_user_scoped(email, placeholder_hash, active=True)
+        if user_id is None:
+            return redirect(_usuarios_url(usuarios_error="No se pudo crear el usuario."))
+        target_user_id = user_id
+    else:
+        target_user_id = user["id"]
+
+    result = memberships.invite_member(
+        actor_user_id, business_id, target_user_id, role_name
+    )
+    if not result["success"]:
+        return redirect(_usuarios_url(usuarios_error=result["reason"]))
+    return redirect(_usuarios_url(usuarios_message="Usuario agregado correctamente."))
+
+
+@app.route("/admin/usuarios/<int:user_id>/rol", methods=["POST"])
+@app.route("/b/<slug>/admin/usuarios/<int:user_id>/rol", methods=["POST"])
+def admin_usuarios_cambiar_rol(user_id, slug=None):
+    denied = _admin_usuarios_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    actor_user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    role_name = request.form.get("role_name", "").strip()
+    result = memberships.change_role(
+        actor_user_id, business_id, user_id, role_name
+    )
+    if not result["success"]:
+        return redirect(_usuarios_url(usuarios_error=result["reason"]))
+    return redirect(_usuarios_url(usuarios_message="Rol actualizado correctamente."))
+
+
+@app.route("/admin/usuarios/<int:user_id>/revocar", methods=["POST"])
+@app.route("/b/<slug>/admin/usuarios/<int:user_id>/revocar", methods=["POST"])
+def admin_usuarios_revocar(user_id, slug=None):
+    denied = _admin_usuarios_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    actor_user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    result = memberships.revoke_membership(actor_user_id, business_id, user_id)
+    if not result["success"]:
+        return redirect(_usuarios_url(usuarios_error=result["reason"]))
+    return redirect(_usuarios_url(usuarios_message="Membresía revocada correctamente."))
 
 
 # ============================================================

@@ -612,6 +612,118 @@ tbody tr:hover {
 }
 
 /* ============================================================
+   GESTIÓN DE USUARIOS / MEMBERSHIPS
+   ============================================================ */
+
+.invite-note {
+    padding: 0 24px 24px;
+    color: #8DA4C8;
+    font-size: 12px;
+}
+
+.members-card {
+    margin-bottom: 24px;
+}
+
+.member-role-select {
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    background: #FFFFFF;
+    color: #102A56;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+}
+
+.member-role-select:focus {
+    border-color: #1463FF;
+    box-shadow: 0 0 0 3px rgba(20,99,255,.1);
+}
+
+.member-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.member-role-form {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+}
+
+.member-revoke-form {
+    display: inline-flex;
+    margin: 0;
+}
+
+.role-owner {
+    color: #1463FF;
+    background: #EEF6FF;
+    border-color: #DCEBFF;
+}
+
+.role-owner .status-small-dot {
+    background: #1463FF;
+}
+
+.role-admin {
+    color: #B45309;
+    background: #FFFBEB;
+    border-color: #FDE68A;
+}
+
+.role-admin .status-small-dot {
+    background: #B45309;
+}
+
+.role-staff {
+    color: #0F766E;
+    background: #F0FDFA;
+    border-color: #99F6E4;
+}
+
+.role-staff .status-small-dot {
+    background: #0F766E;
+}
+
+.role-customer {
+    color: #6B7280;
+    background: #F3F4F6;
+    border-color: #E5E7EB;
+}
+
+.role-customer .status-small-dot {
+    background: #6B7280;
+}
+
+.danger-button {
+    border: 1px solid #FECACA;
+    background: #FFFFFF;
+    color: #DC2626;
+    padding: 9px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.danger-button:hover {
+    background: #FEF2F2;
+    color: #991B1B;
+    border-color: #F87171;
+}
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 
@@ -680,6 +792,21 @@ tbody tr:hover {
     .filters {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .member-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .member-role-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .member-role-form .member-role-select,
+    .member-role-form .refresh-button {
+        width: 100%;
     }
 
     td {

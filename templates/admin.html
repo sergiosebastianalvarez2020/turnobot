@@ -51,6 +51,13 @@
                     Turnos
                 </a>
 
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span>👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
                 <a href="{{ admin_prefix or '' }}/" class="nav-item">
                     <span>💬</span>
                     Recepcionista

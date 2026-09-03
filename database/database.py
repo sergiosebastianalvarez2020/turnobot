@@ -595,6 +595,84 @@ def create_membership_scoped(user_id, business_id, role_name):
         connection.close()
 
 
+def list_members_scoped(business_id):
+    """Devuelve los miembros (usuario+rol) de un negocio específico."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT bu.user_id, bu.business_id, bu.role_id, r.name AS role_name,
+                   u.email, u.active
+            FROM business_users bu
+            JOIN roles r ON r.id = bu.role_id
+            JOIN users u ON u.id = bu.user_id
+            WHERE bu.business_id = ?
+            ORDER BY u.email
+            """,
+            (business_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def change_membership_role_scoped(user_id, business_id, role_id):
+    """Cambia el rol de una membresía solo si pertenece al negocio indicado."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE business_users
+            SET role_id = ?
+            WHERE user_id = ? AND business_id = ?
+            """,
+            (role_id, user_id, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+
+def revoke_membership_scoped(user_id, business_id):
+    """Elimina una membresía solo si pertenece al negocio indicado."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            DELETE FROM business_users
+            WHERE user_id = ? AND business_id = ?
+            """,
+            (user_id, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()
+
+
+def count_owners_scoped(business_id):
+    """Cuenta los owners (rol 'owner') de un negocio específico."""
+    owner_role_id = get_role_id_scoped("owner")
+    if owner_role_id is None:
+        return 0
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM business_users
+            WHERE business_id = ? AND role_id = ?
+            """,
+            (business_id, owner_role_id),
+        ).fetchone()
+        return row["n"] if row else 0
+    finally:
+        connection.close()
+
+
 def create_session_scoped(user_id, token_hash, expires_at):
     """Crea una sesión persistente. Devuelve el id de sesión."""
     connection = get_connection()
