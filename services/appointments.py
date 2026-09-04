@@ -664,25 +664,39 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
 
 
 def get_appointment_counts(business_id=None):
-    """Devuelve métricas agrupadas por estado para el panel administrativo."""
+    """Devuelve métricas agrupadas por estado para el panel administrativo.
+
+    Incluye un conteo separado de turnos "próximos": turnos confirmados cuya
+    fecha es hoy o posterior en la zona horaria del negocio.
+    """
     if business_id is None:
         raise ValueError("business_id es obligatorio")
     connection = get_connection()
     try:
-        if business_id is not None:
-            rows = connection.execute(
-                "SELECT status, COUNT(*) AS total FROM appointments WHERE business_id = ? GROUP BY status",
-                (business_id,),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                "SELECT status, COUNT(*) AS total FROM appointments GROUP BY status"
-            ).fetchall()
-        counts = {row["status"]: row["total"] for row in rows}
+        rows = connection.execute(
+            "SELECT status, appointment_date, COUNT(*) AS total "
+            "FROM appointments WHERE business_id = ? GROUP BY status, appointment_date",
+            (business_id,),
+        ).fetchall()
+        counts = {}
+        upcoming = 0
+        today = datetime.now(ZoneInfo(get_business_timezone(business_id))).date()
+        for row in rows:
+            counts[row["status"]] = counts.get(row["status"], 0) + row["total"]
+            if row["status"] == "confirmed":
+                try:
+                    apt_date = datetime.strptime(row["appointment_date"], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    apt_date = datetime.min.date()
+                if apt_date >= today:
+                    upcoming += row["total"]
         return {
             "total": sum(counts.values()),
             "confirmed": counts.get("confirmed", 0),
             "cancelled": counts.get("cancelled", 0),
+            "completed": counts.get("completed", 0),
+            "no_show": counts.get("no_show", 0),
+            "upcoming": upcoming,
         }
     finally:
         connection.close()
@@ -1140,6 +1154,117 @@ def reschedule_appointment(
             connection.execute("ROLLBACK")
             return {"success": False, "reason": "occupied"}
         except Exception as e:
+            connection.execute("ROLLBACK")
+            raise
+
+    finally:
+        connection.close()
+
+
+def reschedule_appointment_admin(
+    appointment_id,
+    new_date,
+    new_time,
+    business_id=None,
+):
+    """
+    Cambia la fecha y hora de un turno confirmado desde el panel admin.
+
+    A diferencia de ``reschedule_appointment`` (orientado al cliente, que exige
+    teléfono o ``management_token``), esta variante solo exige pertenencia del
+    turno al ``business_id`` actual. Mantiene las mismas validaciones de dominio
+    (fecha válida, no pasada, no cerrado, horario válido, sin solapamiento) en
+    una transacción atómica con ``BEGIN IMMEDIATE``.
+    """
+
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+
+    try:
+        appointment_id_int = int(appointment_id)
+        if appointment_id_int <= 0:
+            return {"success": False, "reason": "invalid_appointment_id"}
+    except (ValueError, TypeError):
+        return {"success": False, "reason": "invalid_appointment_id"}
+
+    connection = get_connection()
+
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+
+        try:
+            appointment = connection.execute(
+                """
+                SELECT *
+                FROM appointments
+                WHERE id = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                """,
+                (appointment_id_int, business_id),
+            ).fetchone()
+
+            if appointment is None:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "not_found"}
+
+            historical_duration = appointment["duration"]
+            start_minutes = _to_minutes(new_time)
+            end_minutes = start_minutes + historical_duration
+            new_end = _to_hhmm(end_minutes)
+
+            validation = validate_appointment_date(new_date, business_id)
+            if not validation["valid"]:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": validation["reason"]}
+
+            time_valid, time_reason = validate_appointment_time(new_date, new_time, business_id)
+            if not time_valid:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": time_reason}
+
+            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration):
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "invalid_time"}
+
+            if not _fits_closing(new_date, new_time, end_minutes, business_id):
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "invalid_time"}
+
+            existing = connection.execute(
+                """
+                SELECT id
+                FROM appointments
+                WHERE appointment_date = ?
+                AND status = 'confirmed'
+                AND id != ?
+                AND business_id = ?
+                AND ? < appointment_end
+                AND ? > appointment_time
+                """,
+                (new_date, appointment_id_int, business_id, new_time, new_end),
+            ).fetchone()
+
+            if existing:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "occupied"}
+
+            connection.execute(
+                """
+                UPDATE appointments
+                SET appointment_date = ?, appointment_time = ?, appointment_end = ?
+                WHERE id = ? AND status = 'confirmed' AND business_id = ?
+                """,
+                (new_date, new_time, new_end, appointment_id_int, business_id),
+            )
+
+            connection.commit()
+            return {"success": True, "reason": "rescheduled"}
+
+        except sqlite3.IntegrityError:
+            connection.execute("ROLLBACK")
+            return {"success": False, "reason": "occupied"}
+        except Exception:
             connection.execute("ROLLBACK")
             raise
 

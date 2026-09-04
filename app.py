@@ -42,6 +42,7 @@ from services.appointments import (
     get_customer_appointments,
     cancel_appointment,
     reschedule_appointment,
+    reschedule_appointment_admin,
     validate_email,
     get_appointment_by_token,
     get_appointments,
@@ -646,7 +647,7 @@ def _render_admin():
             "notifications_enabled": 0,
         }
     status = request.args.get("status") or "confirmed"
-    if status not in {"confirmed", "cancelled"}:
+    if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         status = "confirmed"
     appointment_date = request.args.get("fecha") or None
     actor_user_id = session.get("user_id")
@@ -669,6 +670,7 @@ def _render_admin():
         services=get_all_services_scoped(business_id),
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
+        reschedule_error=request.args.get("error_message", ""),
         can_manage_memberships=can_manage_memberships,
         smtp_configured=smtp_configured(),
     )
@@ -851,7 +853,37 @@ def admin_update_appointment_status(appointment_id, slug=None):
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, status, business_id)
-    return redirect(_admin_url(status=status if status in {"confirmed", "cancelled"} else "confirmed"))
+    return redirect(_admin_url(status=status))
+
+
+@app.route("/admin/turnos/<int:appointment_id>/reprogramar", methods=["POST"])
+@app.route("/b/<slug>/admin/turnos/<int:appointment_id>/reprogramar", methods=["POST"])
+def admin_reschedule_appointment(appointment_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    new_date = request.form.get("new_date", "").strip()
+    new_time = request.form.get("new_time", "").strip()
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    error = None
+    if not new_date or not new_time:
+        error = "Completá la fecha y la hora para reprogramar."
+    else:
+        res = reschedule_appointment_admin(
+            appointment_id, new_date, new_time, business_id=business_id
+        )
+        if not res["success"]:
+            error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
+
+    return redirect(_admin_url(
+        status="confirmed",
+        error_message=error,
+    ))
 
 
 # ============================================================

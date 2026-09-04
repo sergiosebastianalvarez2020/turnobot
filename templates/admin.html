@@ -136,11 +136,11 @@
                     <div>
 
                         <span class="stat-label">
-                            Total de turnos
+                            Próximos
                         </span>
 
                         <strong>
-                            {{ counts.total }}
+                            {{ counts.upcoming }}
                         </strong>
 
                     </div>
@@ -174,17 +174,80 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        🟢
+                        ✖️
                     </div>
 
                     <div>
 
                         <span class="stat-label">
-                            Estado
+                            Cancelados
                         </span>
 
-                        <strong class="online">
-                            {{ counts.cancelled }} cancelados
+                        <strong>
+                            {{ counts.cancelled }}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ✅
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            Completados
+                        </span>
+
+                        <strong>
+                            {{ counts.completed }}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ⚠️
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            No se presentó
+                        </span>
+
+                        <strong>
+                            {{ counts.no_show }}
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        🗂️
+                    </div>
+
+                    <div>
+
+                        <span class="stat-label">
+                            Total
+                        </span>
+
+                        <strong>
+                            {{ counts.total }}
                         </strong>
 
                     </div>
@@ -368,12 +431,18 @@
 
                 </div>
 
+                {% if reschedule_error %}
+                <div class="settings-feedback settings-error">{{ reschedule_error }}</div>
+                {% endif %}
+
                 <form method="GET" action="{{ admin_prefix or '' }}/admin" class="filters">
                     <label>
                         Estado
                         <select name="status">
                             <option value="confirmed" {% if selected_status == "confirmed" %}selected{% endif %}>Confirmados</option>
                             <option value="cancelled" {% if selected_status == "cancelled" %}selected{% endif %}>Cancelados</option>
+                            <option value="completed" {% if selected_status == "completed" %}selected{% endif %}>Completados</option>
+                            <option value="no_show" {% if selected_status == "no_show" %}selected{% endif %}>No se presentó</option>
                         </select>
                     </label>
                     <label>
@@ -495,11 +564,22 @@
 
                                 <td>
 
-                                    <span class="status {% if appointment.status == 'cancelled' %}cancelled{% endif %}">
+                                    <span class="status
+                                        {%- if appointment.status == 'cancelled' %} cancelled
+                                        {%- elif appointment.status == 'completed' %} completed
+                                        {%- elif appointment.status == 'no_show' %} no_show{% endif %}">
 
                                         <span class="status-small-dot"></span>
 
-                                        {{ "Cancelado" if appointment.status == "cancelled" else "Confirmado" }}
+                                        {% if appointment.status == "cancelled" %}
+                                            Cancelado
+                                        {% elif appointment.status == "completed" %}
+                                            Completado
+                                        {% elif appointment.status == "no_show" %}
+                                            No se presentó
+                                        {% else %}
+                                            Confirmado
+                                        {% endif %}
 
                                     </span>
 
@@ -507,9 +587,28 @@
 
                                 <td>
                                     {% if appointment.status == "confirmed" %}
-                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/cancelar">
+                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/estado" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button type="submit" class="refresh-button">Cancelar</button>
+                                        <select name="status" class="admin-status-select">
+                                            <option value="completed">Completado</option>
+                                            <option value="no_show">No se presentó</option>
+                                            <option value="cancelled">Cancelar</option>
+                                        </select>
+                                        <button type="submit" class="refresh-button">Aplicar</button>
+                                    </form>
+                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/reprogramar" class="service-row admin-actions">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="date" name="new_date" class="admin-date-input" required>
+                                        <input type="time" name="new_time" class="admin-time-input" required>
+                                        <button type="submit" class="refresh-button">Reprogramar</button>
+                                    </form>
+                                    {% else %}
+                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/estado" class="service-row admin-actions">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <select name="status" class="admin-status-select">
+                                            <option value="confirmed">Confirmar</option>
+                                        </select>
+                                        <button type="submit" class="refresh-button">Aplicar</button>
                                     </form>
                                     {% endif %}
                                 </td>
