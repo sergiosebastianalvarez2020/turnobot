@@ -168,6 +168,11 @@
             background: #0B1B3A;
         }
 
+        .btn-login:focus-visible {
+            outline: 3px solid #1463FF;
+            outline-offset: 2px;
+        }
+
         .back-link {
             display: block;
             text-align: center;
@@ -193,7 +198,7 @@
         <h1>Panel de administración</h1>
 
         {% if error %}
-        <div class="error-msg">{{ error_message or "Contraseña incorrecta. Intentá nuevamente." }}</div>
+        <div class="error-msg" role="alert">{{ error_message or "Contraseña incorrecta. Intentá nuevamente." }}</div>
         {% endif %}
 
         <form method="POST" action="{{ admin_prefix or '' }}/login">

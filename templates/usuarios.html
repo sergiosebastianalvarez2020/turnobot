@@ -21,6 +21,8 @@
 
 <body>
 
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
     <div class="admin-container">
 
 
@@ -47,24 +49,24 @@
             <nav>
 
                 <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
-                    <span>📅</span>
+                    <span aria-hidden="true">📅</span>
                     Turnos
                 </a>
 
                 <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item active">
-                    <span>👥</span>
+                    <span aria-hidden="true">👥</span>
                     Usuarios
                 </a>
 
                 <a href="{{ admin_prefix or '' }}/" class="nav-item">
-                    <span>💬</span>
+                    <span aria-hidden="true">💬</span>
                     Recepcionista
                 </a>
 
                 <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="nav-item">
-                    <span>🚪</span>
+                    <span aria-hidden="true">🚪</span>
                     Cerrar sesión
                     </button>
                 </form>
@@ -88,7 +90,7 @@
              CONTENIDO PRINCIPAL
              ===================================================== -->
 
-        <main class="main-content">
+        <main class="main-content" id="main-content">
 
 
             <!-- HEADER -->
@@ -109,11 +111,11 @@
 
 
             {% if error %}
-            <div class="settings-feedback settings-error">{{ error }}</div>
+            <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
             {% endif %}
 
             {% if message %}
-            <div class="settings-feedback settings-success">{{ message }}</div>
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
             {% endif %}
 
 
@@ -273,12 +275,12 @@
                                         <form method="POST" action="{{ admin_prefix or '' }}/admin/usuarios/{{ member['user_id'] }}/rol"
                                               class="member-role-form">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <select name="role_name" class="member-role-select">
+                                            <select name="role_name" class="member-role-select" aria-label="Nuevo rol para {{ member['email'] }}">
                                                 <option value="admin" {% if member['role_name'] == 'admin' %}selected{% endif %}>Admin</option>
                                                 <option value="staff" {% if member['role_name'] == 'staff' %}selected{% endif %}>Staff</option>
                                                 <option value="customer" {% if member['role_name'] == 'customer' %}selected{% endif %}>Customer</option>
                                             </select>
-                                            <button type="submit" class="refresh-button">Guardar</button>
+                                            <button type="submit" class="refresh-button" aria-label="Guardar rol de {{ member['email'] }}">Guardar</button>
                                         </form>
 
                                         {% if member['user_id'] != current_user_id %}
@@ -286,7 +288,7 @@
                                               class="member-revoke-form"
                                               onsubmit="return confirm('¿Revocar el acceso de {{ member['email'] }} a este negocio?');">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="danger-button">Revocar</button>
+                                            <button type="submit" class="danger-button" aria-label="Revocar acceso de {{ member['email'] }}">Revocar</button>
                                         </form>
                                         {% endif %}
 
@@ -309,7 +311,7 @@
                 <div class="empty-state">
 
                     <div class="empty-icon">
-                        👥
+                        <span aria-hidden="true">👥</span>
                     </div>
 
                     <h3>

@@ -21,6 +21,8 @@
 
 <body>
 
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
     <div class="admin-container">
 
 
@@ -47,26 +49,26 @@
             <nav>
 
                 <a href="{{ admin_prefix or '' }}/admin" class="nav-item active">
-                    <span>📅</span>
+                    <span aria-hidden="true">📅</span>
                     Turnos
                 </a>
 
                 {% if can_manage_memberships %}
                 <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
-                    <span>👥</span>
+                    <span aria-hidden="true">👥</span>
                     Usuarios
                 </a>
                 {% endif %}
 
                 <a href="{{ admin_prefix or '' }}/" class="nav-item">
-                    <span>💬</span>
+                    <span aria-hidden="true">💬</span>
                     Recepcionista
                 </a>
 
                 <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="nav-item">
-                    <span>🚪</span>
+                    <span aria-hidden="true">🚪</span>
                     Cerrar sesión
                     </button>
                 </form>
@@ -90,7 +92,7 @@
              CONTENIDO PRINCIPAL
              ===================================================== -->
 
-        <main class="main-content">
+        <main class="main-content" id="main-content">
 
 
             <!-- HEADER -->
@@ -110,7 +112,7 @@
 
                 <div class="topbar-date">
 
-                    📅
+                    <span aria-hidden="true">📅</span>
 
                     <span id="current-date"></span>
 
@@ -130,7 +132,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        📅
+                        <span aria-hidden="true">📅</span>
                     </div>
 
                     <div>
@@ -152,7 +154,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        ✂️
+                        <span aria-hidden="true">✂️</span>
                     </div>
 
                     <div>
@@ -174,7 +176,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        ✖️
+                        <span aria-hidden="true">✖️</span>
                     </div>
 
                     <div>
@@ -195,7 +197,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        ✅
+                        <span aria-hidden="true">✅</span>
                     </div>
 
                     <div>
@@ -216,7 +218,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        ⚠️
+                        <span aria-hidden="true">⚠️</span>
                     </div>
 
                     <div>
@@ -237,7 +239,7 @@
                 <div class="stat-card">
 
                     <div class="stat-icon">
-                        🗂️
+                        <span aria-hidden="true">🗂️</span>
                     </div>
 
                     <div>
@@ -268,11 +270,11 @@
                 </div>
 
                 {% if config_message %}
-                <div class="settings-feedback settings-success">{{ config_message }}</div>
+                <div class="settings-feedback settings-success" role="status">{{ config_message }}</div>
                 {% endif %}
 
                 {% if config_error %}
-                <div class="settings-feedback settings-error">{{ config_error }}</div>
+                <div class="settings-feedback settings-error" role="alert">{{ config_error }}</div>
                 {% endif %}
 
                 <form method="POST" action="{{ admin_prefix or '' }}/admin/configuracion" class="settings-form">
@@ -336,10 +338,10 @@
                 </div>
 
                 {% if service_message %}
-                <div class="settings-feedback settings-success">{{ service_message }}</div>
+                <div class="settings-feedback settings-success" role="status">{{ service_message }}</div>
                 {% endif %}
                 {% if service_error %}
-                <div class="settings-feedback settings-error">{{ service_error }}</div>
+                <div class="settings-feedback settings-error" role="alert">{{ service_error }}</div>
                 {% endif %}
 
                 <form method="POST" action="{{ admin_prefix or '' }}/admin/servicios/guardar" class="settings-form service-form">
@@ -432,7 +434,7 @@
                 </div>
 
                 {% if reschedule_error %}
-                <div class="settings-feedback settings-error">{{ reschedule_error }}</div>
+                <div class="settings-feedback settings-error" role="alert">{{ reschedule_error }}</div>
                 {% endif %}
 
                 <form method="GET" action="{{ admin_prefix or '' }}/admin" class="filters">
@@ -554,7 +556,7 @@
 
                                     <span class="time">
 
-                                        🕐
+                                        <span aria-hidden="true">🕐</span>
                                         {{ appointment.appointment_time }}
 
                                     </span>
@@ -589,26 +591,26 @@
                                     {% if appointment.status == "confirmed" %}
                                     <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/estado" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <select name="status" class="admin-status-select">
+                                        <select name="status" class="admin-status-select" aria-label="Nuevo estado para {{ appointment.customer_name }}">
                                             <option value="completed">Completado</option>
                                             <option value="no_show">No se presentó</option>
                                             <option value="cancelled">Cancelar</option>
                                         </select>
-                                        <button type="submit" class="refresh-button">Aplicar</button>
+                                        <button type="submit" class="refresh-button" aria-label="Aplicar nuevo estado a {{ appointment.customer_name }}">Aplicar</button>
                                     </form>
                                     <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/reprogramar" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <input type="date" name="new_date" class="admin-date-input" required>
-                                        <input type="time" name="new_time" class="admin-time-input" required>
-                                        <button type="submit" class="refresh-button">Reprogramar</button>
+                                        <input type="date" name="new_date" class="admin-date-input" required aria-label="Fecha de reprogramación para {{ appointment.customer_name }}">
+                                        <input type="time" name="new_time" class="admin-time-input" required aria-label="Hora de reprogramación para {{ appointment.customer_name }}">
+                                        <button type="submit" class="refresh-button" aria-label="Reprogramar turno de {{ appointment.customer_name }}">Reprogramar</button>
                                     </form>
                                     {% else %}
                                     <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/estado" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <select name="status" class="admin-status-select">
+                                        <select name="status" class="admin-status-select" aria-label="Nuevo estado para {{ appointment.customer_name }}">
                                             <option value="confirmed">Confirmar</option>
                                         </select>
-                                        <button type="submit" class="refresh-button">Aplicar</button>
+                                        <button type="submit" class="refresh-button" aria-label="Aplicar nuevo estado a {{ appointment.customer_name }}">Aplicar</button>
                                     </form>
                                     {% endif %}
                                 </td>
@@ -631,7 +633,7 @@
                 <div class="empty-state">
 
                     <div class="empty-icon">
-                        📅
+                        <span aria-hidden="true">📅</span>
                     </div>
 
                     <h3>

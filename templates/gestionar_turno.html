@@ -51,6 +51,10 @@
         }
         .duo { display: flex; gap: 8px; margin: 12px 0; }
         a { color: #1463ff; text-decoration: none; }
+        .btn:focus-visible, a:focus-visible, input[type="date"]:focus-visible, input[type="time"]:focus-visible {
+            outline: 3px solid #1463ff;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
@@ -58,8 +62,8 @@
         <h1>Gestionar mi turno</h1>
         <p class="muted">{{ business.name }}</p>
 
-        {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
-        {% if message %}<div class="alert ok">{{ message }}</div>{% endif %}
+        {% if error %}<div class="alert error" role="alert">{{ error }}</div>{% endif %}
+        {% if message %}<div class="alert ok" role="status">{{ message }}</div>{% endif %}
 
         {% if appointment %}
             <table class="list">
@@ -84,8 +88,8 @@
                     <input type="hidden" name="id" value="{{ appointment.id }}">
                     <input type="hidden" name="action" value="reprogramar">
                     <div class="duo">
-                        <input type="date" name="fecha" required>
-                        <input type="time" name="hora" required>
+                        <input type="date" name="fecha" required aria-label="Nueva fecha del turno">
+                        <input type="time" name="hora" required aria-label="Nueva hora del turno">
                     </div>
                     <button type="submit" class="btn primary block">Reprogramar</button>
                 </form>
