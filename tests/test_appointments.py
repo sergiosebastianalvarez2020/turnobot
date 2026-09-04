@@ -2,9 +2,18 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import database.database as database
 from services import appointments
+
+FROZEN_NOW = datetime(2027, 1, 24, 10, 0)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW
 
 
 class TestReservaDisponible(unittest.TestCase):
@@ -169,6 +178,14 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
 
 class TestReprogramacionHorarioOcupado(unittest.TestCase):
     def setUp(self):
+        self._datetime_patch = mock.patch(f"{__name__}.datetime", _FrozenDatetime)
+        self._datetime_patch.start()
+        self.addCleanup(self._datetime_patch.stop)
+        self._service_datetime_patch = mock.patch(
+            "services.appointments.datetime", _FrozenDatetime
+        )
+        self._service_datetime_patch.start()
+        self.addCleanup(self._service_datetime_patch.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"

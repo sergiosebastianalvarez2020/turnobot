@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 from werkzeug.security import generate_password_hash
 
@@ -19,6 +20,14 @@ import app as application
 import database.database as database
 from database.database import get_connection
 from services import appointments
+
+FROZEN_NOW = datetime(2027, 1, 24, 10, 0)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return FROZEN_NOW
 
 
 def _next_open_day():
@@ -189,6 +198,17 @@ class TestAdminStatus(AdminPanelBase):
 
 
 class TestAdminReschedule(AdminPanelBase):
+
+    def setUp(self):
+        super().setUp()
+        self._datetime_patch = mock.patch(f"{__name__}.datetime", _FrozenDatetime)
+        self._datetime_patch.start()
+        self.addCleanup(self._datetime_patch.stop)
+        self._service_datetime_patch = mock.patch(
+            "services.appointments.datetime", _FrozenDatetime
+        )
+        self._service_datetime_patch.start()
+        self.addCleanup(self._service_datetime_patch.stop)
 
     def test_reprogramar_valido(self):
         appointment_id, date_ = self._create_turno(time_="09:00")
