@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 import re
@@ -11,6 +12,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASE_PATH = BASE_DIR / "database" / "appointments.db"
 
 MIGRATIONS_DIR = BASE_DIR / "migrations"
+
+logger = logging.getLogger("turnobot.db")
 
 
 def get_connection():
@@ -51,26 +54,58 @@ def _migration_version(name):
     return int(name.split("_")[0])
 
 
+def _ensure_migration_tables(connection):
+    """Crea las tablas de control de versiones y auditoría si no existen."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            version INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS migration_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version INTEGER NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.commit()
+
+
+def get_applied_migrations():
+    """Devuelve el historial auditado de migraciones aplicadas, ordenado por versión."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT version, name, applied_at FROM migration_log ORDER BY version"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        connection.close()
+
+
 def apply_migrations():
     """
     Aplica migraciones pendientes en orden.
 
     Lee archivos .sql de migrations/ ordenados por nombre.
-    Cada archivo se ejecuta con executescript (auto-commit).
-    Si un archivo falla, se detiene y se muestra el error.
+    Cada archivo se ejecuta con executescript (auto-commit), como es necesario
+    porque algunos archivos contienen sus propios BEGIN/COMMIT.
+
+    La versión registrada (schema_version) y la fila de auditoría (migration_log)
+    se actualizan juntas y quedan en el mismo commit, de modo que un fallo no
+    deja un estado intermedio entre versión y registro. La columna UNIQUE(version)
+    de migration_log convierte el proceso en idempotente ante reintentos.
     """
     MIGRATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     connection = get_connection()
 
     try:
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                version INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-        connection.commit()
+        _ensure_migration_tables(connection)
 
         current_version = _get_current_version(connection)
 
@@ -81,28 +116,44 @@ def apply_migrations():
             if name.endswith(".sql") and name.split("_")[0].isdigit()
         )
 
-        pending = [
-            f for f in migration_files
-            if _migration_version(f.stem) > current_version
-        ]
-
-        if not pending:
-            return
-
-        for migration_file in pending:
+        # Reconciliación: las migraciones ya aplicadas (versión <= actual) que
+        # no tengan fila en el registro se registran retroactivamente. Así una
+        # base preexistente queda completamente auditable desde el primer inicio.
+        for migration_file in migration_files:
             version = _migration_version(migration_file.stem)
+            if version <= current_version:
+                exists = connection.execute(
+                    "SELECT 1 FROM migration_log WHERE version = ?", (version,)
+                ).fetchone()
+                if not exists:
+                    logger.info("Registrando migración ya aplicada %s...", migration_file.name)
+                    connection.execute(
+                        "INSERT INTO migration_log (version, name) VALUES (?, ?)",
+                        (version, migration_file.name),
+                    )
+        connection.commit()
+
+        for migration_file in migration_files:
+            version = _migration_version(migration_file.stem)
+            if version <= current_version:
+                continue
+
             sql = migration_file.read_text(encoding="utf-8")
 
-            print(f"  Aplicando migración {migration_file.name}...")
+            logger.info("Aplicando migración %s...", migration_file.name)
 
             try:
                 connection.executescript(sql)
                 _set_version(connection, version)
+                connection.execute(
+                    "INSERT INTO migration_log (version, name) VALUES (?, ?)",
+                    (version, migration_file.name),
+                )
                 connection.commit()
-                print(f"  Migración {migration_file.name} aplicada.")
+                logger.info("Migración %s aplicada.", migration_file.name)
             except Exception as e:
                 connection.rollback()
-                print(f"  ERROR en migración {migration_file.name}: {e}")
+                logger.error("ERROR en migración %s: %s", migration_file.name, e)
                 raise
 
     finally:
