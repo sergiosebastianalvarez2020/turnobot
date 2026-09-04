@@ -178,6 +178,32 @@ class AccessibilityUITest(unittest.TestCase):
         )
         self.assertIn('role="alert"', page.text)
 
+    # --- Login contrast ---
+
+    def test_login_page_no_low_contrast_colors(self):
+        # Cliente nuevo: el client del setUp ya tiene sesión y /login redirige.
+        fresh_client = application.app.test_client()
+        page = fresh_client.get("/login")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("#8DA4C8", page.text)
+        self.assertIn("#5B6B84", page.text)
+
+    # --- Public manage page: status label coherence ---
+
+    def test_manage_turno_status_label_is_spanish(self):
+        result = appointments.create_appointment(
+            "Laura Gómez", "3838439001", "Corte", _next_open_day(), "09:00", 1
+        )
+        self.assertTrue(result["success"])
+        page = self.client.get(
+            "/b/el-corte/turno/{}?id={}".format(
+                result["management_token"], result["appointment_id"]
+            )
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Confirmado", page.text)
+        self.assertNotIn(">confirmed</span>", page.text)
+
     # --- Usuarios page accessibility ---
 
     def test_usuarios_skip_link(self):

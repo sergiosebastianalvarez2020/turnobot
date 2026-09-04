@@ -58,6 +58,12 @@
     </style>
 </head>
 <body>
+    {% set status_labels = {
+        'confirmed': 'Confirmado',
+        'cancelled': 'Cancelado',
+        'completed': 'Completado',
+        'no_show': 'No se presentó'
+    } %}
     <div class="card">
         <h1>Gestionar mi turno</h1>
         <p class="muted">{{ business.name }}</p>
@@ -73,7 +79,7 @@
                 <tr><td>Hora</td>
                     <td>{{ appointment.appointment_time }}{% if appointment.appointment_end and appointment.appointment_end != appointment.appointment_time %} a {{ appointment.appointment_end }}{% endif %}</td></tr>
                 <tr><td>Estado</td>
-                    <td><span class="badge {% if appointment.status == 'confirmed' %}ok{% else %}no{% endif %}">{{ appointment.status }}</span></td></tr>
+                    <td><span class="badge {% if appointment.status == 'confirmed' %}ok{% else %}no{% endif %}">{{ status_labels.get(appointment.status, appointment.status) }}</span></td></tr>
             </table>
 
             {% if appointment.status == 'confirmed' %}
