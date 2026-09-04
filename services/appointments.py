@@ -5,6 +5,11 @@ import secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+if hasattr(re, "Pattern"):
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+else:  # pragma: no cover
+    _EMAIL_RE = None
+
 from database.database import (
     get_active_services,
     get_active_services_scoped,
@@ -118,6 +123,20 @@ def validate_customer_name(customer_name):
         return False
     
     return True
+
+
+def validate_email(email):
+    """Valida un email. Devuelve True si es válido, False si no.
+
+    Acepta None/vacío como valor no presente (para no forzar email en
+    flujos donde no aplica). Un email no vacío debe tener formato básico.
+    """
+    if not email or not isinstance(email, str):
+        return True
+    cleaned = email.strip()
+    if not cleaned:
+        return True
+    return bool(_EMAIL_RE.match(cleaned))
 
 
 # ============================================================
@@ -344,6 +363,7 @@ def create_appointment(
     appointment_date,
     appointment_time,
     business_id,
+    email=None,
 ):
     """
     Crea un turno.
@@ -352,6 +372,7 @@ def create_appointment(
 
     - nombre válido (al menos 2 caracteres)
     - teléfono válido (solo dígitos, al menos 7)
+    - email válido (si se provee)
     - fecha válida
     - fecha no pasada
     - día de atención
@@ -365,7 +386,8 @@ def create_appointment(
         {
             "success": True,
             "appointment_id": 123,
-            "reason": "created"
+            "reason": "created",
+            "customer_email": "cliente@ejemplo.com"
         }
 
     Error:
@@ -373,7 +395,7 @@ def create_appointment(
         {
             "success": False,
             "appointment_id": None,
-            "reason": "invalid_name|invalid_phone|occupied|..."
+            "reason": "invalid_name|invalid_phone|invalid_email|occupied|..."
         }
     """
 
@@ -398,6 +420,18 @@ def create_appointment(
             "appointment_id": None,
             "reason": "invalid_phone",
         }
+
+    # --------------------------------------------------------
+    # VALIDAR EMAIL (si se provee)
+    # --------------------------------------------------------
+
+    if not validate_email(email):
+        return {
+            "success": False,
+            "appointment_id": None,
+            "reason": "invalid_email",
+        }
+    customer_email = (email or "").strip()
 
     active_services = get_active_services_scoped(business_id)
     service_row = next(
@@ -531,13 +565,15 @@ def create_appointment(
             cursor = connection.execute(
                 """
                 INSERT INTO appointments
-                (customer_name, phone, service, appointment_date, appointment_time,
-                 appointment_end, duration, business_id, management_token_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (customer_name, phone, customer_email, service, appointment_date,
+                 appointment_time, appointment_end, duration, business_id,
+                 management_token_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     customer_name,
                     normalize_phone(phone),
+                    customer_email or None,
                     service,
                     appointment_date,
                     appointment_time,
@@ -554,6 +590,14 @@ def create_appointment(
                 "success": True,
                 "appointment_id": cursor.lastrowid,
                 "management_token": management_token,
+                "customer_email": customer_email or None,
+                "customer_name": customer_name,
+                "service": service,
+                "appointment_date": appointment_date,
+                "appointment_time": appointment_time,
+                "appointment_end": appointment_end,
+                "duration": duration,
+                "business_id": business_id,
                 "reason": "created",
             }
 
@@ -749,6 +793,21 @@ def get_customer_appointments(
 # ============================================================
 # CANCELAR TURNO
 # ============================================================
+
+def get_appointment_by_token(appointment_id, business_id, management_token):
+    """Devuelve el turno de un negocio si el token de gestión es correcto.
+
+    Se usa en la página pública de gestión para ver/cancelar/reprogramar un
+    turno usando el enlace seguro firmado con el management_token.
+    """
+    from database.database import get_appointment_by_token_scoped
+
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+    if not management_token:
+        return None
+    return get_appointment_by_token_scoped(business_id, appointment_id, management_token)
+
 
 def cancel_appointment(appointment_id, phone, business_id=None, management_token=None):
     """

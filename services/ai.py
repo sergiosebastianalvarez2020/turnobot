@@ -14,6 +14,7 @@ from services.appointments import (
     cancel_appointment,
     reschedule_appointment,
 )
+from services.notifications import send_confirmation_email, notifications_enabled
 from database.database import (
     get_active_services,
     get_active_services_scoped,
@@ -127,6 +128,12 @@ REGLAS GENERALES
    - horario
 
 8. El teléfono es obligatorio para reservar, consultar, cancelar o reprogramar.
+
+8b. Si el cliente quiere reservar, pedile también su email cuando sea posible
+    (no es obligatorio). El email se usa para enviar la confirmación y el
+    recordatorio del turno. Acriptalo al reservar_turno con el parámetro email.
+    Validá que tenga un formato de email; si lo que dio no parece un email,
+    pedile que lo confirme.
 
 9. Si falta algún dato necesario para reservar,
    preguntá solamente por el dato que falta.
@@ -336,6 +343,15 @@ reservar_turno_declaration = types.FunctionDeclaration(
             "telefono": {
                 "type": "string",
                 "description": "Teléfono del cliente.",
+            },
+
+            "email": {
+                "type": "string",
+                "description": (
+                    "Email del cliente, en formato válido. Preguntarlo "
+                    "si no lo dio. Es opcional pero recomendado para "
+                    "enviar la confirmación y recordatorio."
+                ),
             },
 
             "servicio": {
@@ -605,6 +621,17 @@ def execute_tool(name, arguments, business_id=None):
                     "message": "El servicio solicitado no está disponible.",
                 }
 
+            email = (arguments.get("email") or "").strip()
+            if notifications_enabled(business_id) and not email:
+                return {
+                    "success": False,
+                    "reason": "email_required",
+                    "message": (
+                        "Para reservar necesito tu email, así te envío "
+                        "la confirmación del turno. ¿Cuál es tu email?"
+                    ),
+                }
+
             resultado = create_appointment(
 
                 customer_name=arguments["nombre"],
@@ -617,6 +644,8 @@ def execute_tool(name, arguments, business_id=None):
 
                 appointment_time=arguments["hora"],
                 business_id=business_id,
+
+                email=email or None,
             )
 
 
@@ -628,6 +657,25 @@ def execute_tool(name, arguments, business_id=None):
                     "message": "No se pudo reservar el turno solicitado.",
                 }
 
+
+            try:
+                send_confirmation_email(
+                    business_id,
+                    {
+                        "id": resultado.get("appointment_id"),
+                        "customer_name": resultado.get("customer_name"),
+                        "customer_email": resultado.get("customer_email"),
+                        "service": resultado.get("service"),
+                        "appointment_date": resultado.get("appointment_date"),
+                        "appointment_time": resultado.get("appointment_time"),
+                        "appointment_end": resultado.get("appointment_end"),
+                    },
+                    management_token=None,
+                    slug=None,
+                    public_base_url=os.getenv("PUBLIC_BASE_URL", ""),
+                )
+            except Exception:
+                logger.exception("Error enviando confirmación de turno")
 
             return {
                 "success": True,

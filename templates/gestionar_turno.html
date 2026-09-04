@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestionar turno - {{ business.name }}</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f4f6fb;
+            margin: 0;
+            padding: 24px;
+            color: #1b2333;
+        }
+        .card {
+            max-width: 520px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: 0 10px 30px rgba(20, 60, 130, 0.10);
+        }
+        .card h1 { font-size: 22px; margin: 0 0 6px; }
+        .card h2 { font-size: 16px; margin: 20px 0 10px; color: #47506a; }
+        .muted { color: #66708a; font-size: 14px; }
+        .list { width: 100%; border-collapse: collapse; margin: 14px 0; }
+        .list td { padding: 8px 0; border-bottom: 1px solid #eef1f7; font-size: 15px; }
+        .list td:first-child { color: #66708a; width: 110px; }
+        .badge {
+            display: inline-block; padding: 3px 10px; border-radius: 999px;
+            font-size: 12px; font-weight: 600; text-transform: uppercase;
+        }
+        .badge.ok { background: #e6f6ec; color: #1e7e43; }
+        .badge.no { background: #fdecea; color: #c0392b; }
+        .btn {
+            display: inline-block; border: 0; border-radius: 10px; cursor: pointer;
+            padding: 12px 18px; font-size: 15px; font-weight: 600;
+        }
+        .btn.danger { background: #e5484d; color: #fff; }
+        .btn.primary { background: #1463ff; color: #fff; }
+        .btn.block { width: 100%; }
+        .row { display: flex; gap: 10px; margin-top: 16px; }
+        .row .btn { flex: 1; text-align: center; }
+        .alert { padding: 12px 14px; border-radius: 10px; font-size: 14px; margin-bottom: 14px; }
+        .alert.error { background: #fdecea; color: #c0392b; }
+        .alert.ok { background: #e6f6ec; color: #1e7e43; }
+        form.actions { margin-top: 16px; }
+        input[type="date"], input[type="time"] {
+            width: 48%; padding: 10px; border: 1px solid #d4dae6; border-radius: 8px; font-size: 15px;
+        }
+        .duo { display: flex; gap: 8px; margin: 12px 0; }
+        a { color: #1463ff; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Gestionar mi turno</h1>
+        <p class="muted">{{ business.name }}</p>
+
+        {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+        {% if message %}<div class="alert ok">{{ message }}</div>{% endif %}
+
+        {% if appointment %}
+            <table class="list">
+                <tr><td>Cliente</td><td>{{ appointment.customer_name }}</td></tr>
+                <tr><td>Servicio</td><td>{{ appointment.service }}</td></tr>
+                <tr><td>Fecha</td><td>{{ appointment.appointment_date }}</td></tr>
+                <tr><td>Hora</td>
+                    <td>{{ appointment.appointment_time }}{% if appointment.appointment_end and appointment.appointment_end != appointment.appointment_time %} a {{ appointment.appointment_end }}{% endif %}</td></tr>
+                <tr><td>Estado</td>
+                    <td><span class="badge {% if appointment.status == 'confirmed' %}ok{% else %}no{% endif %}">{{ appointment.status }}</span></td></tr>
+            </table>
+
+            {% if appointment.status == 'confirmed' %}
+                <form method="post" class="actions">
+                    <input type="hidden" name="id" value="{{ appointment.id }}">
+                    <input type="hidden" name="action" value="cancelar">
+                    <button type="submit" class="btn danger block">Cancelar turno</button>
+                </form>
+
+                <h2>Reprogramar</h2>
+                <form method="post" class="actions">
+                    <input type="hidden" name="id" value="{{ appointment.id }}">
+                    <input type="hidden" name="action" value="reprogramar">
+                    <div class="duo">
+                        <input type="date" name="fecha" required>
+                        <input type="time" name="hora" required>
+                    </div>
+                    <button type="submit" class="btn primary block">Reprogramar</button>
+                </form>
+            {% else %}
+                <p class="muted">Este turno ya no está activo.</p>
+            {% endif %}
+        {% else %}
+            <p class="muted">No se encontró el turno vinculado a este enlace.</p>
+        {% endif %}
+    </div>
+</body>
+</html>

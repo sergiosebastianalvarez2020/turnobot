@@ -39,6 +39,7 @@ const PUBLIC_FRONTEND_CONFIG = (() => {
 const BUSINESS_CONFIG = PUBLIC_FRONTEND_CONFIG.business || {};
 const BUSINESS_TIMEZONE = BUSINESS_CONFIG.timezone || "America/Argentina/Buenos_Aires";
 const BUSINESS_NAME = BUSINESS_CONFIG.name || "Mi negocio";
+const NOTIFICATIONS_ENABLED = Boolean(BUSINESS_CONFIG.notifications_enabled);
 
 
 // ============================================================
@@ -2016,6 +2017,30 @@ phoneInput.autocomplete =
 phoneInput.required =
     true;
     // ========================================================
+    // EMAIL (opcional, para confirmación y recordatorio)
+    // ========================================================
+
+   const emailLabel =
+    document.createElement("label");
+
+emailLabel.textContent =
+    NOTIFICATIONS_ENABLED ? "Email (obligatorio)" : "Email (opcional)";
+
+const emailInput =
+    document.createElement("input");
+
+emailInput.type =
+    "email";
+
+emailInput.placeholder =
+    "tu@email.com";
+
+emailInput.autocomplete =
+    "email";
+
+emailInput.required =
+    NOTIFICATIONS_ENABLED;
+    // ========================================================
     // CONFIRMAR
     // ========================================================
 
@@ -2349,6 +2374,10 @@ async function loadTimes(
                 phoneInput.value.trim();
 
 
+            const email =
+                emailInput.value.trim();
+
+
             const servicio =
                 serviceSelect.value;
 
@@ -2398,6 +2427,19 @@ async function loadTimes(
                 );
 
                 phoneInput.focus();
+
+                return;
+            }
+
+
+            if (NOTIFICATIONS_ENABLED && !email) {
+
+                addMessage(
+                    "Necesito tu email para confirmar el turno y enviarte la confirmación.",
+                    "bot"
+                );
+
+                emailInput.focus();
 
                 return;
             }
@@ -2459,6 +2501,8 @@ async function loadTimes(
                                         nombre,
 
                                         telefono,
+
+                                        email: email || undefined,
 
                                         servicio,
 
@@ -2643,6 +2687,10 @@ async function loadTimes(
     bubble.appendChild(phoneLabel);
 
     bubble.appendChild(phoneInput);
+
+    bubble.appendChild(emailLabel);
+
+    bubble.appendChild(emailInput);
 
     bubble.appendChild(confirmButton);
 

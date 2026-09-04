@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import re
+import hashlib
 from pathlib import Path
 from werkzeug.security import generate_password_hash
 
@@ -393,6 +394,27 @@ def update_service_scoped(service_id, business_id, name, price, duration, active
 # CONFIGURACIÓN / HORARIOS / TURNOS — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
 
+def list_all_businesses_scoped():
+    """Lista negocios con su zona horaria y flag de notificaciones.
+
+    Usado por el runner de recordatorios para resolver "mañana" en la zona
+    horaria de cada negocio sin mezclar tenants.
+    """
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT b.id, b.slug, b.name,
+                   bs.timezone, bs.notifications_enabled
+            FROM businesses b
+            LEFT JOIN business_settings bs ON bs.business_id = b.id
+            ORDER BY b.id
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+
 def get_business_settings_scoped(business_id):
     """Devuelve la configuración de un negocio específico."""
     connection = get_connection()
@@ -401,7 +423,8 @@ def get_business_settings_scoped(business_id):
             """
             SELECT business_name, business_type, business_initials,
                    business_description, timezone,
-                   slot_duration, break_between_slots
+                   slot_duration, break_between_slots,
+                   notifications_enabled
             FROM business_settings
             WHERE business_id = ?
             """,
@@ -418,30 +441,162 @@ def update_business_settings_scoped(
     business_initials,
     business_description,
     timezone,
+    notifications_enabled=None,
 ):
     """Actualiza la configuración de un negocio específico."""
     connection = get_connection()
     try:
+        if notifications_enabled is None:
+            connection.execute(
+                """
+                UPDATE business_settings
+                SET business_name = ?,
+                    business_type = ?,
+                    business_initials = ?,
+                    business_description = ?,
+                    timezone = ?
+                WHERE business_id = ?
+                """,
+                (
+                    business_name,
+                    business_type,
+                    business_initials,
+                    business_description,
+                    timezone,
+                    business_id,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE business_settings
+                SET business_name = ?,
+                    business_type = ?,
+                    business_initials = ?,
+                    business_description = ?,
+                    timezone = ?,
+                    notifications_enabled = ?
+                WHERE business_id = ?
+                """,
+                (
+                    business_name,
+                    business_type,
+                    business_initials,
+                    business_description,
+                    timezone,
+                    1 if notifications_enabled else 0,
+                    business_id,
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def set_notifications_enabled_scoped(business_id, enabled):
+    """Habilita/deshabilita las notificaciones de un negocio."""
+    connection = get_connection()
+    try:
         connection.execute(
-            """
-            UPDATE business_settings
-            SET business_name = ?,
-                business_type = ?,
-                business_initials = ?,
-                business_description = ?,
-                timezone = ?
-            WHERE business_id = ?
-            """,
-            (
-                business_name,
-                business_type,
-                business_initials,
-                business_description,
-                timezone,
-                business_id,
-            ),
+            "UPDATE business_settings SET notifications_enabled = ? WHERE business_id = ?",
+            (1 if enabled else 0, business_id),
         )
         connection.commit()
+    finally:
+        connection.close()
+
+
+def add_notification_log_scoped(appointment_id, business_id, type_, channel, destination):
+    """Registra una notificación enviada (idempotente por appointment/type/channel).
+
+    Devuelve True si se insertó por primera vez, False si ya existía o si
+    falló la integridad.
+    """
+    connection = get_connection()
+    try:
+        try:
+            connection.execute(
+                """
+                INSERT INTO notification_log
+                (appointment_id, business_id, type, channel, destination)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (appointment_id, business_id, type_, channel, destination),
+            )
+            connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
+    finally:
+        connection.close()
+
+
+def notification_sent_scoped(business_id, appointment_id, type_, channel):
+    """Devuelve True si ya se envió una notificación del tipo/canal indicado
+    para ese turno dentro del negocio (aislamiento estricto por tenant)."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT 1 FROM notification_log
+            WHERE business_id = ? AND appointment_id = ? AND type = ? AND channel = ?
+            """,
+            (business_id, appointment_id, type_, channel),
+        ).fetchone()
+        return row is not None
+    finally:
+        connection.close()
+
+
+def list_reminder_candidates_scoped(remind_date):
+    """Turnos confirmados para recordar (misma fecha de turno en todas las
+    zonas horarias se aproxima por fecha). Independiente de tenant para que el
+    runner resuelva por negocio; el despacho usa get_business_settings_scoped.
+
+    `remind_date` es la fecha del turno (YYYY-MM-DD).
+    """
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, business_id, customer_name, customer_email, service,
+                   appointment_date, appointment_time, appointment_end,
+                   management_token_hash
+            FROM appointments
+            WHERE status = 'confirmed'
+            AND appointment_date = ?
+            AND customer_email IS NOT NULL
+            AND customer_email != ''
+            ORDER BY business_id, appointment_time
+            """,
+            (remind_date,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def get_appointment_by_token_scoped(business_id, appointment_id, management_token):
+    """Devuelve un turno del negocio si el token de gestión coincide.
+
+    Compara el SHA-256 del token provisto con el hash almacenado (nunca se
+    guarda el token en claro). Devuelve fila o None.
+    """
+    if not management_token:
+        return None
+    token_hash = hashlib.sha256(management_token.encode("utf-8")).hexdigest()
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, customer_name, phone, customer_email, service,
+                   appointment_date, appointment_time, appointment_end,
+                   duration, status, business_id
+            FROM appointments
+            WHERE id = ? AND business_id = ? AND management_token_hash = ?
+            """,
+            (appointment_id, business_id, token_hash),
+        ).fetchone()
     finally:
         connection.close()
 

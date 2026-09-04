@@ -17,6 +17,7 @@ from flask import Flask, abort, g, render_template, request, jsonify, session, r
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from services.ai import ask_ai
+from services.notifications import send_confirmation_email, smtp_configured, notifications_enabled
 from database.database import (
     get_business_settings,
     get_business_settings_scoped,
@@ -41,6 +42,8 @@ from services.appointments import (
     get_customer_appointments,
     cancel_appointment,
     reschedule_appointment,
+    validate_email,
+    get_appointment_by_token,
     get_appointments,
     get_appointment_counts,
 )
@@ -207,6 +210,7 @@ def build_public_frontend_config(settings=None):
             "initials": value("business_initials", ""),
             "description": value("business_description", ""),
             "timezone": value("timezone", "UTC"),
+            "notifications_enabled": bool(value("notifications_enabled", 0)),
         },
         "content": {
             "welcome_label": "BIENVENIDO A {business_name}",
@@ -639,6 +643,7 @@ def _render_admin():
             "business_type": "Negocio",
             "business_description": "",
             "timezone": "UTC",
+            "notifications_enabled": 0,
         }
     status = request.args.get("status") or "confirmed"
     if status not in {"confirmed", "cancelled"}:
@@ -665,6 +670,7 @@ def _render_admin():
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
         can_manage_memberships=can_manage_memberships,
+        smtp_configured=smtp_configured(),
     )
 
 
@@ -783,6 +789,7 @@ def admin_update_business_settings(slug=None):
     business_initials = request.form.get("business_initials", "").strip()
     business_description = request.form.get("business_description", "").strip()
     timezone = request.form.get("timezone", "").strip()
+    notifications_enabled = request.form.get("notifications_enabled") == "1"
 
     if not business_name or not business_type or not business_initials:
         return redirect(_admin_url(
@@ -806,6 +813,7 @@ def admin_update_business_settings(slug=None):
         business_initials,
         business_description,
         timezone,
+        notifications_enabled=notifications_enabled,
     )
 
     return redirect(_admin_url(
@@ -1253,6 +1261,11 @@ def _create_public_appointment_response(business_id):
 
         telefono = telefono.strip()
 
+        email = data.get("email", "")
+        if not isinstance(email, str):
+            email = ""
+        email = email.strip()
+
         servicio = data.get(
             "servicio"
         )
@@ -1283,6 +1296,23 @@ def _create_public_appointment_response(business_id):
             return jsonify({
                 "success": False,
                 "error": "El teléfono es obligatorio."
+            }), 400
+
+
+        if email and not validate_email(email):
+
+            return jsonify({
+                "success": False,
+                "error": "El email no es válido."
+            }), 400
+
+
+        if not email and notifications_enabled(business_id):
+
+            return jsonify({
+                "success": False,
+                "reason": "email_required",
+                "error": "El email es obligatorio para poder enviarte la confirmación del turno."
             }), 400
 
 
@@ -1322,6 +1352,8 @@ def _create_public_appointment_response(business_id):
             appointment_time=hora,
 
             business_id=business_id,
+
+            email=email or None,
         )
 
 
@@ -1396,6 +1428,32 @@ def _create_public_appointment_response(business_id):
 
         if resultado.get("success"):
 
+            # ----------------------------------------------------
+            # CONFIRMACIÓN POR EMAIL (no bloqueante para la reserva)
+            # ----------------------------------------------------
+
+            try:
+                current = getattr(g, "current_business", None) or {}
+                slug = current.get("slug") or None
+                base_url = request.url_root.rstrip("/")
+                send_confirmation_email(
+                    business_id,
+                    {
+                        "id": resultado.get("appointment_id"),
+                        "customer_name": resultado.get("customer_name"),
+                        "customer_email": resultado.get("customer_email"),
+                        "service": resultado.get("service"),
+                        "appointment_date": resultado.get("appointment_date"),
+                        "appointment_time": resultado.get("appointment_time"),
+                        "appointment_end": resultado.get("appointment_end"),
+                    },
+                    management_token=resultado.get("management_token"),
+                    slug=slug,
+                    public_base_url=base_url,
+                )
+            except Exception:
+                logger.exception("Error enviando confirmación de turno")
+
             return jsonify({
 
                 "success": True,
@@ -1466,6 +1524,103 @@ def business_api_reservar(slug):
         abort(404)
 
     return _create_public_appointment_response(business_id)
+
+
+# ============================================================
+# PÁGINA PÚBLICA - GESTIONAR TURNO (enlace seguro con management_token)
+# ============================================================
+
+@app.route("/b/<slug>/turno/<token>", methods=["GET", "POST"])
+def public_manage_turno(slug, token):
+    business = resolve_business(slug)
+    if business is None or business.get("slug") != slug:
+        abort(404)
+
+    g.current_business = business
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    appointment_id = request.args.get("id") or (request.form.get("id") or request.view_args.get("id"))
+    try:
+        appointment_id = int(appointment_id)
+    except (TypeError, ValueError):
+        appointment_id = None
+
+    if appointment_id is None or appointment_id <= 0:
+        return render_template(
+            "gestionar_turno.html",
+            business=business,
+            appointment=None,
+            error="El enlace no es válido o el turno no existe.",
+            message=None,
+        ), 404
+
+    appointment = get_appointment_by_token(appointment_id, business_id, token)
+    if appointment is None:
+        return render_template(
+            "gestionar_turno.html",
+            business=business,
+            appointment=None,
+            error="El enlace no es válido o el turno no existe.",
+            message=None,
+        ), 404
+
+    error = None
+    message = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+
+        if action == "cancelar":
+            if cancel_appointment(
+                appointment_id,
+                appointment.get("phone") or "",
+                business_id,
+                management_token=token,
+            ):
+                message = "Tu turno fue cancelado correctamente."
+                appointment = get_appointment_by_token(appointment_id, business_id, token)
+            else:
+                error = "No se pudo cancelar el turno. Puede que ya haya sido cancelado."
+
+        elif action == "reprogramar":
+            nueva_fecha = (request.form.get("fecha") or "").strip()
+            nueva_hora = (request.form.get("hora") or "").strip()
+            res = reschedule_appointment(
+                appointment_id,
+                appointment.get("phone") or "",
+                business_id,
+                management_token=token,
+                new_date=nueva_fecha,
+                new_time=nueva_hora,
+            )
+            if res.get("success"):
+                message = "Tu turno fue reprogramado correctamente."
+                appointment = get_appointment_by_token(appointment_id, business_id, token)
+            else:
+                error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
+
+    return render_template(
+        "gestionar_turno.html",
+        business=business,
+        appointment=appointment,
+        error=error,
+        message=message,
+    )
+
+
+def _human_reschedule_error(reason):
+    reasons = {
+        "occupied": "ese horario ya está ocupado.",
+        "past_date": "no podés reprogramar a una fecha que ya pasó.",
+        "closed_day": "ese día estamos cerrados.",
+        "invalid_date": "la fecha no es válida.",
+        "invalid_time": "el horario no es válido.",
+        "not_found": "no se encontró el turno.",
+        "invalid_phone": "el teléfono no es válido.",
+    }
+    return reasons.get(reason, "intentá nuevamente.")
 
 
 # ============================================================

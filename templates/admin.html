@@ -240,6 +240,21 @@
                         <input type="text" name="timezone" value="{{ business_settings['timezone'] if business_settings else '' }}" required>
                     </label>
 
+                    <div class="settings-toggle">
+                        <label class="toggle-wrap">
+                            <input type="checkbox" name="notifications_enabled" value="1" {% if business_settings and business_settings['notifications_enabled'] %}checked{% endif %}>
+                            <span class="toggle-label"><strong>Notificaciones por email</strong></span>
+                        </label>
+                        <p class="settings-hint">
+                            Enviar confirmación al reservar y recordatorio 24&nbsp;h antes.
+                            {% if not smtp_configured %}
+                            <span class="settings-error">Aún no configuraste SMTP (SMTP_HOST), los emails no se enviarán.</span>
+                            {% else %}
+                            SMTP configurado.
+                            {% endif %}
+                        </p>
+                    </div>
+
                     <div class="settings-actions">
                         <button type="submit" class="refresh-button">Guardar configuración</button>
                     </div>
