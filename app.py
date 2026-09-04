@@ -1589,6 +1589,8 @@ def public_manage_turno(slug, token):
         ), 404
 
     appointment = get_appointment_by_token(appointment_id, business_id, token)
+    if appointment is not None:
+        appointment = dict(appointment)
     if appointment is None:
         return render_template(
             "gestionar_turno.html",
@@ -1613,6 +1615,8 @@ def public_manage_turno(slug, token):
             ):
                 message = "Tu turno fue cancelado correctamente."
                 appointment = get_appointment_by_token(appointment_id, business_id, token)
+                if appointment is not None:
+                    appointment = dict(appointment)
             else:
                 error = "No se pudo cancelar el turno. Puede que ya haya sido cancelado."
 
@@ -1621,15 +1625,17 @@ def public_manage_turno(slug, token):
             nueva_hora = (request.form.get("hora") or "").strip()
             res = reschedule_appointment(
                 appointment_id,
+                nueva_fecha,
+                nueva_hora,
                 appointment.get("phone") or "",
                 business_id,
                 management_token=token,
-                new_date=nueva_fecha,
-                new_time=nueva_hora,
             )
             if res.get("success"):
                 message = "Tu turno fue reprogramado correctamente."
                 appointment = get_appointment_by_token(appointment_id, business_id, token)
+                if appointment is not None:
+                    appointment = dict(appointment)
             else:
                 error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
 
