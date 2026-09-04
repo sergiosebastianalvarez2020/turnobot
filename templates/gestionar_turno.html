@@ -102,6 +102,23 @@
             {% else %}
                 <p class="muted">Este turno ya no está activo.</p>
             {% endif %}
+
+            {% if loyalty and loyalty.enabled %}
+                <h2>Mis puntos</h2>
+                <table class="list">
+                    <tr>
+                        <td>Puntos acumulados</td>
+                        <td><strong>{{ loyalty.balance }}</strong></td>
+                    </tr>
+                    {% if loyalty.points_per_completed %}
+                    <tr>
+                        <td>Puntos por visita</td>
+                        <td>{{ loyalty.points_per_completed }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+                <p class="muted">Sumá puntos cada vez que completes un turno acá.</p>
+            {% endif %}
         {% else %}
             <p class="muted">No se encontró el turno vinculado a este enlace.</p>
         {% endif %}

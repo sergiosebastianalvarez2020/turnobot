@@ -61,6 +61,17 @@ from database.database import (
 )
 from database.seed_auth import migrate_owner_from_module_hash
 from services import memberships
+from services import loyalty
+from database.database import (
+    get_loyalty_settings_scoped,
+    ensure_loyalty_settings_scoped,
+    update_loyalty_settings_scoped,
+    get_or_create_loyalty_account_scoped,
+    get_loyalty_account_by_id_scoped,
+    recalculate_all_balances_scoped,
+    list_points_ledger_scoped,
+    list_loyalty_accounts_scoped,
+)
 
 
 load_dotenv()
@@ -853,6 +864,11 @@ def admin_update_appointment_status(appointment_id, slug=None):
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, status, business_id)
+    # Etapa 10.1: al marcar como completado, acreditar puntos de fidelización
+    # (idempotente, no rompe el cambio de estado; "sticky award" en turnos ya
+    # completados no duplica).
+    if status == "completed":
+        loyalty.award_points_for_completed(business_id, appointment_id)
     return redirect(_admin_url(status=status))
 
 
@@ -1019,6 +1035,126 @@ def admin_usuarios_revocar(user_id, slug=None):
 
 
 # ============================================================
+# FIDELIZACIÓN (MVP Etapa 10.1)
+# ============================================================
+
+def _fidelizacion_url(**kwargs):
+    """URL de la página administrativa de fidelización, con/sin slug."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_fidelizacion_slug", slug=business["slug"], **kwargs)
+    return url_for("admin_fidelizacion", **kwargs)
+
+
+@app.route("/admin/fidelizacion")
+@app.route("/b/<slug>/admin/fidelizacion")
+def admin_fidelizacion(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    settings = get_business_settings_scoped(business_id)
+    loyalty_settings = ensure_loyalty_settings_scoped(business_id)
+    accounts = list_loyalty_accounts_scoped(business_id)
+    selected_account_id = request.args.get("account_id", type=int)
+
+    movements = []
+    selected_account = None
+    if selected_account_id is not None:
+        selected_account = get_loyalty_account_by_id_scoped(selected_account_id, business_id)
+        if selected_account is not None:
+            movements = list_points_ledger_scoped(business_id, selected_account_id)
+
+    business_name = settings["business_name"] if settings and settings["business_name"] else "Mi negocio"
+    business_initials = settings["business_initials"] if settings and settings["business_initials"] else ""
+
+    return render_template(
+        "admin_fidelizacion.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        loyalty_settings=loyalty_settings,
+        accounts=accounts,
+        selected_account=selected_account,
+        movements=movements,
+        message=request.args.get("loyalty_message", ""),
+        error=request.args.get("loyalty_error", ""),
+        admin_prefix=("" if business_id == 1 else f"/b/{g.current_business['slug']}"),
+    )
+
+
+@app.route("/admin/fidelizacion/configuracion", methods=["POST"])
+@app.route("/b/<slug>/admin/fidelizacion/configuracion", methods=["POST"])
+def admin_fidelizacion_configuracion(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    enabled = request.form.get("enabled") == "1"
+    points_raw = request.form.get("points_per_completed_appointment", "").strip()
+    try:
+        points = int(points_raw)
+    except (TypeError, ValueError):
+        return redirect(_fidelizacion_url(loyalty_error="El valor de puntos debe ser un número entero."))
+    if points < 0:
+        return redirect(_fidelizacion_url(loyalty_error="Los puntos por turno completado no pueden ser negativos."))
+
+    result = update_loyalty_settings_scoped(business_id, enabled, points)
+    if not result:
+        return redirect(_fidelizacion_url(loyalty_error="No se pudo guardar la configuración de fidelización."))
+    return redirect(_fidelizacion_url(
+        loyalty_message="Configuración de fidelización guardada correctamente."
+    ))
+
+
+@app.route("/admin/fidelizacion/<int:account_id>/ajustar", methods=["POST"])
+@app.route("/b/<slug>/admin/fidelizacion/<int:account_id>/ajustar", methods=["POST"])
+def admin_fidelizacion_ajustar(account_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    actor_user_id = session.get("user_id")
+
+    delta_raw = request.form.get("delta", "").strip()
+    reason = request.form.get("reason", "").strip()
+    result = loyalty.adjust_points(business_id, account_id, delta_raw, reason, actor_user_id)
+    if not result["success"]:
+        return redirect(_fidelizacion_url(
+            loyalty_error="Ajuste rechazado: " + str(result["reason"]),
+            account_id=account_id,
+        ))
+    return redirect(_fidelizacion_url(
+        loyalty_message="Ajuste de puntos aplicado correctamente.",
+        account_id=account_id,
+    ))
+
+
+@app.route("/admin/fidelizacion/recalcular", methods=["POST"])
+@app.route("/b/<slug>/admin/fidelizacion/recalcular", methods=["POST"])
+def admin_fidelizacion_recalcular(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    recalculate_all_balances_scoped(business_id)
+    return redirect(_fidelizacion_url(loyalty_message="Saldo de todos los clientes recalculado."))
+# ============================================================
 # CHAT IA
 # ============================================================
 
@@ -1142,6 +1278,48 @@ def business_api_servicios(slug):
     g.current_business = business
     return _get_public_services_response(get_current_business_id())
 
+# ============================================================
+# API - PUNTOS DE FIDELIZACIÓN (cliente)
+# ============================================================
+
+def _get_public_points_response(business_id):
+    """Saldo de puntos del cliente para una consulta pública del negocio.
+
+    Solo devuelve el saldo si fidelización está habilitada y el phone es válido.
+    No expone el ledger completo (es info sensible; en v1 el cliente ve el saldo,
+    el historial detallado queda para el panel admin).
+    """
+    if not is_api_request_allowed(get_client_ip(), "api:puntos", business_id):
+        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+    if business_id is None:
+        return jsonify({"success": False, "error": "No hay un negocio activo para esta solicitud."}), 404
+
+    settings = ensure_loyalty_settings_scoped(business_id)
+    if not settings or not settings.get("enabled"):
+        return jsonify({"success": True, "enabled": False, "balance": 0})
+
+    phone = (request.args.get("phone") or "").strip()
+    account = loyalty.get_account(business_id, phone) if phone else None
+    return jsonify({
+        "success": True,
+        "enabled": True,
+        "points_per_completed": settings.get("points_per_completed_appointment"),
+        "balance": account["points_balance"] if account else 0,
+    })
+
+
+@app.route("/api/puntos", methods=["GET"])
+def api_puntos():
+    return _get_public_points_response(get_current_business_id())
+
+
+@app.route("/b/<slug>/api/puntos", methods=["GET"])
+def business_api_puntos(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+    g.current_business = business
+    return _get_public_points_response(get_current_business_id())
 
 # ============================================================
 # API - DISPONIBILIDAD
@@ -1645,7 +1823,30 @@ def public_manage_turno(slug, token):
         appointment=appointment,
         error=error,
         message=message,
+        loyalty=_loyalty_public_context(business_id, appointment),
     )
+
+
+def _loyalty_public_context(business_id, appointment):
+    """Contexto público de fidelización para la vista del cliente.
+
+    Devuelve un dict que la plantilla usa para mostrar el bloque "Mis puntos".
+    Si fidelización está desactivada o no hay cuenta, devuelve un estado minimal
+    para no inventar puntos de un sistema apagado.
+    """
+    if appointment is None:
+        return {"enabled": False, "balance": 0, "settings": None}
+    settings = ensure_loyalty_settings_scoped(business_id)
+    enabled = bool(settings and settings.get("enabled"))
+    if not enabled:
+        return {"enabled": False, "balance": 0, "settings": settings}
+    phone = (appointment.get("phone") or "").strip()
+    balance = loyalty.get_balance(business_id, phone) if phone else 0
+    return {
+        "enabled": True,
+        "balance": balance,
+        "points_per_completed": settings.get("points_per_completed_appointment") if settings else 0,
+    }
 
 
 def _human_reschedule_error(reason):

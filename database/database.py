@@ -213,6 +213,12 @@ def create_business_with_owner(name, email, password):
                VALUES (?, 60, 0, 'Negocio', ?, '', 'America/Argentina/Buenos_Aires', ?)""",
             (name, "".join(word[0] for word in name.split())[:3].upper(), business_id),
         )
+        connection.execute(
+            """INSERT INTO loyalty_settings
+               (business_id, enabled, points_per_completed_appointment)
+               VALUES (?, 0, 1)""",
+            (business_id,),
+        )
         for day in range(6):
             connection.execute(
                 """INSERT INTO weekly_schedules
@@ -600,6 +606,315 @@ def notification_sent_scoped(business_id, appointment_id, type_, channel):
         connection.close()
 
 
+# ============================================================
+# FIDELIZACIÓN POR PUNTOS (MVP Etapa 10.1)
+#
+# Esquema: loyalty_settings / loyalty_accounts / points_ledger.
+# - Identidad del cliente: business_id + customer_phone normalizado (ANCLA ÚNICA).
+# - El saldo es la SUM(delta) del ledger; points_balance es un cache reconstructible.
+# - Todo acceso está scoped por business_id (tenant derivado del slug en la capa HTTP).
+# ============================================================
+
+def ensure_loyalty_settings_scoped(business_id):
+    """Asegura que exista una fila de configuración de fidelización para el negocio.
+
+    La fidelización arranca DESACTIVADA (enabled=0) con 1 punto por turno
+    completado. Devuelve la fila como dict, o None si business_id no es válido.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT * FROM loyalty_settings WHERE business_id = ?", (business_id,)
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                """INSERT INTO loyalty_settings
+                   (business_id, enabled, points_per_completed_appointment)
+                   VALUES (?, 0, 1)""",
+                (business_id,),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM loyalty_settings WHERE business_id = ?", (business_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        connection.close()
+
+
+def get_loyalty_settings_scoped(business_id):
+    """Devuelve la configuración de fidelización de un negocio (o None)."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT * FROM loyalty_settings WHERE business_id = ?", (business_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        connection.close()
+
+
+def update_loyalty_settings_scoped(business_id, enabled, points_per_completed_appointment):
+    """Actualiza la configuración de fidelización de un negocio (scoped).
+
+    Valida puntos >= 0. Devuelve True si se actualizó, False si no.
+    """
+    try:
+        points = int(points_per_completed_appointment)
+    except (TypeError, ValueError):
+        return False
+    if points < 0:
+        return False
+
+    connection = get_connection()
+    try:
+        if not connection.execute(
+            "SELECT 1 FROM loyalty_settings WHERE business_id = ?", (business_id,)
+        ).fetchone():
+            ensure_loyalty_settings_scoped(business_id)
+        cursor = connection.execute(
+            """UPDATE loyalty_settings
+               SET enabled = ?, points_per_completed_appointment = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE business_id = ?""",
+            (1 if enabled else 0, points, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()
+
+
+def get_or_create_loyalty_account_scoped(business_id, customer_phone, customer_name=None, customer_email=None):
+    """Devuelve (account, created) para un cliente, creándola si no existe.
+
+    La identidad es business_id + phone normalizado (ANCLA ÚNICA). El email y el
+    nombre son auxiliares: se actualizan si se proveen y difieren, pero nunca
+    determinan la clave de la cuenta. El saldo inicial siempre es 0.
+    """
+    phone = (customer_phone or "").strip()
+    if not phone.isdigit() or len(phone) < 7:
+        return None, False
+    email = (customer_email or "").strip().lower() or None
+    name = (customer_name or "").strip() or None
+
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT * FROM loyalty_accounts WHERE business_id = ? AND customer_phone = ?",
+            (business_id, phone),
+        ).fetchone()
+        if row is not None:
+            # Actualizar auxiliares (email/name) sin tocar la identidad.
+            new_email = email if (email and (row["customer_email"] or None) != email) else row["customer_email"]
+            new_name = name if (name and (row["customer_name"] or None) != name) else row["customer_name"]
+            if new_email != row["customer_email"] or new_name != row["customer_name"]:
+                connection.execute(
+                    """UPDATE loyalty_accounts
+                       SET customer_email = ?, customer_name = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (new_email, new_name, row["id"]),
+                )
+                connection.commit()
+                row = connection.execute(
+                    "SELECT * FROM loyalty_accounts WHERE id = ?", (row["id"],)
+                ).fetchone()
+            return dict(row), False
+
+        inserted = connection.execute(
+            """INSERT INTO loyalty_accounts
+               (business_id, customer_phone, customer_email, customer_name, points_balance)
+               VALUES (?, ?, ?, ?, 0)""",
+            (business_id, phone, email, name),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT * FROM loyalty_accounts WHERE id = ?", (inserted.lastrowid,)
+        ).fetchone()
+        return (dict(row), True) if row is not None else (None, False)
+    finally:
+        connection.close()
+
+
+def get_loyalty_account_scoped(business_id, customer_phone):
+    """Devuelve la cuenta de un cliente por phone normalizado (scoped)."""
+    phone = (customer_phone or "").strip()
+    if not phone:
+        return None
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT * FROM loyalty_accounts WHERE business_id = ? AND customer_phone = ?",
+            (business_id, phone),
+        ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        connection.close()
+
+
+def get_loyalty_account_by_id_scoped(account_id, business_id):
+    """Devuelve una cuenta de fidelización solo si pertenece al negocio indicado."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT * FROM loyalty_accounts WHERE id = ? AND business_id = ?",
+            (account_id, business_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        connection.close()
+
+
+def list_loyalty_accounts_scoped(business_id):
+    """Lista las cuentas de fidelización de un negocio ordenadas por saldo desc."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """SELECT id, business_id, customer_phone, customer_email, customer_name,
+                      points_balance, created_at, updated_at
+               FROM loyalty_accounts
+               WHERE business_id = ?
+               ORDER BY points_balance DESC, id ASC""",
+            (business_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
+def list_points_ledger_scoped(business_id, account_id):
+    """Movimientos del ledger de una cuenta del negocio (auditoría)."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """SELECT id, business_id, account_id, delta, type, reason,
+                      appointment_id, points_per_completed, actor_user_id, created_at
+               FROM points_ledger
+               WHERE business_id = ? AND account_id = ?
+               ORDER BY id ASC""",
+            (business_id, account_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+def insert_earn_scoped(business_id, account_id, appointment_id, points, snapshot):
+    """Inserta un movimiento EARN de forma idempotente por appointment y tenant.
+
+    Devuelve True si se insertó; False si el turno ya acreditó (IntegrityError)
+    o la cantidad de puntos es <= 0. NO actualiza el saldo: lo hace el llamador
+    dentro de la misma transacción.
+    """
+    if points <= 0:
+        return False
+    connection = get_connection()
+    try:
+        try:
+            connection.execute(
+                """INSERT INTO points_ledger
+                   (business_id, account_id, delta, type, reason,
+                    appointment_id, points_per_completed)
+                   VALUES (?, ?, ?, 'earn', 'turno completado', ?, ?)""",
+                (business_id, account_id, points, appointment_id, snapshot),
+            )
+            connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
+    finally:
+        connection.close()
+
+
+def insert_adjust_scoped(business_id, account_id, delta, reason, actor_user_id):
+    """Inserta un movimiento de AJUSTE ADMINISTRATIVO (+/- puntos).
+
+    Requiere motivo y actor (admin). No permite ajustar por debajo del saldo
+    disponible que ya tenga la cuenta (saldo nunca negativo). No actualiza el
+    saldo: el llamador lo hace dentro de la misma transacción.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("motivo obligatorio para un ajuste de puntos")
+    try:
+        delta_int = int(delta)
+    except (TypeError, ValueError):
+        raise ValueError("cantidad de puntos inválida")
+    if delta_int == 0:
+        raise ValueError("la cantidad de puntos no puede ser cero")
+
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT points_balance FROM loyalty_accounts WHERE id = ? AND business_id = ?",
+            (account_id, business_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("cuenta de fidelización no encontrada")
+        if row["points_balance"] + delta_int < 0:
+            raise ValueError("el saldo no puede quedar negativo")
+
+        connection.execute(
+            """INSERT INTO points_ledger
+               (business_id, account_id, delta, type, reason, actor_user_id)
+               VALUES (?, ?, ?, 'adjust', ?, ?)""",
+            (business_id, account_id, delta_int, reason, actor_user_id),
+        )
+        connection.commit()
+        return True
+    finally:
+        connection.close()
+
+
+def update_loyalty_balance_scoped(account_id, business_id):
+    """Reconstruye el saldo de una cuenta (SUM del ledger) y lo actualiza.
+
+    Usado para materializar el saldo tras un earn/adjust y en la reconciliación.
+    Scoped por business_id.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """SELECT COALESCE(SUM(delta), 0) AS total
+               FROM points_ledger
+               WHERE business_id = ? AND account_id = ?""",
+            (business_id, account_id),
+        ).fetchone()
+        balance = row["total"] if row else 0
+        connection.execute(
+            """UPDATE loyalty_accounts
+               SET points_balance = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND business_id = ?""",
+            (balance, account_id, business_id),
+        )
+        connection.commit()
+        return balance
+    finally:
+        connection.close()
+
+
+def recalculate_all_balances_scoped(business_id):
+    """Reconstruye el saldo de TODAS las cuentas de un negocio desde el ledger."""
+    connection = get_connection()
+    try:
+        accounts = connection.execute(
+            "SELECT id FROM loyalty_accounts WHERE business_id = ?", (business_id,)
+        ).fetchall()
+        for acc in accounts:
+            row = connection.execute(
+                """SELECT COALESCE(SUM(delta), 0) AS total
+                   FROM points_ledger
+                   WHERE business_id = ? AND account_id = ?""",
+                (business_id, acc["id"]),
+            ).fetchone()
+            connection.execute(
+                """UPDATE loyalty_accounts
+                   SET points_balance = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND business_id = ?""",
+                (row["total"], acc["id"], business_id),
+            )
+        connection.commit()
+        return len(accounts)
+    finally:
+        connection.close()
 def list_reminder_candidates_scoped(remind_date):
     """Turnos confirmados para recordar (misma fecha de turno en todas las
     zonas horarias se aproxima por fecha). Independiente de tenant para que el

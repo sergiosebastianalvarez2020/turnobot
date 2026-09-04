@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Fidelización</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span aria-hidden="true">📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item active">
+                    <span aria-hidden="true">⭐</span>
+                    Fidelización
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span aria-hidden="true">🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content" id="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <div>
+
+                    <h2>Fidelización</h2>
+
+                    <p>
+                        Puntos por turnos completados de {{ business_name }}
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            {% if error %}
+            <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
+            {% endif %}
+
+            {% if message %}
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
+            {% endif %}
+
+
+            <!-- =================================================
+                 CONFIGURACIÓN DE FIDELIZACIÓN
+                 ================================================= -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Configuración</h3>
+                        <p>Activá el programa y definí cuántos puntos otorga un turno completado.</p>
+                    </div>
+                </div>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/configuracion" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="settings-toggle">
+                        <label class="toggle-wrap">
+                            <input type="checkbox" name="enabled" value="1" {% if loyalty_settings and loyalty_settings['enabled'] %}checked{% endif %}>
+                            <span class="toggle-label"><strong>Fidelización habilitada</strong></span>
+                        </label>
+                        <p class="settings-hint">
+                            Cuando está activa, cada turno marcado como completado genera puntos.
+                        </p>
+                    </div>
+
+                    <label>
+                        Puntos por turno completado
+                        <input type="number" name="points_per_completed_appointment" value="{{ loyalty_settings['points_per_completed_appointment'] if loyalty_settings else 1 }}" min="0" step="1" required>
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Guardar configuración</button>
+                    </div>
+                </form>
+
+            </section>
+<!-- =================================================
+                 CLIENTES CON PUNTOS
+                 ================================================= -->
+
+            <section class="settings-card services-admin-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Clientes con puntos</h3>
+                        <p>Saldo actual de cada cliente. Hacé clic en un cliente para ver sus movimientos.</p>
+                    </div>
+                </div>
+
+                {% if accounts %}
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Cliente</th>
+                                <th scope="col">Teléfono</th>
+                                <th scope="col">Saldo (puntos)</th>
+                                <th scope="col">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for account in accounts %}
+                            <tr>
+                                <td>{{ account.customer_name or '—' }}</td>
+                                <td>{{ account.customer_phone }}</td>
+                                <td><strong>{{ account.points_balance }}</strong></td>
+                                <td>
+                                    <a class="refresh-button"
+                                       href="{{ admin_prefix or '' }}/admin/fidelizacion?account_id={{ account.id }}">Ver movimientos</a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="empty-services">Aún no hay clientes con puntos.</p>
+                {% endif %}
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/recalcular" class="settings-actions"
+                      style="margin-top: 16px;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="refresh-button">Recalcular saldo desde el historial</button>
+                </form>
+
+            </section>
+
+
+            <!-- =================================================
+                 DETALLE DE CLIENTE (movimientos y ajuste)
+                 ================================================= -->
+
+            {% if selected_account %}
+            <section class="settings-card services-admin-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Movimientos de {{ selected_account.customer_name or selected_account.customer_phone }}</h3>
+                        <p>Saldo actual: <strong>{{ selected_account.points_balance }}</strong> puntos.</p>
+                    </div>
+                </div>
+
+                {% if movements %}
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Fecha</th>
+                                <th scope="col">Tipo</th>
+                                <th scope="col">Puntos</th>
+                                <th scope="col">Motivo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for mv in movements %}
+                            <tr>
+                                <td>{{ mv.created_at }}</td>
+                                <td>{{ 'Acreditación' if mv.type == 'earn' else 'Ajuste' }}</td>
+                                <td>{% if mv.delta > 0 %}+{% endif %}{{ mv.delta }}</td>
+                                <td>{{ mv.reason or '—' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="empty-services">Este cliente no tiene movimientos.</p>
+                {% endif %}
+
+                <div class="section-header" style="margin-top: 24px;">
+                    <h3>Ajustar puntos</h3>
+                </div>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/{{ selected_account.id }}/ajustar" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <label>
+                        Cantidad (+/-)
+                        <input type="number" name="delta" step="1" required
+                               aria-label="Cantidad de puntos a sumar o restar">
+                    </label>
+
+                    <label>
+                        Motivo (obligatorio)
+                        <input type="text" name="reason" required maxlength="200"
+                               placeholder="Ej.: corrección de turno, cortesía, reclamo">
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Aplicar ajuste</button>
+                    </div>
+                </form>
+
+            </section>
+            {% endif %}
+
+
+        </main>
+
+    </div>
+
+
+</body>
+
+</html>
