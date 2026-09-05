@@ -62,6 +62,7 @@ from database.database import (
 from database.seed_auth import migrate_owner_from_module_hash
 from services import memberships
 from services import loyalty
+from services import product
 from database.database import (
     get_loyalty_settings_scoped,
     ensure_loyalty_settings_scoped,
@@ -657,6 +658,8 @@ def _render_admin():
             "timezone": "UTC",
             "notifications_enabled": 0,
         }
+    services = get_all_services_scoped(business_id)
+    onboarding = product.get_onboarding_state(business_id, settings, services)
     status = request.args.get("status") or "confirmed"
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         status = "confirmed"
@@ -678,7 +681,9 @@ def _render_admin():
         business_settings=settings,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
-        services=get_all_services_scoped(business_id),
+        services=services,
+        onboarding=onboarding,
+        product_summary=onboarding["summary"],
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
         reschedule_error=request.args.get("error_message", ""),

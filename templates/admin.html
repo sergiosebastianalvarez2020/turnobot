@@ -131,6 +131,14 @@
                  ESTADÍSTICAS
                  ================================================= -->
 
+            {% if not onboarding.business_configured or not onboarding.has_service %}
+            <section class="settings-card" aria-labelledby="start-title">
+                <h3 id="start-title">Primeros pasos</h3>
+                <p>{% if not onboarding.business_configured %}Configurá los datos de tu negocio{% elif not onboarding.has_service %}Agregá al menos un servicio{% endif %} para empezar a recibir turnos.</p>
+                <a class="refresh-button" href="#configuracion">Configurar ahora</a>
+            </section>
+            {% endif %}
+
             <section class="stats">
 
 
@@ -265,7 +273,12 @@
             </section>
 
 
-            <section class="settings-card">
+            <section class="settings-card" aria-labelledby="value-title">
+                <div class="section-header"><div><h3 id="value-title">Resumen de tu negocio</h3><p>Indicadores claros para decidir en pocos segundos.</p></div></div>
+                <div class="stats"><div class="stat-card"><span>Completados</span><strong>{{ product_summary.completed }}</strong></div><div class="stat-card"><span>Cancelados</span><strong>{{ product_summary.cancelled }}</strong></div><div class="stat-card"><span>Clientes recurrentes</span><strong>{{ product_summary.recurring }}</strong></div><div class="stat-card"><span>Puntos otorgados</span><strong>{{ product_summary.points_awarded }}</strong></div><div class="stat-card"><span>Recompensas canjeadas</span><strong>{{ product_summary.rewards_redeemed }}</strong></div></div>
+            </section>
+
+            <section class="settings-card" id="configuracion">
 
                 <div class="section-header">
                     <div>
