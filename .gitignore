@@ -7,3 +7,4 @@ logs/
 .pytest_cache/
 database/*.db
 database/backups/
+venv312/
