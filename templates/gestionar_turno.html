@@ -123,5 +123,14 @@
             <p class="muted">No se encontró el turno vinculado a este enlace.</p>
         {% endif %}
     </div>
+            {% if loyalty and loyalty.enabled and loyalty.rewards %}
+            <section class="loyalty-rewards" aria-labelledby="rewards-title">
+                <h2 id="rewards-title">Recompensas disponibles</h2>
+                {% for reward in loyalty.rewards %}
+                <p><strong>{{ reward.name }}</strong> — {{ reward.points_cost }} puntos. {% if loyalty.balance >= reward.points_cost %}Podés canjearla.{% else %}Te faltan {{ reward.points_cost - loyalty.balance }} puntos.{% endif %}</p>
+                {% if loyalty.balance >= reward.points_cost %}<form method="post" class="actions"><input type="hidden" name="id" value="{{ appointment.id }}"><input type="hidden" name="action" value="canjear"><input type="hidden" name="reward_id" value="{{ reward.id }}"><input type="hidden" name="idempotency_key" value="{{ loyalty.idempotency_key }}"><button type="submit" class="btn primary block">Solicitar canje</button></form>{% endif %}
+                {% endfor %}
+            </section>
+            {% endif %}
 </body>
 </html>

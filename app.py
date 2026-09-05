@@ -1154,6 +1154,46 @@ def admin_fidelizacion_recalcular(slug=None):
         abort(404)
     recalculate_all_balances_scoped(business_id)
     return redirect(_fidelizacion_url(loyalty_message="Saldo de todos los clientes recalculado."))
+
+
+@app.route("/admin/fidelizacion/recompensas", methods=["GET", "POST"])
+@app.route("/b/<slug>/admin/fidelizacion/recompensas", methods=["GET", "POST"])
+def admin_recompensas(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return "Solicitud no válida", 400
+        result = loyalty.save_reward(business_id, request.form.get("reward_id"), request.form.get("name"), request.form.get("description"), request.form.get("points_cost"), request.form.get("active") == "1")
+        if not result["success"]:
+            return redirect(_fidelizacion_url(loyalty_error="No se pudo guardar la recompensa."))
+        return redirect(_fidelizacion_url(loyalty_message="Recompensa guardada."))
+    connection = get_connection()
+    try:
+        redemptions = [dict(row) for row in connection.execute("""SELECT r.*, a.customer_name, a.customer_phone, w.name reward_name FROM redemptions r JOIN loyalty_accounts a ON a.id=r.account_id AND a.business_id=r.business_id JOIN rewards w ON w.id=r.reward_id AND w.business_id=r.business_id WHERE r.business_id=? ORDER BY r.id DESC""", (business_id,)).fetchall()]
+    finally:
+        connection.close()
+    reward_id = request.args.get("edit", type=int)
+    editing = next((reward for reward in loyalty.list_rewards(business_id) if reward["id"] == reward_id), None)
+    loyalty_enabled = bool(ensure_loyalty_settings_scoped(business_id).get("enabled"))
+    return render_template("admin_recompensas.html", rewards=loyalty.list_rewards(business_id), retention=loyalty.retention_candidates(business_id) if loyalty_enabled else [], redemptions=redemptions, editing=editing, loyalty_enabled=loyalty_enabled)
+
+
+@app.route("/admin/fidelizacion/recompensas/<int:reward_id>/estado", methods=["POST"])
+@app.route("/b/<slug>/admin/fidelizacion/recompensas/<int:reward_id>/estado", methods=["POST"])
+def admin_recompensa_estado(reward_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    reward = next((r for r in loyalty.list_rewards(get_current_business_id()) if r["id"] == reward_id), None)
+    if reward is None:
+        abort(404)
+    loyalty.save_reward(get_current_business_id(), reward_id, reward["name"], reward["description"], reward["points_cost"], request.form.get("active") == "1")
+    return redirect(_fidelizacion_url())
 # ============================================================
 # CHAT IA
 # ============================================================
@@ -1817,6 +1857,18 @@ def public_manage_turno(slug, token):
             else:
                 error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
 
+        elif action == "canjear":
+            settings = ensure_loyalty_settings_scoped(business_id)
+            result = loyalty.redeem(
+                business_id,
+                loyalty.get_account(business_id, appointment.get("phone") or "") ["id"],
+                request.form.get("reward_id"),
+                request.form.get("idempotency_key"),
+            ) if settings and settings.get("enabled") and loyalty.get_account(business_id, appointment.get("phone") or "") else {"success": False, "reason": "disabled"}
+            message = "Canje realizado correctamente." if result["success"] else "No se pudo realizar el canje: " + result["reason"]
+            if not result["success"]:
+                error, message = message, None
+
     return render_template(
         "gestionar_turno.html",
         business=business,
@@ -1846,6 +1898,8 @@ def _loyalty_public_context(business_id, appointment):
         "enabled": True,
         "balance": balance,
         "points_per_completed": settings.get("points_per_completed_appointment") if settings else 0,
+        "rewards": loyalty.list_rewards(business_id, active_only=True),
+        "idempotency_key": secrets.token_urlsafe(24),
     }
 
 

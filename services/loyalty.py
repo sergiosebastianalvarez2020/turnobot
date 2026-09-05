@@ -12,6 +12,7 @@ Sigue el patrón de services/memberships.py (devuelve dicts success/reason).
 """
 
 import logging
+from datetime import date
 
 from services.appointments import normalize_phone
 from database.database import (
@@ -226,3 +227,97 @@ def adjust_points(business_id, account_id, delta, reason, actor_user_id):
     finally:
         connection.close()
     return {"success": True, "reason": None}
+
+
+def list_rewards(business_id, active_only=False):
+    connection = get_connection()
+    try:
+        query = "SELECT * FROM rewards WHERE business_id = ?"
+        params = [business_id]
+        if active_only:
+            query += " AND active = 1"
+        query += " ORDER BY active DESC, points_cost ASC, id ASC"
+        return [dict(row) for row in connection.execute(query, params).fetchall()]
+    finally:
+        connection.close()
+
+
+def save_reward(business_id, reward_id, name, description, points_cost, active=True):
+    name = (name or "").strip()
+    try:
+        points_cost = int(points_cost)
+    except (TypeError, ValueError):
+        return {"success": False, "reason": "invalid_points"}
+    if not name or points_cost <= 0:
+        return {"success": False, "reason": "invalid_reward"}
+    connection = get_connection()
+    try:
+        if reward_id:
+            cur = connection.execute("UPDATE rewards SET name=?, description=?, points_cost=?, active=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND business_id=?", (name, (description or "").strip() or None, points_cost, int(bool(active)), reward_id, business_id))
+        else:
+            cur = connection.execute("INSERT INTO rewards (business_id,name,description,points_cost,active) VALUES (?,?,?,?,?)", (business_id, name, (description or "").strip() or None, points_cost, int(bool(active))))
+        connection.commit()
+        return {"success": cur.rowcount == 1, "reason": None if cur.rowcount == 1 else "not_found"}
+    except Exception:
+        connection.rollback()
+        return {"success": False, "reason": "duplicate_name"}
+    finally:
+        connection.close()
+
+
+def redeem(business_id, account_id, reward_id, idempotency_key, actor_user_id=None):
+    if not idempotency_key or not get_loyalty_settings_scoped(business_id) or not get_loyalty_settings_scoped(business_id).get("enabled"):
+        return {"success": False, "reason": "disabled"}
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute("SELECT * FROM redemptions WHERE business_id=? AND idempotency_key=?", (business_id, idempotency_key)).fetchone()
+        if existing:
+            connection.commit()
+            return {"success": existing["status"] == "redeemed", "reason": "already_processed", "redemption": dict(existing)}
+        account = connection.execute("SELECT * FROM loyalty_accounts WHERE id=? AND business_id=?", (account_id, business_id)).fetchone()
+        reward = connection.execute("SELECT * FROM rewards WHERE id=? AND business_id=? AND active=1", (reward_id, business_id)).fetchone()
+        if not account or not reward:
+            connection.rollback(); return {"success": False, "reason": "not_found"}
+        balance = connection.execute("SELECT COALESCE(SUM(delta),0) FROM points_ledger WHERE business_id=? AND account_id=?", (business_id, account_id)).fetchone()[0]
+        if balance < reward["points_cost"]:
+            connection.rollback(); return {"success": False, "reason": "insufficient_points"}
+        cur = connection.execute("INSERT INTO redemptions (business_id,account_id,reward_id,points_used,idempotency_key,actor_user_id) VALUES (?,?,?,?,?,?)", (business_id, account_id, reward_id, reward["points_cost"], idempotency_key, actor_user_id))
+        redemption_id = cur.lastrowid
+        connection.execute("INSERT INTO points_ledger (business_id,account_id,delta,type,reason,actor_user_id,reward_id,redemption_id) VALUES (?,?,?,'redeem',?,?,?,?)", (business_id, account_id, -reward["points_cost"], "recompensa canjeada", actor_user_id, reward_id, redemption_id))
+        connection.execute("UPDATE loyalty_accounts SET points_balance=points_balance-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND business_id=? AND points_balance>=?", (reward["points_cost"], account_id, business_id, reward["points_cost"]))
+        connection.commit()
+        return {"success": True, "reason": "redeemed", "redemption_id": redemption_id}
+    except Exception:
+        connection.rollback()
+        return {"success": False, "reason": "error"}
+    finally:
+        connection.close()
+
+
+def retention_candidates(business_id):
+    connection = get_connection()
+    try:
+        rows = connection.execute("SELECT phone, customer_name, appointment_date FROM appointments WHERE business_id=? AND status='completed' AND phone IS NOT NULL AND phone!=''", (business_id,)).fetchall()
+        grouped = {}
+        today = date.today()
+        for row in rows:
+            phone = normalize_phone(row["phone"])
+            if not phone:
+                continue
+            item = grouped.setdefault(phone, {"customer_phone": phone, "customer_name": row["customer_name"], "completed_count": 0, "last_completed_date": row["appointment_date"]})
+            item["completed_count"] += 1
+            if row["appointment_date"] > item["last_completed_date"]:
+                item["last_completed_date"] = row["appointment_date"]
+                item["customer_name"] = row["customer_name"]
+        result = []
+        for item in grouped.values():
+            try:
+                item["days_since_last"] = (today - date.fromisoformat(item["last_completed_date"])).days
+            except ValueError:
+                continue
+            if item["completed_count"] >= 2 and item["days_since_last"] >= 60:
+                result.append(item)
+        return sorted(result, key=lambda value: value["days_since_last"], reverse=True)
+    finally:
+        connection.close()
