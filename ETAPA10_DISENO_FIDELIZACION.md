@@ -1,10 +1,15 @@
 # ETAPA 10 — Sistema de Fidelización de TurnoBot
 
-**Tipo de documento:** Diseño técnico/producto (NO implementación)
-**Alcance:** Diseño del MVP de fidelización. No modifica código, no crea migraciones, no hace commit ni push.
-**Estado:** Diseño APROBADO e IMPLEMENTADO en la Etapa 10.1 (migración 009 + `services/loyalty.py` + panel `/admin/fidelizacion`; ver sección 26 "Revisión técnica pre-implementación" y sección 24 "MVP recomendado").
+**Tipo de documento:** Diseño técnico/producto y registro de implementación.
+**Alcance:** Especificación del sistema de fidelización y seguimiento de las etapas implementadas.
+**Estado:** Etapas 10.1, 10.2 y 10.3 implementadas y validadas (migraciones 009, 010 y 011; servicio, panel, recompensas, canjes y retención).
 
 ---
+
+> **Estado actualizado:** las etapas 10.1 (puntos), 10.2 (recompensas y canjes) y 10.3
+> (retención) ya están implementadas y validadas en el repositorio. La suite integral y
+> la validación manual están completadas (356 pruebas pasaron y 1 fue omitida). Las
+> referencias a trabajo futuro corresponden únicamente a extensiones posteriores.
 
 ## 1. Resumen ejecutivo
 
@@ -480,7 +485,10 @@ Se reutiliza el stack actual (Flask + SQLite + migraciones SQL + capas de negoci
 
 ---
 
-## 16. Evolución futura hacia recompensas (NO implementar)
+## 16. Evolución posterior a recompensas
+
+Las recompensas y los canjes fueron implementados en la Etapa 10.2. Las siguientes
+son extensiones posteriores posibles:
 
 El modelo ya prepara este salto sin breaking changes:
 
@@ -498,7 +506,10 @@ El modelo ya prepara este salto sin breaking changes:
   que la evolución no rompe la auditoría.
 ---
 
-## 17. Evolución futura hacia recuperación de clientes (NO implementar)
+## 17. Evolución posterior hacia recuperación de clientes
+
+La información de retención fue implementada en la Etapa 10.3. La futura tabla
+`customers` y las capacidades CRM avanzadas quedan fuera del alcance actual.
 
 Para detectar oportunidad de recuperación, TurnoBot debe poder responder por tenant:
 - **frecuencia habitual** -> `COUNT` de appointments `completed` agrupados por
