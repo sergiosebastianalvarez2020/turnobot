@@ -1,8 +1,10 @@
 import logging
 import os
+import secrets
 import sqlite3
 import re
 import hashlib
+import datetime
 from pathlib import Path
 from werkzeug.security import generate_password_hash
 
@@ -164,39 +166,71 @@ def init_database():
     apply_migrations()
 
 
-def create_business_with_owner(name, email, password):
+def create_business_with_owner(name, email, password=None, slug=None):
     """Provisiona un negocio completo en una única transacción.
 
-    Esta operación está destinada a un comando/controlador de plataforma
-    confiable; no acepta IDs ni roles del cliente.
+    Dos modos:
+      - `password` presente (>=12 chars): owner inmediatamente activo
+        (modo clásico, usado por scripts/provision_business.py). El negocio
+        nace active=1, pending=0.
+      - `password=None`: owner QUEDA PENDIENTE (active=0) con hash provisorio;
+        el negocio nace PENDIENTE DE APROBACIÓN (active=0, pending=1) y su
+        invitación se genera recién al aprobarlo. NO acepta IDs ni roles del
+        cliente, y es una operación exclusiva de la plataforma/CLI.
+
+    Devuelve {"business_id", "slug", "user_id", "pending": bool}.
     """
     name = name.strip() if isinstance(name, str) else ""
     email = email.strip().lower() if isinstance(email, str) else ""
-    password = password if isinstance(password, str) else ""
+    password = password if isinstance(password, str) else None
     if not 2 <= len(name) <= 120:
         raise ValueError("nombre de negocio inválido")
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         raise ValueError("email inválido")
-    if len(password) < 12:
+    pending = password is None
+    if not pending and len(password) < 12:
         raise ValueError("la contraseña debe tener al menos 12 caracteres")
 
-    base_slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-") or "negocio"
+    if slug is not None:
+        slug = (slug or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+            raise ValueError("slug inválido")
+    else:
+        base_slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-") or "negocio"
+
     connection = get_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
-        slug = base_slug
-        suffix = 2
-        while connection.execute("SELECT 1 FROM businesses WHERE slug = ?", (slug,)).fetchone():
-            slug = f"{base_slug}-{suffix}"
-            suffix += 1
+        if slug is not None:
+            if connection.execute("SELECT 1 FROM businesses WHERE slug = ?", (slug,)).fetchone():
+                connection.rollback()
+                raise ValueError("slug ya existe")
+            final_slug = slug
+        else:
+            final_slug = base_slug
+            suffix = 2
+            while connection.execute(
+                "SELECT 1 FROM businesses WHERE slug = ?", (final_slug,)
+            ).fetchone():
+                final_slug = f"{base_slug}-{suffix}"
+                suffix += 1
 
         business_cursor = connection.execute(
-            "INSERT INTO businesses (name, slug) VALUES (?, ?)", (name, slug)
+            """INSERT INTO businesses (name, slug, active, pending, created_at)
+               VALUES (?, ?, ?, ?, datetime('now'))""",
+            (name, final_slug, 1 if not pending else 0, 1 if pending else 0),
         )
         business_id = business_cursor.lastrowid
+        if pending:
+            # Hash provisorio inutilizable: el owner aún no eligió contraseña.
+            password_hash = generate_password_hash(secrets.token_urlsafe(32))
+            active = 0
+        else:
+            password_hash = generate_password_hash(password)
+            active = 1
         user_cursor = connection.execute(
-            "INSERT INTO users (email, password_hash, active) VALUES (?, ?, 1)",
-            (email, generate_password_hash(password)),
+            "INSERT INTO users (email, password_hash, active) VALUES (?, ?, ?)",
+            (email, password_hash, active),
         )
         user_id = user_cursor.lastrowid
         owner_role = connection.execute(
@@ -232,7 +266,12 @@ def create_business_with_owner(name, email, password):
             (business_id,),
         )
         connection.commit()
-        return {"business_id": business_id, "slug": slug, "user_id": user_id}
+        return {
+            "business_id": business_id,
+            "slug": final_slug,
+            "user_id": user_id,
+            "pending": pending,
+        }
     except Exception:
         connection.rollback()
         raise
@@ -241,7 +280,16 @@ def create_business_with_owner(name, email, password):
 
 
 # ============================================================
-# CONSULTAS
+# CONSULTAS — LEGACY SINGLE-TENANT
+#
+# Functions below (get_active_services, get_all_services,
+# create_service, update_service, get_business_settings,
+# update_business_settings, get_weekly_schedule,
+# update_appointment_status) are pre-multitenant leftovers that
+# operate WITHOUT business_id. They are intentionally NOT removed
+# (El Corte/demo and tests still depend on them), but they must
+# NOT gain new callers from tenant-scoped routes. Use the
+# *_scoped variants instead, which always scope by business_id.
 # ============================================================
 
 def get_active_services():
@@ -481,7 +529,7 @@ def get_business_settings_scoped(business_id):
             SELECT business_name, business_type, business_initials,
                    business_description, timezone,
                    slot_duration, break_between_slots,
-                   notifications_enabled
+                   notifications_enabled, notification_email
             FROM business_settings
             WHERE business_id = ?
             """,
@@ -499,52 +547,40 @@ def update_business_settings_scoped(
     business_description,
     timezone,
     notifications_enabled=None,
+    notification_email=None,
 ):
-    """Actualiza la configuración de un negocio específico."""
+    """Actualiza la configuración de un negocio específico.
+
+    `notifications_enabled` y `notification_email` son opcionales: si se pasan
+    como None, la columna correspondiente NO cambia (COALESCE). La operación
+    está scoped por business_id: un tenant jamás modifica la configuración de
+    otro tenant.
+    """
     connection = get_connection()
     try:
-        if notifications_enabled is None:
-            connection.execute(
-                """
-                UPDATE business_settings
-                SET business_name = ?,
-                    business_type = ?,
-                    business_initials = ?,
-                    business_description = ?,
-                    timezone = ?
-                WHERE business_id = ?
-                """,
-                (
-                    business_name,
-                    business_type,
-                    business_initials,
-                    business_description,
-                    timezone,
-                    business_id,
-                ),
-            )
-        else:
-            connection.execute(
-                """
-                UPDATE business_settings
-                SET business_name = ?,
-                    business_type = ?,
-                    business_initials = ?,
-                    business_description = ?,
-                    timezone = ?,
-                    notifications_enabled = ?
-                WHERE business_id = ?
-                """,
-                (
-                    business_name,
-                    business_type,
-                    business_initials,
-                    business_description,
-                    timezone,
-                    1 if notifications_enabled else 0,
-                    business_id,
-                ),
-            )
+        connection.execute(
+            """
+            UPDATE business_settings
+            SET business_name = ?,
+                business_type = ?,
+                business_initials = ?,
+                business_description = ?,
+                timezone = ?,
+                notifications_enabled = COALESCE(?, notifications_enabled),
+                notification_email = COALESCE(?, notification_email)
+            WHERE business_id = ?
+            """,
+            (
+                business_name,
+                business_type,
+                business_initials,
+                business_description,
+                timezone,
+                (1 if notifications_enabled else 0) if notifications_enabled is not None else None,
+                (notification_email or "").strip() if notification_email is not None else None,
+                business_id,
+            ),
+        )
         connection.commit()
     finally:
         connection.close()
@@ -602,6 +638,131 @@ def notification_sent_scoped(business_id, appointment_id, type_, channel):
             (business_id, appointment_id, type_, channel),
         ).fetchone()
         return row is not None
+    finally:
+        connection.close()
+
+
+def get_notification_state_scoped(business_id, appointment_id, type_, channel):
+    """Devuelve el estado actual de una notificación (o None).
+
+    Estado: {"destination", "status", "error", "last_attempt_at"}.
+    `status` puede ser 'pending' | 'sent' | 'failed'. Scoped por negocio.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT destination, status, error, last_attempt_at
+            FROM notification_log
+            WHERE business_id = ? AND appointment_id = ? AND type = ? AND channel = ?
+            """,
+            (business_id, appointment_id, type_, channel),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def upsert_notification_log_scoped(
+    appointment_id, business_id, type_, channel, destination,
+    status="sent", error="", last_attempt_at="",
+):
+    """Registra/actualiza una notificación de forma idempotente.
+
+    Si ya existe el par (business_id, appointment_id, type, channel), actualiza
+    destino/estado/error/último intento en lugar de fallar: así un envío fallido
+    (status='failed') puede reintentarse sin duplicar filas.
+    """
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            INSERT INTO notification_log
+                (appointment_id, business_id, type, channel, destination,
+                 status, error, last_attempt_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (business_id, appointment_id, type, channel) DO UPDATE SET
+                destination = excluded.destination,
+                status = excluded.status,
+                error = excluded.error,
+                last_attempt_at = excluded.last_attempt_at
+            """,
+            (appointment_id, business_id, type_, channel, destination,
+             status, error[:1000], last_attempt_at),
+        )
+        connection.commit()
+        return True
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+
+def claim_notification_scoped(appointment_id, business_id, type_, channel,
+                              destination, stale_after_seconds=900):
+    """Claim DB atómico antes de SMTP; recupera claims abandonados."""
+    connection = get_connection()
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            """INSERT INTO notification_log
+               (appointment_id, business_id, type, channel, destination,
+                status, error, last_attempt_at)
+               VALUES (?, ?, ?, ?, ?, 'pending', '', ?)
+               ON CONFLICT (business_id, appointment_id, type, channel) DO NOTHING""",
+            (appointment_id, business_id, type_, channel, destination, now),
+        )
+        cursor = connection.execute(
+            """UPDATE notification_log SET status='processing', destination=?,
+                      error='', last_attempt_at=?
+               WHERE business_id=? AND appointment_id=? AND type=? AND channel=?
+                 AND (status IN ('pending','failed')
+                      OR (status='processing' AND last_attempt_at < datetime('now', ?)))""",
+            (destination, now, business_id, appointment_id, type_, channel,
+             f'-{int(stale_after_seconds)} seconds'),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def list_failed_notifications_scoped(business_id=None, limit=100):
+    """Lista notificaciones con estado 'failed' para reintento.
+
+    Scoped por business_id (o todas si no se indica) para que un reintento
+    jamás cruce el límite del tenant.
+    """
+    connection = get_connection()
+    try:
+        if business_id is not None:
+            rows = connection.execute(
+                """
+                SELECT id, appointment_id, business_id, type, channel, destination, error
+                FROM notification_log
+                WHERE business_id = ? AND status = 'failed'
+                ORDER BY id
+                LIMIT ?
+                """,
+                (business_id, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT id, appointment_id, business_id, type, channel, destination, error
+                FROM notification_log
+                WHERE status = 'failed'
+                ORDER BY id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         connection.close()
 
@@ -1239,5 +1400,461 @@ def is_session_valid_scoped(user_id, token_hash, now_iso):
             (user_id, token_hash, now_iso),
         ).fetchone()
         return row is not None
+    finally:
+        connection.close()
+
+
+# ============================================================
+# PLATAFORMA / SUPERADMIN
+#
+# Identidad de plataforma SEPARADA de la identidad de negocio
+# (users/business_users). Las funciones usan prefijo `platform_`
+# para dejar explícito que NO son tenant-scoped: operan sobre la
+# plataforma completa y solo las invoca el SUPERADMIN.
+# ============================================================
+
+def get_platform_user_by_email(email):
+    """Devuelve un SUPERADMIN por email (sin exponer el hash puro)."""
+    if not email:
+        return None
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, email, display_name, password_hash, active
+            FROM platform_users
+            WHERE email = ?
+            """,
+            (email,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def get_platform_user_by_id(platform_user_id):
+    """Devuelve un SUPERADMIN por id."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, email, display_name, password_hash, active
+            FROM platform_users
+            WHERE id = ?
+            """,
+            (platform_user_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def create_platform_user(email, password_hash, display_name="", active=True):
+    """Crea un SUPERADMIN. Devuelve el id o None si el email existe."""
+    if not email:
+        return None
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO platform_users (email, password_hash, display_name, active)
+            VALUES (?, ?, ?, ?)
+            """,
+            (email.strip().lower(), password_hash, display_name, 1 if active else 0),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return None
+    finally:
+        connection.close()
+
+
+def list_platform_users():
+    """Lista todos los SUPERADMIN (sin hash)."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT id, email, display_name, active, created_at FROM platform_users ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def set_platform_user_active(platform_user_id, active):
+    """Activa/desactiva un SUPERADMIN."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE platform_users SET active = ? WHERE id = ?",
+            (1 if active else 0, platform_user_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def set_platform_user_password(platform_user_id, password_hash):
+    """Actualiza el hash de contraseña de un SUPERADMIN."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE platform_users SET password_hash = ? WHERE id = ?",
+            (password_hash, platform_user_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def create_platform_session(platform_user_id, token_hash, expires_at):
+    """Crea una sesión de SUPERADMIN. Devuelve el id de sesión."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO platform_sessions (platform_user_id, token_hash, expires_at, revoked)
+            VALUES (?, ?, ?, 0)
+            """,
+            (platform_user_id, token_hash, expires_at),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def revoke_all_platform_sessions(platform_user_id):
+    """Revoca todas las sesiones activas de un SUPERADMIN (logout)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE platform_sessions
+            SET revoked = 1
+            WHERE platform_user_id = ? AND revoked = 0
+            """,
+            (platform_user_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def is_platform_session_valid(platform_user_id, token_hash, now_iso):
+    """True si la sesión de SUPERADMIN está activa, no revocada y sin expirar."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT id FROM platform_sessions
+            WHERE platform_user_id = ?
+            AND token_hash = ?
+            AND revoked = 0
+            AND expires_at > ?
+            """,
+            (platform_user_id, token_hash, now_iso),
+        ).fetchone()
+        return row is not None
+    finally:
+        connection.close()
+
+
+def log_platform_action(platform_user_id, actor_email, business_id, action, detail="", ip_address=""):
+    """Registra una acción de plataforma en audit_log (nunca secretos)."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO audit_log
+            (platform_user_id, actor_email, business_id, action, detail, ip_address)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (platform_user_id, (actor_email or ""), business_id, action, detail, ip_address),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def list_audit_log(limit=100):
+    """Devuelve las últimas acciones de plataforma (auditoría)."""
+    try:
+        limit_int = max(1, min(int(limit), 1000))
+    except (TypeError, ValueError):
+        limit_int = 100
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT id, actor_email, business_id, action, detail, ip_address, created_at
+            FROM audit_log
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit_int,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def get_business_by_id_platform(business_id):
+    """Devuelve un negocio (con estado active/pending) por id, uso plataforma."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT id, name, slug, active, pending, created_at
+            FROM businesses
+            WHERE id = ?
+            """,
+            (business_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def list_businesses_for_platform():
+    """Lista negocios con datos de negocio (owner, estado) para el SUPERADMIN.
+
+    Devuelve: id, name, slug, active, pending, created_at, owner_email, member_count.
+    No expone datos de clientes ni tablas de negocio.
+    """
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT b.id, b.name, b.slug, b.active, b.pending, b.created_at,
+                   (SELECT u.email
+                    FROM business_users bu
+                    JOIN roles r ON r.id = bu.role_id
+                    JOIN users u ON u.id = bu.user_id
+                    WHERE bu.business_id = b.id AND r.name = 'owner'
+                    ORDER BY bu.id LIMIT 1) AS owner_email,
+                   (SELECT COUNT(*) FROM business_users bu2
+                    WHERE bu2.business_id = b.id) AS member_count
+            FROM businesses b
+            ORDER BY b.id
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def set_business_active(business_id, active):
+    """Activa/desactiva un negocio (plataforma). Devuelve True si cambió."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "UPDATE businesses SET active = ? WHERE id = ?",
+            (1 if active else 0, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    finally:
+        connection.close()
+
+
+def set_business_pending(business_id, pending):
+    """Marca un negocio como pendiente de aprobación (o lo aprueba: pending=0).
+
+    Devuelve True si cambió. `pending=0` significa "aprobado por superadmin".
+    NOTA: no cambia `active`; el flujo de aprobación completa el estado con
+    set_business_active(business_id, 1).
+    """
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            "UPDATE businesses SET pending = ? WHERE id = ?",
+            (1 if pending else 0, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    finally:
+        connection.close()
+
+
+# ============================================================
+# INVITACIONES (establecimiento de contraseña del owner)
+#
+# El token SIEMPRE se guarda con hash SHA-256; el plaintext solo existe en
+# el email/enlace que se le muestra al SUPERADMIN en la respuesta de alta.
+# ============================================================
+
+def create_invitation(business_id, user_id, email, role_name, token_hash, expires_at):
+    """Crea una invitación pendiente. Devuelve el id creado."""
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO invitations
+            (business_id, user_id, role_name, email, token_hash, expires_at, used_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            """,
+            (business_id, user_id, role_name, email, token_hash, expires_at),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def get_invitation_by_token_hash(business_id, token_hash):
+    """Devuelve la invitación activa de un negocio para un token dado.
+
+    Activa = no usada, sin expirar y del negocio indicado.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT i.*, b.name AS business_name, b.slug AS business_slug,
+                   u.email AS user_email
+            FROM invitations i
+            JOIN businesses b ON b.id = i.business_id
+            JOIN users u ON u.id = i.user_id
+            WHERE i.business_id = ?
+            AND i.token_hash = ?
+            AND i.used_at IS NULL AND i.revoked_at IS NULL
+            AND i.expires_at > datetime('now')
+            """,
+            (business_id, token_hash),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def get_any_invitation_by_token_hash(token_hash):
+    """Devuelve la invitación activa por token (sin filtrar negocio).
+
+    Útil para resolver el slug desde la URL de invitación; igualmente se
+    revalida contra el business_id de la ruta.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT i.*, b.name AS business_name, b.slug AS business_slug,
+                   u.email AS user_email
+            FROM invitations i
+            JOIN businesses b ON b.id = i.business_id
+            JOIN users u ON u.id = i.user_id
+            WHERE i.token_hash = ?
+            AND i.used_at IS NULL
+            AND i.expires_at > datetime('now')
+            """,
+            (token_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def mark_invitation_used(invitation_id):
+    """Marca la invitación como usada (timestamp actual)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE invitations SET used_at = datetime('now') WHERE id = ?",
+            (invitation_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def consume_invitation_atomically(business_id, token_hash, password_hash):
+    """Consume una invitación y activa su usuario en una única transacción.
+
+    El UPDATE condicional es el lock lógico: exactamente una conexión puede
+    obtener rowcount=1 para un token vigente.
+    """
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT user_id FROM invitations
+               WHERE business_id = ? AND token_hash = ?
+                 AND used_at IS NULL AND revoked_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (business_id, token_hash),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            return None
+        cursor = connection.execute(
+            """UPDATE invitations SET used_at = datetime('now')
+               WHERE business_id = ? AND token_hash = ?
+                 AND used_at IS NULL AND revoked_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (business_id, token_hash),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        cursor = connection.execute(
+            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            (password_hash, row["user_id"]),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        connection.commit()
+        return row["user_id"]
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def list_invitations(business_id):
+    """Lista invitaciones de un negocio (plataforma), sin tokens."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT id, user_id, role_name, email, expires_at, used_at, revoked_at, created_at
+            FROM invitations
+            WHERE business_id = ?
+            ORDER BY id DESC
+            """,
+            (business_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def revoke_active_invitations(business_id, user_id):
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """UPDATE invitations SET revoked_at = datetime('now')
+               WHERE business_id = ? AND user_id = ?
+                 AND used_at IS NULL AND revoked_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (business_id, user_id),
+        )
+        connection.commit()
+        return cursor.rowcount
+    finally:
+        connection.close()
+
+
+def set_user_active(user_id, active):
+    """Activa/desactiva un usuario de negocio (usado al aceptar invitación)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE users SET active = ? WHERE id = ?",
+            (1 if active else 0, user_id),
+        )
+        connection.commit()
     finally:
         connection.close()

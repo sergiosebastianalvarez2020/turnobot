@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TurnoBot Platform - Superadmin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0B1B3A;
+            color: #EAF4FF;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 32px;
+            background: rgba(11,27,58,.9);
+            border-bottom: 1px solid rgba(255,255,255,.08);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .brand { display: flex; align-items: center; gap: 12px; }
+
+        .brand-mark {
+            width: 38px; height: 38px;
+            background: #1463FF;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 13px; color: #fff;
+        }
+
+        .brand-name { font-size: 17px; font-weight: 700; color: #fff; }
+
+        .topbar-right { display: flex; align-items: center; gap: 16px; }
+
+        .topbar-email { font-size: 13px; color: #9DB4D6; }
+
+        .btn {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 13px; font-weight: 600;
+            border: none; border-radius: 10px;
+            padding: 9px 16px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-light {
+            background: rgba(255,255,255,.08);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,.14);
+        }
+
+        .btn-light:hover { background: rgba(255,255,255,.14); }
+
+        .btn-primary { background: #1463FF; color: #fff; }
+        .btn-primary:hover { background: #0757E8; }
+        .btn-danger { background: rgba(185,28,28,.18); color: #FCA5A5; border: 1px solid #FECACA; }
+        .btn-danger:hover { background: rgba(185,28,28,.30); }
+        .btn-success { background: rgba(22,163,74,.18); color: #86EFAC; border: 1px solid #86EFAC; }
+        .btn-success:hover { background: rgba(22,163,74,.32); }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        nav.menu {
+            display: flex; gap: 8px;
+            padding: 20px 32px 0;
+        }
+
+        .menu-link {
+            color: #9DB4D6;
+            text-decoration: none;
+            font-size: 14px; font-weight: 600;
+            padding: 8px 14px;
+            border-radius: 8px;
+            transition: background .2s, color .2s;
+        }
+
+        .menu-link:hover { color: #fff; background: rgba(255,255,255,.06); }
+        .menu-link.active { color: #fff; background: #1463FF; }
+
+        .container { padding: 24px 32px 64px; max-width: 1100px; }
+
+        .message {
+            background: rgba(22,163,74,.12);
+            border: 1px solid #86EFAC;
+            color: #86EFAC;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .error {
+            background: rgba(185,28,28,.12);
+            border: 1px solid #FCA5A5;
+            color: #FCA5A5;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .card {
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card-title {
+            font-size: 16px; font-weight: 700;
+            color: #fff;
+            margin-bottom: 18px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th {
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .8px;
+            color: #7E93B8;
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(255,255,255,.10);
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid rgba(255,255,255,.05);
+            vertical-align: middle;
+        }
+
+        tr:hover td { background: rgba(255,255,255,.03); }
+
+        .pill {
+            font-size: 12px; font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 999px;
+            display: inline-block;
+        }
+
+        .pill-active { background: rgba(22,163,74,.16); color: #86EFAC; }
+        .pill-inactive { background: rgba(185,28,28,.16); color: #FCA5A5; }
+        .pill-pending { background: rgba(250,204,21,.14); color: #FDE68A; }
+
+        .muted { color: #7E93B8; font-size: 13px; }
+
+        .form-inline { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        .field {
+            display: flex; flex-direction: column; gap: 6px;
+            flex: 1; min-width: 200px;
+        }
+
+        .field label {
+            font-size: 11px; font-weight: 700;
+            color: #9DB4D6;
+            text-transform: uppercase; letter-spacing: .8px;
+        }
+
+        .field input, .field select {
+            padding: 11px 14px;
+            background: rgba(255,255,255,.06);
+            border: 1px solid rgba(255,255,255,.14);
+            border-radius: 10px;
+            color: #fff;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .field input:focus, .field select:focus {
+            border-color: #1463FF;
+            box-shadow: 0 0 0 3px rgba(20,99,255,.15);
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="brand">
+            <div class="brand-mark">TB</div>
+            <span class="brand-name">TurnoBot Platform</span>
+        </div>
+        <div class="topbar-right">
+            {% if superadmin %}
+            <span class="topbar-email">{{ superadmin.get("email", "") }}</span>
+            <form method="POST" action="/superadmin/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-light">Cerrar sesión</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <nav class="menu">
+        <a class="menu-link {{ 'active' if (section or 'businesses') == 'businesses' else '' }}" href="/superadmin">Negocios</a>
+        <a class="menu-link {{ 'active' if (section or 'businesses') == 'audit' else '' }}" href="/superadmin/auditoria">Auditoría</a>
+    </nav>
+
+    <div class="container">
+        {% if message %}<div class="message">{{ message }}</div>{% endif %}
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+        {% if (section or 'businesses') == 'businesses' %}
+        <div class="card">
+            <h2 class="card-title">Crear negocio (solicitud de alta)</h2>
+            <form method="POST" action="/superadmin/negocios/crear" class="form-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="field">
+                    <label for="nombre">Nombre del negocio</label>
+                    <input type="text" id="nombre" name="nombre" required maxlength="120" placeholder="Ej: Cafetería Aurora">
+                </div>
+                <div class="field">
+                    <label for="slug">Slug (URL pública)</label>
+                    <input type="text" id="slug" name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="Ej: cafetera-aurora">
+                </div>
+                <div class="field">
+                    <label for="owner_email">Email del owner</label>
+                    <input type="email" id="owner_email" name="owner_email" required placeholder="owner@negocio.com">
+                </div>
+                <button type="submit" class="btn btn-primary">Registrar solicitud</button>
+            </form>
+            <p class="muted" style="margin-top:12px">
+                El negocio se registra PENDIENTE DE APROBACIÓN y el solicitante recibe
+                una confirmación por email. Al aprobarlo, el owner recibe el enlace
+                único (vigencia {{ platform_lifetime or '' }} h) para definir su
+                contraseña, y recién ahí el negocio queda activo.
+            </p>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Negocios</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Slug</th>
+                        <th>Owner</th>
+                        <th>Estado</th>
+                        <th>Creado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in businesses %}
+                    <tr>
+                        <td>{{ b["id"] }}</td>
+                        <td><a href="/superadmin/negocios/{{ b['id'] }}" style="color:#86EFAC;text-decoration:none;">{{ b["name"] }}</a></td>
+                        <td>{{ b["slug"] }}</td>
+                        <td>{{ b.get("owner_email") or "—" }}</td>
+                        <td>
+                            {% if b["pending"] %}
+                            <span class="pill pill-pending">Pendiente</span>
+                            {% elif b["active"] %}
+                            <span class="pill pill-active">Activo</span>
+                            {% else %}
+                            <span class="pill pill-inactive">Suspendido</span>
+                            {% endif %}
+                        </td>
+                        <td class="muted">{{ b.get("created_at", "") }}</td>
+                        <td>
+                            {% if b["pending"] %}
+                            <form method="POST" action="/superadmin/negocios/{{ b['id'] }}/aprobar">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-success">Aprobar</button>
+                            </form>
+                            {% elif b["active"] %}
+                            <form method="POST" action="/superadmin/negocios/{{ b['id'] }}/desactivar">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-danger">Suspender</button>
+                            </form>
+                            {% else %}
+                            <form method="POST" action="/superadmin/negocios/{{ b['id'] }}/activar">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-success">Activar</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="muted">No hay negocios.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif section == 'business_detail' %}
+        <div class="card">
+            <h2 class="card-title">{{ business["name"] }} <span class="muted">/b/{{ business["slug"] }}</span></h2>
+            <p class="muted">ID {{ business["id"] }} · Creado {{ business.get("created_at", "") }}</p>
+            {% if business["pending"] %}
+            <span class="pill pill-pending">Pendiente de aprobación</span>
+            {% elif business["active"] %}
+            <span class="pill pill-active">Activo</span>
+            {% else %}
+            <span class="pill pill-inactive">Suspendido</span>
+            {% endif %}
+            <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+                <a class="btn btn-light" href="/b/{{ business['slug'] }}">Ver sitio público</a>
+                {% if business["pending"] %}
+                <form method="POST" action="/superadmin/negocios/{{ business['id'] }}/aprobar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-success">Aprobar solicitud</button>
+                </form>
+                {% elif business["active"] %}
+                <form method="POST" action="/superadmin/negocios/{{ business['id'] }}/desactivar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">Suspender negocio</button>
+                </form>
+                {% else %}
+                <form method="POST" action="/superadmin/negocios/{{ business['id'] }}/activar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-success">Activar negocio</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if business_settings %}
+        <div class="card">
+            <h2 class="card-title">Configuración</h2>
+            <p class="muted">
+                Nombre: <strong>{{ business_settings.get("business_name", "") }}</strong> ·
+                Tipo: {{ business_settings.get("business_type", "") }} ·
+                Zona horaria: {{ business_settings.get("timezone", "") }}
+            </p>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h2 class="card-title">Miembros</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Email</th>
+                        <th>Rol</th>
+                        <th>Activo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in members %}
+                    <tr>
+                        <td>{{ m["user_id"] }}</td>
+                        <td>{{ m["email"] }}</td>
+                        <td>{{ m.get("role_name") or "" }}</td>
+                        <td>
+                            {% if m["active"] %}
+                            <span class="pill pill-active">Sí</span>
+                            {% else %}
+                            <span class="pill pill-inactive">Pendiente</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="muted">Sin miembros.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Invitaciones</h2>
+            {% set owner = members | selectattr('role_name', 'equalto', 'owner') | list | first %}
+            {% if owner and not owner["active"] %}
+            <form method="POST" action="/superadmin/negocios/{{ business['id'] }}/reinviar">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-primary">Generar nueva invitación para {{ owner["email"] }}</button>
+            </form>
+            {% endif %}
+            <table style="margin-top:14px;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Email</th>
+                        <th>Rol</th>
+                        <th>Creada</th>
+                        <th>Vence</th>
+                        <th>Usada</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inv in invitations %}
+                    <tr>
+                        <td>{{ inv["id"] }}</td>
+                        <td>{{ inv["email"] }}</td>
+                        <td>{{ inv["role_name"] }}</td>
+                        <td class="muted">{{ inv.get("created_at", "") }}</td>
+                        <td class="muted">{{ inv["expires_at"] }}</td>
+                        <td>{% if inv["used_at"] %}<span class="pill pill-active">Usada</span>{% else %}<span class="pill pill-inactive">Pendiente</span>{% endif %}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="muted">Sin invitaciones.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif section == 'audit' %}
+        <div class="card">
+            <h2 class="card-title">Auditoría de plataforma</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Actor</th>
+                        <th>Acción</th>
+                        <th>Detalle</th>
+                        <th>IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in audit_rows %}
+                    <tr>
+                        <td>{{ a["id"] }}</td>
+                        <td class="muted">{{ a["created_at"] }}</td>
+                        <td>{{ a["actor_email"] or "—" }}</td>
+                        <td>{{ a["action"] }}</td>
+                        <td>{{ a["detail"] or "" }}</td>
+                        <td class="muted">{{ a["ip_address"] or "" }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="muted">Sin acciones registradas.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

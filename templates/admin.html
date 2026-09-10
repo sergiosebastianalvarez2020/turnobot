@@ -338,6 +338,15 @@
                         </p>
                     </div>
 
+                    <label>
+                        Email para avisos de reserva
+                        <input type="email" name="notification_email" value="{{ business_settings['notification_email'] if business_settings else '' }}" placeholder="ej: turnos@mi-negocio.com">
+                    </label>
+                    <p class="settings-hint">
+                        Cada reserva nueva también avisa a este email del negocio
+                        (separado del cliente). Vacío = sin avisos al negocio.
+                    </p>
+
                     <div class="settings-actions">
                         <button type="submit" class="refresh-button">Guardar configuración</button>
                     </div>

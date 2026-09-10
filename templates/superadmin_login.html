@@ -3,20 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin - Iniciar Sesión</title>
+    <title>TurnoBot Platform - Superadmin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #EAF4FF;
-            color: #102A56;
+            background: #0B1B3A;
+            color: #EAF4FF;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -33,33 +29,21 @@
             right: -100px;
             width: 500px;
             height: 500px;
-            background: radial-gradient(circle, rgba(20,99,255,.06) 0%, transparent 70%);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-
-        body::after {
-            content: "";
-            position: fixed;
-            bottom: -150px;
-            left: -80px;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(20,99,255,.04) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(20,99,255,.18) 0%, transparent 70%);
             border-radius: 50%;
             pointer-events: none;
         }
 
         .login-card {
-            background: rgba(255,255,255,.88);
+            background: rgba(255,255,255,.04);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            border: 1px solid #C9DDF8;
+            border: 1px solid rgba(255,255,255,.10);
             border-radius: 20px;
             padding: 48px 40px;
             width: 100%;
             max-width: 400px;
-            box-shadow: 0 12px 40px rgba(11,27,58,.10);
+            box-shadow: 0 12px 40px rgba(0,0,0,.30);
             position: relative;
             z-index: 1;
         }
@@ -83,64 +67,69 @@
             font-weight: 700;
             font-size: 15px;
             color: #FFFFFF;
-            box-shadow: 0 4px 16px rgba(20,99,255,.15);
+            box-shadow: 0 4px 16px rgba(20,99,255,.25);
         }
 
         .brand-name {
             font-size: 21px;
             font-weight: 700;
-            color: #0B1B3A;
+            color: #FFFFFF;
         }
 
         h1 {
             font-size: 15px;
             font-weight: 600;
-            color: #4A6590;
+            color: #9DB4D6;
             text-align: center;
+            margin-bottom: 6px;
+        }
+
+        .platform-tag {
+            text-align: center;
+            font-size: 12px;
+            color: #5B6B84;
             margin-bottom: 28px;
         }
 
-        .form-group {
-            margin-bottom: 20px;
-        }
+        .form-group { margin-bottom: 20px; }
 
         label {
             display: block;
             font-size: 11px;
             font-weight: 700;
-            color: #4A6590;
+            color: #9DB4D6;
             margin-bottom: 8px;
             text-transform: uppercase;
             letter-spacing: 0.8px;
         }
 
-        input[type="password"] {
+        input[type="email"], input[type="password"] {
             width: 100%;
             padding: 12px 16px;
-            background: #EEF6FF;
-            border: 1px solid #C9DDF8;
+            background: rgba(255,255,255,.06);
+            border: 1px solid rgba(255,255,255,.14);
             border-radius: 12px;
-            color: #102A56;
+            color: #FFFFFF;
             font-family: 'DM Sans', sans-serif;
             font-size: 15px;
             outline: none;
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        input[type="password"]:focus {
+        input[type="email"]:focus, input[type="password"]:focus {
             border-color: #1463FF;
-            box-shadow: 0 0 0 3px rgba(20,99,255,.1);
-            background: #FFFFFF;
+            box-shadow: 0 0 0 3px rgba(20,99,255,.15);
+            background: rgba(255,255,255,.09);
         }
 
         .error-msg {
-            background: #FEF2F2;
+            background: rgba(185,28,28,.15);
             border: 1px solid #FECACA;
             border-radius: 12px;
             padding: 12px 16px;
             margin-bottom: 20px;
             font-size: 13px;
-            color: #B91C1C;
+            color: #FCA5A5;
             text-align: center;
             font-weight: 500;
         }
@@ -159,62 +148,48 @@
             transition: background 0.2s, box-shadow 0.2s;
         }
 
-        .btn-login:hover {
-            background: #0757E8;
-            box-shadow: 0 4px 16px rgba(20,99,255,.2);
-        }
-
-        .btn-login:active {
-            background: #0B1B3A;
-        }
-
-        .btn-login:focus-visible {
-            outline: 3px solid #1463FF;
-            outline-offset: 2px;
-        }
+        .btn-login:hover { background: #0757E8; box-shadow: 0 4px 16px rgba(20,99,255,.25); }
+        .btn-login:active { background: #0B1B3A; }
+        .btn-login:focus-visible { outline: 3px solid #1463FF; outline-offset: 2px; }
 
         .back-link {
             display: block;
             text-align: center;
             margin-top: 20px;
             font-size: 13px;
-            color: #5B6B84;
+            color: #7E93B8;
             text-decoration: none;
             transition: color 0.2s;
         }
 
-        .back-link:hover {
-            color: #1463FF;
-        }
+        .back-link:hover { color: #FFFFFF; }
     </style>
 </head>
 <body>
     <div class="login-card">
         <div class="brand">
-            <div class="brand-mark">{{ business_initials or "" }}</div>
-            <span class="brand-name">{{ business_name or "Mi negocio" }}</span>
+            <div class="brand-mark">TB</div>
+            <span class="brand-name">TurnoBot Platform</span>
         </div>
 
-        <h1>Panel de administración</h1>
+        <h1>Acceso de Superadministrador</h1>
+        <div class="platform-tag">Administración de la plataforma multi-negocio</div>
 
         {% if error %}
-        <div class="error-msg" role="alert">{{ error_message or "Contraseña incorrecta. Intentá nuevamente." }}</div>
+        <div class="error-msg" role="alert">{{ error_message or "Credenciales inválidas." }}</div>
         {% endif %}
 
-        {% if invite_message %}
-        <div class="error-msg" role="status">{{ invite_message }}</div>
-        {% endif %}
-
-        <form method="POST" action="{{ admin_prefix or '' }}/login">
+        <form method="POST" action="/superadmin/login">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <label for="email">Email (opcional)</label>
+                <label for="email">Email</label>
                 <input
                     type="email"
                     id="email"
                     name="email"
-                    placeholder="te@servicio.com"
+                    placeholder="superadmin@plataforma"
                     autofocus
+                    required
                 >
             </div>
             <div class="form-group">
@@ -231,7 +206,7 @@
             <button type="submit" class="btn-login">Ingresar</button>
         </form>
 
-        <a href="{{ admin_prefix or '' }}/" class="back-link">Volver al chat</a>
+        <a href="/" class="back-link">Volver al inicio</a>
     </div>
 </body>
 </html>

@@ -14,7 +14,7 @@ from services.appointments import (
     cancel_appointment,
     reschedule_appointment,
 )
-from services.notifications import send_confirmation_email, notifications_enabled
+from services.notifications import dispatch_booking_emails, notifications_enabled
 from database.database import (
     get_active_services,
     get_active_services_scoped,
@@ -458,9 +458,17 @@ cancelar_turno_declaration = types.FunctionDeclaration(
                 ),
             },
 
-            "telefono": {
+"telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
+            },
+
+            "nombre": {
+                "type": "string",
+                "description": (
+                    "Nombre con el que se registró el turno. "
+                    "Obligatorio cuando no se dispone del management_token."
+                ),
             },
         },
 
@@ -508,9 +516,17 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
                 ),
             },
 
-            "telefono": {
+"telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
+            },
+
+            "nombre": {
+                "type": "string",
+                "description": (
+                    "Nombre con el que se registró el turno. "
+                    "Obligatorio cuando no se dispone del management_token."
+                ),
             },
 
             "management_token": {
@@ -659,7 +675,7 @@ def execute_tool(name, arguments, business_id=None):
 
 
             try:
-                send_confirmation_email(
+                dispatch_booking_emails(
                     business_id,
                     {
                         "id": resultado.get("appointment_id"),
@@ -758,6 +774,7 @@ def execute_tool(name, arguments, business_id=None):
                 arguments["telefono"],
                 business_id,
                 arguments.get("management_token"),
+                customer_name=arguments.get("nombre"),
             )
 
 
@@ -829,6 +846,7 @@ def execute_tool(name, arguments, business_id=None):
                 phone=arguments["telefono"],
                 business_id=business_id,
                 management_token=arguments.get("management_token"),
+                customer_name=arguments.get("nombre"),
             )
 
 

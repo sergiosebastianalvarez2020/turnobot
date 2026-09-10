@@ -198,13 +198,16 @@ def get_available_slots(date, business_id, service=None, duration=None):
 # VALIDAR FECHA
 # ============================================================
 
-def validate_appointment_date(date, business_id=None):
+def validate_appointment_date(date, business_id):
     """
     Valida que la fecha del turno:
 
     - tenga formato YYYY-MM-DD
     - no sea anterior a hoy
     - no sea domingo
+
+    business_id es obligatorio: el horario se resuelve SIEMPRE con scope
+    de negocio (nunca se cae al horario de otro tenant).
 
     Devuelve:
 
@@ -251,10 +254,7 @@ def validate_appointment_date(date, business_id=None):
         }
 
 
-    if business_id is not None:
-        schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
-    else:
-        schedule = get_weekly_schedule(appointment_date.weekday())
+    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
 
     if not schedule or not schedule["is_open"]:
 
@@ -706,6 +706,23 @@ def get_appointment_counts(business_id=None):
 # OBTENER TURNOS DE UN CLIENTE
 # ============================================================
 
+# Columnas seguras para exponer públicamente vía /api/turnos / AI.
+# NUNCA incluir management_token_hash ni ningún secreto.
+PUBLIC_APPOINTMENT_COLUMNS = (
+    "id",
+    "customer_name",
+    "phone",
+    "customer_email",
+    "service",
+    "appointment_date",
+    "appointment_time",
+    "appointment_end",
+    "duration",
+    "status",
+    "created_at",
+    "business_id",
+)
+
 def get_customer_appointments(
     customer_name,
     phone=None,
@@ -718,6 +735,8 @@ def get_customer_appointments(
 
     Si además se proporciona teléfono,
     se utiliza como filtro adicional.
+
+    Devuelve SOLO columnas públicas (nunca management_token_hash).
     """
 
     if business_id is None:
@@ -728,69 +747,39 @@ def get_customer_appointments(
 
         if phone:
 
-            if business_id is not None:
-                rows = connection.execute(
-                    """
-                    SELECT *
-                    FROM appointments
-                    WHERE LOWER(customer_name) = LOWER(?)
-                    AND phone = ?
-                    AND status = 'confirmed'
-                    AND business_id = ?
-                    ORDER BY appointment_date, appointment_time
-                    """,
-                    (
-                        customer_name,
-                        normalize_phone(phone),
-                        business_id,
-                    ),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    SELECT *
-                    FROM appointments
-                    WHERE LOWER(customer_name) = LOWER(?)
-                    AND phone = ?
-                    AND status = 'confirmed'
-                    ORDER BY appointment_date, appointment_time
-                    """,
-                    (
-                        customer_name,
-                        normalize_phone(phone),
-                    ),
-                ).fetchall()
+            rows = connection.execute(
+                f"""
+                SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
+                FROM appointments
+                WHERE LOWER(customer_name) = LOWER(?)
+                AND phone = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                ORDER BY appointment_date, appointment_time
+                """,
+                (
+                    customer_name,
+                    normalize_phone(phone),
+                    business_id,
+                ),
+            ).fetchall()
 
         else:
 
-            if business_id is not None:
-                rows = connection.execute(
-                    """
-                    SELECT *
-                    FROM appointments
-                    WHERE LOWER(customer_name) = LOWER(?)
-                    AND status = 'confirmed'
-                    AND business_id = ?
-                    ORDER BY appointment_date, appointment_time
-                    """,
-                    (
-                        customer_name,
-                        business_id,
-                    ),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    SELECT *
-                    FROM appointments
-                    WHERE LOWER(customer_name) = LOWER(?)
-                    AND status = 'confirmed'
-                    ORDER BY appointment_date, appointment_time
-                    """,
-                    (
-                        customer_name,
-                    ),
-                ).fetchall()
+            rows = connection.execute(
+                f"""
+                SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
+                FROM appointments
+                WHERE LOWER(customer_name) = LOWER(?)
+                AND status = 'confirmed'
+                AND business_id = ?
+                ORDER BY appointment_date, appointment_time
+                """,
+                (
+                    customer_name,
+                    business_id,
+                ),
+            ).fetchall()
 
 
         return [
@@ -823,15 +812,23 @@ def get_appointment_by_token(appointment_id, business_id, management_token):
     return get_appointment_by_token_scoped(business_id, appointment_id, management_token)
 
 
-def cancel_appointment(appointment_id, phone, business_id=None, management_token=None):
+def cancel_appointment(
+    appointment_id,
+    phone,
+    business_id=None,
+    management_token=None,
+    customer_name=None,
+):
     """
     Cancela un turno confirmado.
 
-    Valida:
-    - teléfono válido (solo dígitos, al menos 7)
-    - appointment_id sea un entero positivo
-    - que el turno existe y pertenece al teléfono
-    - que el turno está confirmado
+    Autorización (cualquiera de las dos):
+    - `management_token` válido para el turno (enlace seguro), O
+    - teléfono Y nombre del cliente que coincidan con el turno.
+
+    Con esto, conocer solo el `appointment_id` (que es incremental y
+    enumerable) NO alcanza como único factor para operar sobre turnos ajenos:
+    siempre se exige un segundo factor (token, o nombre + teléfono del titular).
 
     Usa BEGIN IMMEDIATE para transacción atómica.
     Hace ROLLBACK si algo falla.
@@ -845,13 +842,17 @@ def cancel_appointment(appointment_id, phone, business_id=None, management_token
         raise ValueError("business_id es obligatorio")
 
     # --------------------------------------------------------
-    # VALIDAR TELÉFONO
+    # VALIDAR FACTORES DE AUTORIZACIÓN
     # --------------------------------------------------------
 
     if management_token is not None and (not isinstance(management_token, str) or not management_token):
         return False
-    if management_token is None and not validate_phone(phone):
-        return False
+    token_given = bool(management_token)
+    if not token_given:
+        if not validate_phone(phone):
+            return False
+        if not validate_customer_name(customer_name):
+            return False
 
     # --------------------------------------------------------
     # VALIDAR APPOINTMENT_ID
@@ -864,6 +865,13 @@ def cancel_appointment(appointment_id, phone, business_id=None, management_token
     except (ValueError, TypeError):
         return False
 
+    token_hash = (
+        hashlib.sha256(management_token.encode()).hexdigest()
+        if token_given else None
+    )
+    normalized_phone = normalize_phone(phone) if phone else None
+    normalized_name = (customer_name or "").strip()
+
     connection = get_connection()
 
     try:
@@ -874,36 +882,34 @@ def cancel_appointment(appointment_id, phone, business_id=None, management_token
         try:
 
             # ------------------------------------------------
-            # VERIFICAR QUE EXISTE Y PERTENECE AL TELÉFONO
+            # VERIFICAR QUE EXISTE Y PERTENECE AL SOLICITANTE
             # ------------------------------------------------
 
-            if business_id is not None:
-                existing = connection.execute(
-                    """
-                    SELECT id
-                    FROM appointments
-                    WHERE id = ?
-                    AND status = 'confirmed'
-                    AND business_id = ?
-                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
-                    """,
-                    (appointment_id_int, business_id,
-                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                     management_token, normalize_phone(phone)),
-                ).fetchone()
-            else:
-                existing = connection.execute(
-                    """
-                    SELECT id
-                    FROM appointments
-                    WHERE id = ?
-                    AND status = 'confirmed'
-                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
-                    """,
-                    (appointment_id_int,
-                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                     management_token, normalize_phone(phone)),
-                ).fetchone()
+            existing = connection.execute(
+                """
+                SELECT id
+                FROM appointments
+                WHERE id = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                AND (
+                    management_token_hash = ?
+                    OR (
+                        ? IS NULL
+                        AND phone = ?
+                        AND LOWER(customer_name) = LOWER(?)
+                    )
+                )
+                """,
+                (
+                    appointment_id_int,
+                    business_id,
+                    token_hash,
+                    token if token_given else None,
+                    normalized_phone,
+                    normalized_name,
+                ),
+            ).fetchone()
 
             if existing is None:
                 connection.execute("ROLLBACK")
@@ -913,33 +919,31 @@ def cancel_appointment(appointment_id, phone, business_id=None, management_token
             # CANCELAR TURNO
             # ------------------------------------------------
 
-            if business_id is not None:
-                cursor = connection.execute(
-                    """
-                    UPDATE appointments
-                    SET status = 'cancelled'
-                    WHERE id = ?
-                    AND status = 'confirmed'
-                    AND business_id = ?
-                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
-                    """,
-                    (appointment_id_int, business_id,
-                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                     management_token, normalize_phone(phone)),
+            cursor = connection.execute(
+                """
+                UPDATE appointments
+                SET status = 'cancelled'
+                WHERE id = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                AND (
+                    management_token_hash = ?
+                    OR (
+                        ? IS NULL
+                        AND phone = ?
+                        AND LOWER(customer_name) = LOWER(?)
+                    )
                 )
-            else:
-                cursor = connection.execute(
-                    """
-                    UPDATE appointments
-                    SET status = 'cancelled'
-                    WHERE id = ?
-                    AND status = 'confirmed'
-                    AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
-                    """,
-                    (appointment_id_int,
-                     hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                     management_token, normalize_phone(phone)),
-                )
+                """,
+                (
+                    appointment_id_int,
+                    business_id,
+                    token_hash,
+                    token if token_given else None,
+                    normalized_phone,
+                    normalized_name,
+                ),
+            )
 
             connection.commit()
 
@@ -964,19 +968,20 @@ def reschedule_appointment(
     phone,
     business_id=None,
     management_token=None,
+    customer_name=None,
 ):
     """
     Cambia la fecha y hora de un turno confirmado.
 
-    Valida:
-    - teléfono válido (solo dígitos, al menos 7)
-    - appointment_id sea un entero positivo
-    - que el turno original exista
-    - que la nueva fecha sea válida
-    - que no sea una fecha pasada
-    - que no sea domingo
-    - que el horario sea válido
-    - que el nuevo horario esté libre
+    Autorización (cualquiera de las dos):
+    - `management_token` válido para el turno (enlace seguro), O
+    - teléfono Y nombre del cliente que coincidan con el turno.
+
+    Al igual que cancelación, conocer solo el `appointment_id` enumerable NO
+    alcanza: siempre se exige además un token o nombre + teléfono del titular.
+
+    Valida además: datetime, fecha no pasada, no domingo, horario de atención,
+    cupo y cierre.
 
     Usa BEGIN IMMEDIATE para transacción atómica.
     Hace ROLLBACK si algo falla.
@@ -986,16 +991,17 @@ def reschedule_appointment(
         raise ValueError("business_id es obligatorio")
 
     # --------------------------------------------------------
-    # VALIDAR TELÉFONO
+    # VALIDAR FACTORES DE AUTORIZACIÓN
     # --------------------------------------------------------
 
     if management_token is not None and (not isinstance(management_token, str) or not management_token):
         return {"success": False, "reason": "not_found"}
-    if management_token is None and not validate_phone(phone):
-        return {
-            "success": False,
-            "reason": "invalid_phone",
-        }
+    token_given = bool(management_token)
+    if not token_given:
+        if not validate_phone(phone):
+            return {"success": False, "reason": "invalid_phone"}
+        if not validate_customer_name(customer_name):
+            return {"success": False, "reason": "invalid_customer_name"}
 
     # --------------------------------------------------------
     # VALIDAR APPOINTMENT_ID
@@ -1013,6 +1019,14 @@ def reschedule_appointment(
             "success": False,
             "reason": "invalid_appointment_id",
         }
+
+    token_hash = (
+        hashlib.sha256(management_token.encode()).hexdigest()
+        if token_given else None
+    )
+    token_or_none = token if token_given else None
+    normalized_phone = normalize_phone(phone) if phone else None
+    normalized_name = (customer_name or "").strip()
 
     connection = get_connection()
 
@@ -1034,11 +1048,20 @@ def reschedule_appointment(
                 WHERE id = ?
                 AND status = 'confirmed'
                 AND business_id = ?
-                AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
+                AND (
+                    management_token_hash = ?
+                    OR (
+                        ? IS NULL
+                        AND phone = ?
+                        AND LOWER(customer_name) = LOWER(?)
+                    )
+                )
                 """,
-                (appointment_id_int, business_id,
-                 hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                 management_token, normalize_phone(phone)),
+                (
+                    appointment_id_int, business_id,
+                    token_hash, token_or_none,
+                    normalized_phone, normalized_name,
+                ),
             ).fetchone()
 
             if appointment is None:
@@ -1136,11 +1159,18 @@ def reschedule_appointment(
                 UPDATE appointments
                 SET appointment_date = ?, appointment_time = ?, appointment_end = ?
                 WHERE id = ? AND status = 'confirmed' AND business_id = ?
-                AND (management_token_hash = ? OR (? IS NULL AND phone = ?))
+                AND (
+                    management_token_hash = ?
+                    OR (
+                        ? IS NULL
+                        AND phone = ?
+                        AND LOWER(customer_name) = LOWER(?)
+                    )
+                )
                 """,
                 (new_date, new_time, new_end, appointment_id_int, business_id,
-                 hashlib.sha256(management_token.encode()).hexdigest() if management_token else None,
-                 management_token, normalize_phone(phone)),
+                 token_hash, token_or_none,
+                 normalized_phone, normalized_name),
             )
 
             connection.commit()

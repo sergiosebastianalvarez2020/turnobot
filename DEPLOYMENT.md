@@ -21,6 +21,15 @@ Waitress debe quedar escuchando solo en `127.0.0.1`. Exponer al público mediant
 IIS, Caddy o Nginx con certificado TLS. El proxy debe reenviar tráfico a
 `http://127.0.0.1:5000` y permitir únicamente HTTPS desde Internet.
 
+### Cookie de sesión y HTTPS
+
+La cookie de sesión se marca como `Secure` únicamente si el `.env` define
+`COOKIE_SECURE=1` (requerido en producción). NO debe desactivarse para "hacer
+funcionar" la cookie en HTTP local de pruebas: eso debilita la protección y
+puede exponer la sesión en tránsito. Si la cookie no llega en un entorno, el
+problema se resuelve sirviendo la app por HTTPS detrás del proxy, no
+desactivando el flag. La aplicación nunca desactiva esta protección por sí sola.
+
 ### IP del cliente y rate limiting
 
 La aplicación no confía en `X-Forwarded-For` ni `X-Real-IP` por defecto.
@@ -43,10 +52,17 @@ necesitará posteriormente un almacenamiento compartido, como Redis.
 
 Al crear un turno, la API devuelve un `management_token` aleatorio. Debe
 conservarse y enviarse en el cuerpo POST para cancelar o reprogramar junto con
-`appointment_id`. Solo se almacena su hash SHA-256; el teléfono ya no es una
-credencial para estas operaciones. Como transición limitada, los turnos antiguos
-sin hash todavía aceptan el flujo anterior; este fallback debe eliminarse cuando
-todos esos turnos hayan expirado, porque conserva el riesgo de teléfono + ID.
+`appointment_id`. Solo se almacena su hash SHA-256.
+
+Si el cliente NO presenta el `management_token`, para cancelar o reprogramar se
+exige que coincidan EXACTAMENTE el nombre (`nombre`) y el teléfono (`telefono`)
+del turno. El `appointment_id` por sí solo — incluso enumerando IDs — no
+autoriza ninguna operación sobre turnos ajenos: sin token válido o sin el par
+nombre+teléfono correcto, el turno no se modifica. Un tercero que conozca solo
+el ID no puede cancelar ni reprogramar el turno de otra persona.
+
+`/api/turnos`, la API pública y el asistente de IA exponen únicamente columnas
+públicas del turno; `management_token_hash` nunca sale en las respuestas.
 
 ## CSRF
 
@@ -54,16 +70,20 @@ Los formularios de login, logout y todas las operaciones administrativas POST
 requieren el campo oculto `csrf_token`, asociado a la sesión Flask. Las APIs
 JSON públicas (`/chat`, reservas, cancelación y reprogramación) no requieren
 CSRF porque no usan la sesión administrativa como autenticación; cancelación y
-reprogramación usan `management_token`. Este token es independiente del token
-CSRF y no debe confundirse con él.
+reprogramación exigen `management_token` o el par nombre+teléfono correcto. El
+`management_token` es independiente del token CSRF y no debe confundirse con él.
 
 ## Provisioning
 
-La creación de negocios se realiza actualmente mediante el comando controlado
-`python scripts/provision_business.py "Nombre" email contraseña`. La operación
-crea negocio, owner, membership, configuración y horarios iniciales dentro de
-una única transacción. No se expone como endpoint público hasta contar con un
-modelo de platform-admin, invitaciones y controles de abuso adecuados.
+El alta de negocios se administra desde el panel de superadmin, protegido por
+credenciales separadas. El superadmin crea un negocio con slug propio y genera
+una invitación por token; el owner pendiente la acepta (`active=0`, sin acceso
+hasta completar el alta). Las invitaciones expiran según
+`INVITATION_LIFETIME_HOURS` (72 h por defecto) y se pueden reenviar desde el
+panel (la migración `012_platform.sql` agregó las tablas de la plataforma).
+La identidad de plataforma es independiente de la de negocio. El bootstrap del
+primer superadmin se hace con `python scripts/create_superadmin.py`. No se
+expone ninguna creación de negocio como endpoint público.
 
 ## Backups
 

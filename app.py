@@ -73,6 +73,14 @@ from database.database import (
     list_points_ledger_scoped,
     list_loyalty_accounts_scoped,
 )
+from services import platform as platform_service
+from services import notifications as notifications_service
+from database.database import (
+    get_platform_user_by_id,
+    is_platform_session_valid,
+    revoke_all_platform_sessions,
+    list_members_scoped,
+)
 
 
 load_dotenv()
@@ -145,7 +153,7 @@ def resolve_business(slug=None):
             ).fetchone()
         else:
             row = connection.execute(
-                "SELECT id, name, slug FROM businesses WHERE slug = ?",
+                "SELECT id, name, slug FROM businesses WHERE slug = ? AND active = 1",
                 (slug,),
             ).fetchone()
         return dict(row) if row else None
@@ -163,7 +171,12 @@ def get_current_business_id():
 def load_current_business():
     """Carga el contexto request-scoped en función del slug de la URL o del fallback por defecto."""
     if request.path.startswith("/b/"):
-        slug = request.view_args.get("slug")
+        # Proteger el caso en que Flask no hizo match de ruta (view_args=None).
+        # Ej: /b/<slug>/admin/login no existe como ruta registrada → 404 seguro, nunca 500.
+        view_args = request.view_args or {}
+        slug = view_args.get("slug")
+        if not slug:
+            return abort(404)
         g.current_business = resolve_business(slug)
         if g.current_business is None:
             if hasattr(g, "current_business"):
@@ -409,6 +422,99 @@ def _require_admin_membership():
 
 
 # ============================================================
+# SESIÓN DE PLATAFORMA (SUPERADMIN)
+# ============================================================
+#
+# La identidad de plataforma (`platform_users`/`platform_sessions`) es
+# COMPLETAMENTE independiente de la identidad de negocio. Se persisten en
+# claves de sesión distintas (platform_user_id / platform_session_token) para
+# que ambas identidades coexistan dentro de la misma cookie sin interferir.
+
+_PLATFORM_SESSION_LIFETIME_SECONDS = int(
+    os.getenv("PLATFORM_SESSION_LIFETIME_SECONDS", str(8 * 3600))
+)
+
+
+def _platform_session_expires_at():
+    delta = datetime.timedelta(seconds=_PLATFORM_SESSION_LIFETIME_SECONDS)
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + delta
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _clear_business_session():
+    """Invalidate ONLY the business (tenant) session, preserving the platform one."""
+    session.pop("user_id", None)
+    session.pop("session_token", None)
+
+
+def _clear_platform_session():
+    """Invalidate ONLY the platform session, preserving the business one."""
+    session.pop("platform_user_id", None)
+    session.pop("platform_session_token", None)
+
+
+def _platform_current_user():
+    """Devuelve el SUPERADMIN autenticado (sin password_hash) o (None, None)."""
+    platform_user_id = session.get("platform_user_id")
+    token = session.get("platform_session_token")
+    if not platform_user_id or not token:
+        return None, None
+    user = get_platform_user_by_id(platform_user_id)
+    if user is None or not user["active"]:
+        _clear_platform_session()
+        return None, None
+    if not is_platform_session_valid(
+        platform_user_id, _hash_session_token(token), _now_iso()
+    ):
+        _clear_platform_session()
+        return None, None
+    safe_user = {
+        "id": user["id"],
+        "email": user["email"],
+        "display_name": user["display_name"],
+        "active": bool(user["active"]),
+    }
+    return safe_user, token
+
+
+def _is_platform_authenticated():
+    user, _ = _platform_current_user()
+    return user is not None
+
+
+def _platform_actor_email():
+    user, _ = _platform_current_user()
+    return user["email"] if user else ""
+
+
+# ============================================================
+# NOTIFICACIONES — Wrappers para tests (se pueden mockear)
+# ============================================================
+
+def send_apply_confirmation_email(owner_email, business_name):
+    """Wrapper para EMAIL 1: confirmación de recepción de alta."""
+    return notifications_service.send_apply_confirmation_email(owner_email, business_name)
+
+
+def send_apply_notice_to_superadmin(business_name, business_id=None):
+    """Wrapper para EMAIL 1: aviso a superadmins de alta pendiente."""
+    return notifications_service.send_apply_notice_to_superadmin(business_name, business_id)
+
+
+def send_approved_invitation_email(owner_email, business_name, invitation_link, expires_at="", lifetime_hours=None):
+    """Wrapper para EMAIL 2: invitación aprobada al owner."""
+    return notifications_service.send_approved_invitation_email(
+        owner_email, business_name, invitation_link, expires_at, lifetime_hours
+    )
+
+
+def send_business_confirmation_email(business_id, appointment, force=False):
+    """Wrapper para EMAIL 5: aviso de reserva al negocio."""
+    return notifications_service.send_business_confirmation_email(business_id, appointment, force)
+
+
+# ============================================================
 # CONFIGURACIÓN DEL NEGOCIO
 # ============================================================
 
@@ -493,9 +599,18 @@ def health():
 # ============================================================
 
 def _establish_session(user_id):
-    """Crea una sesión persistente tras un login exitoso y regenera la sesión HTTP."""
+    """Crea una sesión persistente tras un login exitoso.
+
+    Limpia selectivamente la sesión de NEGOCIO (user_id/session_token) pero
+    PRESERVA la sesión de PLATAFORMA (superadmin) y el token CSRF. Esto permite
+    que la sesión de negocio y la de superadmin coexistan dentro de la misma
+    cookie cuando un mismo agente las utiliza de forma alternada.
+    """
     old_csrf = session.get("csrf_token")
-    session.clear()
+    platform_user_id = session.get("platform_user_id")
+    platform_token = session.get("platform_session_token")
+    session.pop("user_id", None)
+    session.pop("session_token", None)
     session["user_id"] = user_id
     token = secrets.token_urlsafe(48)
     session["session_token"] = token
@@ -507,6 +622,11 @@ def _establish_session(user_id):
     create_session_scoped(user_id, _hash_session_token(token), expires_at)
     # mantenemos el mismo token CSRF para no invalidar formularios ya abiertos
     session["csrf_token"] = old_csrf or csrf_token()
+    # restauramos la sesión de plataforma si existía (coexistencia de contextos)
+    if platform_user_id is not None:
+        session["platform_user_id"] = platform_user_id
+    if platform_token is not None:
+        session["platform_session_token"] = platform_token
 
 
 def _authenticate_login(business, email, password):
@@ -603,7 +723,7 @@ def logout():
     user_id = session.get("user_id")
     if user_id:
         revoke_all_sessions_scoped(user_id)
-    session.clear()
+    _clear_business_session()
     return redirect(url_for("login"))
 
 
@@ -617,8 +737,273 @@ def logout_slug(slug):
     user_id = session.get("user_id")
     if user_id:
         revoke_all_sessions_scoped(user_id)
-    session.clear()
+    _clear_business_session()
     return redirect(url_for("login_slug", slug=business["slug"]))
+
+
+# ============================================================
+# SUPERADMIN — Capa HTTP sobre services.platform
+# ============================================================
+
+@app.route("/superadmin/login", methods=["GET", "POST"])
+def superadmin_login():
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return render_template("superadmin_login.html", error=True, error_message="Solicitud no válida"), 400
+        email = (request.form.get("email", "") or "").strip().lower()
+        password = request.form.get("password", "") or ""
+        platform_user, error = platform_service.authenticate_superadmin(email, password)
+        if platform_user is None:
+            return render_template("superadmin_login.html", error=True, error_message=error or "Credenciales inválidas."), 200
+        token = secrets.token_urlsafe(48)
+        expires_at = _platform_session_expires_at()
+        platform_service.establish_platform_session(platform_user["id"], token, expires_at)
+        session["platform_user_id"] = platform_user["id"]
+        session["platform_session_token"] = token
+        platform_service.log_platform_action(platform_user["id"], platform_user["email"], None, "superadmin_login", "", get_client_ip())
+        return redirect("/superadmin")
+
+    user, _ = _platform_current_user()
+    if user:
+        return redirect("/superadmin")
+    return render_template("superadmin_login.html", error=False)
+
+
+@app.route("/superadmin/logout", methods=["POST"])
+def superadmin_logout():
+    user, token = _platform_current_user()
+    if user is None:
+        return redirect("/superadmin/login")
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    revoke_all_platform_sessions(user["id"])
+    _clear_platform_session()
+    platform_service.log_platform_action(user["id"], user["email"], None, "superadmin_logout", "", get_client_ip())
+    return redirect("/superadmin/login")
+
+
+def _superadmin_gate():
+    """Gate de autenticación SUPERADMIN: redirige a login si no hay sesión de plataforma."""
+    if not _is_platform_authenticated():
+        return redirect("/superadmin/login")
+    return None
+
+
+@app.route("/superadmin")
+def superadmin_panel():
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    user, _ = _platform_current_user()
+    message = request.args.get("message", "")
+    error = request.args.get("error", "")
+    businesses = platform_service.list_businesses_for_platform()
+    return render_template(
+        "superadmin.html",
+        superadmin=user,
+        businesses=businesses,
+        section="businesses",
+        message=message,
+        error=error,
+        platform_lifetime=platform_service.invitation_lifetime_hours(),
+    )
+
+
+@app.route("/superadmin/auditoria")
+def superadmin_audit():
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    user, _ = _platform_current_user()
+    audit_rows = platform_service.list_audit_log()
+    return render_template(
+        "superadmin.html",
+        superadmin=user,
+        section="audit",
+        audit_rows=audit_rows,
+    )
+
+
+@app.route("/superadmin/negocios/crear", methods=["POST"])
+def superadmin_negocios_crear():
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    name = (request.form.get("nombre", "") or "").strip()
+    slug = (request.form.get("slug", "") or "").strip().lower()
+    owner_email = (request.form.get("owner_email", "") or "").strip().lower()
+    user, _ = _platform_current_user()
+    result = platform_service.provision_business(name, slug, owner_email)
+    if not result["success"]:
+        return redirect(f"/superadmin?error={result['reason']}")
+    platform_service.log_platform_action(
+        user["id"], user["email"], result["business_id"],
+        "business_created", f"Negocio creado: {name} (slug: {result['slug']})",
+        get_client_ip()
+    )
+    # EMAIL 1: confirmación al solicitante + aviso al superadmin
+    send_apply_confirmation_email(owner_email, name)
+    send_apply_notice_to_superadmin(name, result["business_id"])
+    return redirect("/superadmin?message=Solicitud de alta registrada correctamente.")
+
+
+@app.route("/superadmin/negocios/<int:business_id>")
+def superadmin_negocios_detalle(business_id):
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    user, _ = _platform_current_user()
+    business = platform_service.get_business_by_id_platform(business_id)
+    if business is None:
+        abort(404)
+    business_settings = get_business_settings_scoped(business_id)
+    if business_settings:
+        business_settings = dict(business_settings)
+    members = [dict(m) for m in list_members_scoped(business_id)]
+    invitations = [dict(i) for i in platform_service.list_invitations(business_id)]
+    message = request.args.get("message", "")
+    error = request.args.get("error", "")
+    return render_template(
+        "superadmin.html",
+        superadmin=user,
+        section="business_detail",
+        business=business,
+        business_settings=business_settings,
+        members=members,
+        invitations=invitations,
+        message=message,
+        error=error,
+    )
+
+
+@app.route("/superadmin/negocios/<int:business_id>/aprobar", methods=["POST"])
+def superadmin_negocios_aprobar(business_id):
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    result = platform_service.approve_business(business_id)
+    if not result["success"]:
+        return redirect(f"/superadmin/negocios/{business_id}?error={result['reason']}")
+    platform_service.log_platform_action(
+        user["id"], user["email"], business_id,
+        "business_approved", f"Negocio aprobado: {result['slug']} (slug: {result['slug']})",
+        get_client_ip()
+    )
+    # EMAIL 2: invitación al owner para definir contraseña
+    send_approved_invitation_email(
+        result["owner_email"],
+        result["slug"],
+        request.url_root.rstrip("/") + result["invitation_url"],
+        result.get("expires_at", ""),
+        platform_service.invitation_lifetime_hours(),
+    )
+    return redirect(f"/superadmin/negocios/{business_id}?message=Negocio aprobado e invitación generada.")
+
+
+@app.route("/superadmin/negocios/<int:business_id>/desactivar", methods=["POST"])
+def superadmin_negocios_desactivar(business_id):
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ok = platform_service.set_business_active(business_id, False)
+    if not ok:
+        return redirect(f"/superadmin/negocios/{business_id}?error=No se pudo suspender el negocio.")
+    platform_service.log_platform_action(user["id"], user["email"], business_id, "business_disabled", "Negocio suspendido", get_client_ip())
+    return redirect(f"/superadmin/negocios/{business_id}?message=Negocio suspendido correctamente.")
+
+
+@app.route("/superadmin/negocios/<int:business_id>/activar", methods=["POST"])
+def superadmin_negocios_activar(business_id):
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ok = platform_service.set_business_active(business_id, True)
+    if not ok:
+        return redirect(f"/superadmin/negocios/{business_id}?error=No se pudo activar el negocio.")
+    platform_service.log_platform_action(user["id"], user["email"], business_id, "business_enabled", "Negocio reactivado", get_client_ip())
+    return redirect(f"/superadmin/negocios/{business_id}?message=Negocio activado correctamente.")
+
+
+@app.route("/superadmin/negocios/<int:business_id>/reinviar", methods=["POST"])
+def superadmin_negocios_reinviar(business_id):
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    # buscar owner del negocio
+    owner = None
+    for m in [dict(m) for m in list_members_scoped(business_id)]:
+        if m.get("role_name") == "owner":
+            owner = m
+            break
+    if owner is None:
+        return redirect(f"/superadmin/negocios/{business_id}?error=No se encontró el owner del negocio.")
+    token, expires_at = platform_service.resend_invitation(business_id, owner["user_id"], owner["email"])
+    platform_service.log_platform_action(user["id"], user["email"], business_id, "invitation_resent", f"Nueva invitación enviada a {owner['email']}", get_client_ip())
+    # EMAIL 2: nueva invitación al owner
+    business = platform_service.get_business_by_id_platform(business_id)
+    if business:
+        send_approved_invitation_email(
+            owner["email"],
+            business["name"],
+            request.url_root.rstrip("/") + f"/b/{business['slug']}/invitacion/{token}",
+            expires_at,
+            platform_service.invitation_lifetime_hours(),
+        )
+    return redirect(f"/superadmin/negocios/{business_id}?message=Nueva invitación generada.")
+
+
+# ============================================================
+# INVITACIÓN PÚBLICA (owner establece contraseña)
+# ============================================================
+
+@app.route("/b/<slug>/invitacion/<token>", methods=["GET", "POST"])
+def public_invitation(slug, token):
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+    business_id = business["id"]
+    invitation = platform_service.get_invitation_for_business(business_id, token)
+    if invitation is None:
+        return render_template("invitacion.html", business=business, invalid=True), 404
+
+    if request.method == "GET":
+        return render_template("invitacion.html", business=business, invitation=invitation, error=None, invalid=False)
+
+    # POST: validar token antes que CSRF para que token vencido/usado devuelva 404
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    password = request.form.get("password", "")
+    password2 = request.form.get("password2", "")
+
+    if password != password2:
+        return render_template("invitacion.html", business=business, invitation=invitation, error="Las contraseñas no coinciden."), 200
+
+    result = platform_service.accept_invitation(business_id, token, password)
+    if not result["success"]:
+        if result["reason"] == "weak_password":
+            error = "La contraseña debe tener al menos 12 caracteres."
+        elif result["reason"] == "invalid_token":
+            error = "Enlace no válido o vencido."
+        else:
+            error = "No se pudo aceptar la invitación."
+        return render_template("invitacion.html", business=business, invitation=invitation, error=error), 200
+
+    return redirect(f"/b/{business['slug']}/login")
 
 
 # ============================================================
@@ -1691,21 +2076,24 @@ def _create_public_appointment_response(business_id):
                 current = getattr(g, "current_business", None) or {}
                 slug = current.get("slug") or None
                 base_url = request.url_root.rstrip("/")
+                appointment_data = {
+                    "id": resultado.get("appointment_id"),
+                    "customer_name": resultado.get("customer_name"),
+                    "customer_email": resultado.get("customer_email"),
+                    "service": resultado.get("service"),
+                    "appointment_date": resultado.get("appointment_date"),
+                    "appointment_time": resultado.get("appointment_time"),
+                    "appointment_end": resultado.get("appointment_end"),
+                }
                 send_confirmation_email(
                     business_id,
-                    {
-                        "id": resultado.get("appointment_id"),
-                        "customer_name": resultado.get("customer_name"),
-                        "customer_email": resultado.get("customer_email"),
-                        "service": resultado.get("service"),
-                        "appointment_date": resultado.get("appointment_date"),
-                        "appointment_time": resultado.get("appointment_time"),
-                        "appointment_end": resultado.get("appointment_end"),
-                    },
+                    appointment_data,
                     management_token=resultado.get("management_token"),
                     slug=slug,
                     public_base_url=base_url,
                 )
+                # EMAIL 5: aviso al negocio (scoped, no bloqueante)
+                send_business_confirmation_email(business_id, appointment_data)
             except Exception:
                 logger.exception("Error enviando confirmación de turno")
 
@@ -1956,8 +2344,14 @@ def _cancel_public_appointment_response(business_id):
         if management_token is not None and (not isinstance(management_token, str) or not management_token):
             return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
 
+        telefono = data.get("telefono", "").strip()
+        customer_name = data.get("customer_name", "").strip()
+
         if not telefono:
             return jsonify({"success": False, "error": "El teléfono es obligatorio."}), 400
+
+        if not management_token and not customer_name:
+            return jsonify({"success": False, "error": "El nombre del cliente es obligatorio."}), 400
 
 
         resultado = cancel_appointment(
@@ -1965,6 +2359,7 @@ def _cancel_public_appointment_response(business_id):
             telefono,
             business_id,
             management_token,
+            customer_name if customer_name else None,
         )
 
 
@@ -2066,9 +2461,10 @@ def _get_public_reschedule_response(business_id):
         if management_token is not None and (not isinstance(management_token, str) or not management_token):
             return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
 
+        telefono = data.get("telefono", "").strip()
+        customer_name = data.get("customer_name", "").strip()
 
         if not nueva_fecha or not nueva_hora:
-
             return jsonify({
                 "success": False,
                 "error": "La nueva fecha y hora son obligatorias."
@@ -2076,6 +2472,9 @@ def _get_public_reschedule_response(business_id):
 
         if not telefono:
             return jsonify({"success": False, "error": "El teléfono es obligatorio."}), 400
+
+        if not management_token and not customer_name:
+            return jsonify({"success": False, "error": "El nombre del cliente es obligatorio."}), 400
 
 
         resultado = reschedule_appointment(
@@ -2090,6 +2489,7 @@ def _get_public_reschedule_response(business_id):
 
             business_id,
             management_token,
+            customer_name if customer_name else None,
         )
 
 

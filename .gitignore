@@ -8,3 +8,4 @@ logs/
 database/*.db
 database/backups/
 venv312/
+credenciales-turnobot.txt

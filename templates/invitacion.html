@@ -3,15 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin - Iniciar Sesión</title>
+    <title>Invitación - {{ business.get("name") or "Mi negocio" }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -38,19 +34,7 @@
             pointer-events: none;
         }
 
-        body::after {
-            content: "";
-            position: fixed;
-            bottom: -150px;
-            left: -80px;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(20,99,255,.04) 0%, transparent 70%);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-
-        .login-card {
+        .card {
             background: rgba(255,255,255,.88);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
@@ -58,7 +42,7 @@
             border-radius: 20px;
             padding: 48px 40px;
             width: 100%;
-            max-width: 400px;
+            max-width: 440px;
             box-shadow: 0 12px 40px rgba(11,27,58,.10);
             position: relative;
             z-index: 1;
@@ -69,7 +53,7 @@
             align-items: center;
             justify-content: center;
             gap: 12px;
-            margin-bottom: 32px;
+            margin-bottom: 28px;
         }
 
         .brand-mark {
@@ -97,12 +81,40 @@
             font-weight: 600;
             color: #4A6590;
             text-align: center;
+            margin-bottom: 8px;
+        }
+
+        p.sub {
+            font-size: 14px;
+            color: #5B6B84;
+            text-align: center;
             margin-bottom: 28px;
         }
 
-        .form-group {
-            margin-bottom: 20px;
+        .notice {
+            background: rgba(20,99,255,.06);
+            border: 1px solid #C9DDF8;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            color: #102A56;
+            text-align: center;
         }
+
+        .error-box {
+            background: #FEF2F2;
+            border: 1px solid #FECACA;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #B91C1C;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .form-group { margin-bottom: 20px; }
 
         label {
             display: block;
@@ -114,7 +126,7 @@
             letter-spacing: 0.8px;
         }
 
-        input[type="password"] {
+        input {
             width: 100%;
             padding: 12px 16px;
             background: #EEF6FF;
@@ -127,25 +139,13 @@
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        input[type="password"]:focus {
+        input:focus {
             border-color: #1463FF;
             box-shadow: 0 0 0 3px rgba(20,99,255,.1);
             background: #FFFFFF;
         }
 
-        .error-msg {
-            background: #FEF2F2;
-            border: 1px solid #FECACA;
-            border-radius: 12px;
-            padding: 12px 16px;
-            margin-bottom: 20px;
-            font-size: 13px;
-            color: #B91C1C;
-            text-align: center;
-            font-weight: 500;
-        }
-
-        .btn-login {
+        .btn {
             width: 100%;
             padding: 13px;
             background: #1463FF;
@@ -159,19 +159,9 @@
             transition: background 0.2s, box-shadow 0.2s;
         }
 
-        .btn-login:hover {
-            background: #0757E8;
-            box-shadow: 0 4px 16px rgba(20,99,255,.2);
-        }
-
-        .btn-login:active {
-            background: #0B1B3A;
-        }
-
-        .btn-login:focus-visible {
-            outline: 3px solid #1463FF;
-            outline-offset: 2px;
-        }
+        .btn:hover { background: #0757E8; box-shadow: 0 4px 16px rgba(20,99,255,.2); }
+        .btn:active { background: #0B1B3A; }
+        .btn:focus-visible { outline: 3px solid #1463FF; outline-offset: 2px; }
 
         .back-link {
             display: block;
@@ -180,58 +170,48 @@
             font-size: 13px;
             color: #5B6B84;
             text-decoration: none;
-            transition: color 0.2s;
         }
 
-        .back-link:hover {
-            color: #1463FF;
-        }
+        .back-link:hover { color: #1463FF; }
     </style>
 </head>
 <body>
-    <div class="login-card">
+    <div class="card">
+        {% if invalid %}
         <div class="brand">
-            <div class="brand-mark">{{ business_initials or "" }}</div>
-            <span class="brand-name">{{ business_name or "Mi negocio" }}</span>
+            <div class="brand-mark">TB</div>
+            <span class="brand-name">{{ business.get("name") or "Mi negocio" }}</span>
         </div>
+        <h1>Enlace no válido o vencido</h1>
+        <p class="sub">Esta invitación ya fue usada, no existe o expiró. Pedile al administrador de la plataforma que genere una nueva.</p>
+        <a href="/b/{{ business.get('slug') }}" class="back-link">Volver al sitio</a>
+        {% else %}
+        <div class="brand">
+            <div class="brand-mark">{{ business.get("name")[:3] | upper }}</div>
+            <span class="brand-name">{{ business.get("name") }}</span>
+        </div>
+        <h1>Te invitamos como administrador</h1>
+        <p class="sub">Definí tu contraseña para comenzar a gestionar {{ business.get("name") }}.</p>
 
-        <h1>Panel de administración</h1>
+        <div class="notice">Invitación para <strong>{{ invitation.get("user_email") }}</strong>, vence {{ invitation["expires_at"] }}</div>
 
         {% if error %}
-        <div class="error-msg" role="alert">{{ error_message or "Contraseña incorrecta. Intentá nuevamente." }}</div>
+        <div class="error-box" role="alert">{{ error }}</div>
         {% endif %}
 
-        {% if invite_message %}
-        <div class="error-msg" role="status">{{ invite_message }}</div>
-        {% endif %}
-
-        <form method="POST" action="{{ admin_prefix or '' }}/login">
+        <form method="POST" action="/b/{{ business.get('slug') }}/invitacion/{{ request.view_args.get('token', '') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
-                <label for="email">Email (opcional)</label>
-                <input
-                    type="email"
-                    id="email"
-                    name="email"
-                    placeholder="te@servicio.com"
-                    autofocus
-                >
+                <label for="password">Contraseña</label>
+                <input type="password" id="password" name="password" required minlength="12" placeholder="Mínimo 12 caracteres" autocomplete="new-password">
             </div>
             <div class="form-group">
-                <label for="password">Contraseña</label>
-                <input
-                    type="password"
-                    id="password"
-                    name="password"
-                    placeholder="Ingresá la contraseña"
-                    required
-                >
+                <label for="password2">Repetí la contraseña</label>
+                <input type="password" id="password2" name="password2" required minlength="12" placeholder="Repetí la contraseña" autocomplete="new-password">
             </div>
-
-            <button type="submit" class="btn-login">Ingresar</button>
+            <button type="submit" class="btn">Crear contraseña y acceder</button>
         </form>
-
-        <a href="{{ admin_prefix or '' }}/" class="back-link">Volver al chat</a>
+        {% endif %}
     </div>
 </body>
 </html>

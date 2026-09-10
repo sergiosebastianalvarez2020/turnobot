@@ -468,7 +468,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "111111111"},
+            json={"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -483,7 +483,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-b/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "222222222"},
+            json={"appointment_id": appointment_id, "telefono": "222222222", "customer_name": "Cliente B"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -498,7 +498,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "222222222"},
+            json={"appointment_id": appointment_id, "telefono": "222222222", "customer_name": "Cliente B"},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -512,7 +512,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-b/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "111111111"},
+            json={"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -530,6 +530,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
                 "appointment_id": appointment_id,
                 "telefono": "222222222",
                 "business_id": 2,
+                "customer_name": "Cliente B",
             },
         )
 
@@ -544,7 +545,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "999999999"},
+            json={"appointment_id": appointment_id, "telefono": "999999999", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -558,7 +559,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/cancelar",
-            json={"appointment_id": appointment_id + 999, "telefono": "111111111"},
+            json={"appointment_id": appointment_id + 999, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 400)
@@ -569,7 +570,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
     def test_api_cancelar_turno_ya_cancelado_conserva_comportamiento(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
-        payload = {"appointment_id": appointment_id, "telefono": "111111111"}
+        payload = {"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"}
 
         first_response = self.client.post("/b/business-a/api/cancelar", json=payload)
         second_response = self.client.post("/b/business-a/api/cancelar", json=payload)
@@ -583,7 +584,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/slug-inexistente/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "111111111"},
+            json={"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 404)
@@ -597,7 +598,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "111111111"},
+            json={"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -611,7 +612,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/el-corte/api/cancelar",
-            json={"appointment_id": appointment_id, "telefono": "111111111"},
+            json={"appointment_id": appointment_id, "telefono": "111111111", "customer_name": "Cliente A"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -623,11 +624,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response_a = self.client.post(
             "/b/business-a/api/cancelar",
-            json={"appointment_id": appointment_a, "telefono": "111111111"},
+            json={"appointment_id": appointment_a, "telefono": "111111111", "customer_name": "Cliente A"},
         )
         response_b = self.client.post(
             "/b/business-b/api/cancelar",
-            json={"appointment_id": appointment_b, "telefono": "222222222"},
+            json={"appointment_id": appointment_b, "telefono": "222222222", "customer_name": "Cliente B"},
         )
 
         self.assertEqual(response_a.status_code, 200)
@@ -641,12 +642,13 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             (2, "cancelled"),
         ])
 
-    def _reschedule_payload(self, appointment_id, phone, new_date=None, new_time="10:00", **extra):
+    def _reschedule_payload(self, appointment_id, phone, new_date=None, new_time="10:00", customer_name="", **extra):
         payload = {
             "appointment_id": appointment_id,
             "telefono": phone,
             "nueva_fecha": new_date or self.valid_date,
             "nueva_hora": new_time,
+            "customer_name": customer_name,
         }
         payload.update(extra)
         return payload
@@ -656,7 +658,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -673,7 +675,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-b/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "222222222"),
+            json=self._reschedule_payload(appointment_id, "222222222", customer_name="Cliente B"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -690,7 +692,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "222222222"),
+            json=self._reschedule_payload(appointment_id, "222222222", customer_name="Cliente B"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -705,7 +707,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-b/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -716,7 +718,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "222222222", business_id=2),
+            json=self._reschedule_payload(appointment_id, "222222222", customer_name="Cliente B", business_id=2),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -728,7 +730,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_b, "222222222"),
+            json=self._reschedule_payload(appointment_b, "222222222", customer_name="Cliente B"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -743,7 +745,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "222222222"),
+            json=self._reschedule_payload(appointment_id, "222222222", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -755,7 +757,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -767,7 +769,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -779,11 +781,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response_a = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_a, "111111111"),
+            json=self._reschedule_payload(appointment_a, "111111111", customer_name="Cliente A"),
         )
         response_b = self.client.post(
             "/b/business-b/api/reprogramar",
-            json=self._reschedule_payload(appointment_b, "222222222"),
+            json=self._reschedule_payload(appointment_b, "222222222", customer_name="Cliente B"),
         )
 
         self.assertTrue(response_a.get_json()["success"])
@@ -798,7 +800,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -807,7 +809,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
     def test_api_reprogramar_appointment_inexistente_conserva_razon(self):
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(999999, "111111111"),
+            json=self._reschedule_payload(999999, "111111111", customer_name="Test"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -818,7 +820,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/slug-inexistente/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 404)
@@ -835,6 +837,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             json=self._reschedule_payload(
                 appointment_id,
                 "111111111",
+                customer_name="Cliente A",
                 new_date=(datetime.now() - timedelta(days=1)).date().isoformat(),
             ),
         )
@@ -850,7 +853,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111", new_date=sunday.isoformat()),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A", new_date=sunday.isoformat()),
         )
 
         self.assertEqual(response.status_code, 400)
@@ -861,7 +864,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111", new_time="22:00"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A", new_time="22:00"),
         )
 
         self.assertEqual(response.status_code, 400)
@@ -872,7 +875,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -886,7 +889,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response = self.client.post(
             "/b/el-corte/api/reprogramar",
-            json=self._reschedule_payload(appointment_id, "111111111"),
+            json=self._reschedule_payload(appointment_id, "111111111", customer_name="Cliente A"),
         )
 
         self.assertEqual(response.status_code, 200)
@@ -898,11 +901,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         response_a = self.client.post(
             "/b/business-a/api/reprogramar",
-            json=self._reschedule_payload(appointment_a, "111111111"),
+            json=self._reschedule_payload(appointment_a, "111111111", customer_name="Cliente A"),
         )
         response_b = self.client.post(
             "/b/business-b/api/reprogramar",
-            json=self._reschedule_payload(appointment_b, "222222222"),
+            json=self._reschedule_payload(appointment_b, "222222222", customer_name="Cliente B"),
         )
 
         self.assertTrue(response_a.get_json()["success"])

@@ -223,7 +223,7 @@ class TestRescheduleIsolation(BaseAppointmentIsolationTest):
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )["appointment_id"]
         result = appointments.reschedule_appointment(
-            turno_b, self.valid_date, "10:00", "3838439333", business_id=1
+            turno_b, self.valid_date, "10:00", "3838439333", business_id=1, customer_name="Cliente B"
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "not_found")
@@ -233,7 +233,7 @@ class TestRescheduleIsolation(BaseAppointmentIsolationTest):
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )["appointment_id"]
         result = appointments.reschedule_appointment(
-            turno_a, self.valid_date, "10:00", "3838439222", business_id=2
+            turno_a, self.valid_date, "10:00", "3838439222", business_id=2, customer_name="Cliente A"
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "not_found")
