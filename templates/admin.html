@@ -53,6 +53,11 @@
                     Turnos
                 </a>
 
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
                 {% if can_manage_memberships %}
                 <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
                     <span aria-hidden="true">👥</span>
@@ -423,14 +428,69 @@
                     <p class="empty-services">No hay servicios cargados.</p>
                     {% endfor %}
                 </div>
+</section>
 
+
+
+
+            <!-- =================================================
+                 RECURSOS
+                 ================================================= -->
+
+
+            <section class="settings-card" id="recursos">
+                <div class="section-header">
+                    <div>
+                        <h3>Recursos</h3>
+                        <p>Administrá los elementos reservables de tu negocio (canchas, profesionales, salas, etc.).</p>
+                    </div>
+                </div>
+
+                {% if resource_message %}
+                <div class="settings-feedback settings-success" role="status">{{ resource_message }}</div>
+                {% endif %}
+                {% if resource_error %}
+                <div class="settings-feedback settings-error" role="alert">{{ resource_error }}</div>
+                {% endif %}
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/recursos/crear" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label>
+                        Nombre del recurso
+                        <input type="text" name="name" maxlength="120" required>
+                    </label>
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Agregar recurso</button>
+                    </div>
+                </form>
+
+                <div class="services-list">
+                    {% for resource in resources %}
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/recursos/{{ resource.id }}/estado" class="service-row">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="active" value="1">
+                        <label>
+                            <span class="sr-only">Recurso</span>
+                            <input type="text" name="name" value="{{ resource.name }}" readonly class="readonly-name">
+                        </label>
+                        <label class="service-status">
+                            <span class="sr-only">Estado</span>
+                            <input type="checkbox" name="active" value="1" {% if resource.active %}checked{% endif %}>
+                            {{ "Activo" if resource.active else "Inactivo" }}
+                        </label>
+                        <button type="submit" class="refresh-button">Guardar</button>
+                    </form>
+                    {% else %}
+                    <p class="empty-services">No hay recursos cargados.</p>
+                    {% endfor %}
+                </div>
             </section>
-
 
 
             <!-- =================================================
                  TURNOS
                  ================================================= -->
+
 
             <section class="appointments-card">
 
@@ -484,6 +544,48 @@
 
 
 
+                <div class="settings-card">
+                    <div class="section-header"><div><h3>Alta manual de turno</h3><p>Creá una reserva directamente desde el panel.</p></div></div>
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/crear" class="settings-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <label>Cliente
+                            <input type="text" name="customer_name" required>
+                        </label>
+                        <label>Teléfono
+                            <input type="text" name="phone" required>
+                        </label>
+                        <label>Servicio
+                            <select name="service_name" required>
+                                {% for service in services %}
+                                <option value="{{ service.name }}">{{ service.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>Fecha
+                            <input type="date" name="appointment_date" required>
+                        </label>
+                        <label>Horario
+                            <input type="time" name="appointment_time" required>
+                        </label>
+                        {% if resources %}
+                        <label>Recurso
+                            <select name="resource_id">
+                                <option value="">Sin recurso</option>
+                                {% for r in resources %}
+                                <option value="{{ r.id }}">{{ r.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        {% endif %}
+                        <label>Notas
+                            <input type="text" name="notes">
+                        </label>
+                        <div class="settings-actions">
+                            <button type="submit" class="refresh-button">Crear turno</button>
+                        </div>
+                    </form>
+                </div>
+
                 {% if appointments %}
 
 
@@ -515,6 +617,7 @@
                                     Estado
                                 </th>
 
+                                <th>Recurso</th>
                                 <th>Acciones</th>
 
                             </tr>
@@ -615,7 +718,13 @@
                                 </td>
 
                                 <td>
-                                    {% if appointment.status == "confirmed" %}
+                                     {% if appointment.resource_name %}
+                                     <span class="service">{{ appointment.resource_name }}</span>
+                                     {% endif %}
+                                 </td>
+
+                                 <td>
+                                     {% if appointment.status == "confirmed" %}
                                     <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/estado" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <select name="status" class="admin-status-select" aria-label="Nuevo estado para {{ appointment.customer_name }}">
@@ -625,8 +734,15 @@
                                         </select>
                                         <button type="submit" class="refresh-button" aria-label="Aplicar nuevo estado a {{ appointment.customer_name }}">Aplicar</button>
                                     </form>
-                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/reprogramar" class="service-row admin-actions">
+                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/{{ appointment.id }}/reprogramar/con-recurso" class="service-row admin-actions">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <label class="sr-only">Recurso</label>
+                                        <select name="resource_id" class="admin-status-select">
+                                            <option value="">Sin recurso</option>
+                                            {% for r in resources %}
+                                            <option value="{{ r.id }}" {% if appointment.resource_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                                            {% endfor %}
+                                        </select>
                                         <input type="date" name="new_date" class="admin-date-input" required aria-label="Fecha de reprogramación para {{ appointment.customer_name }}">
                                         <input type="time" name="new_time" class="admin-time-input" required aria-label="Hora de reprogramación para {{ appointment.customer_name }}">
                                         <button type="submit" class="refresh-button" aria-label="Reprogramar turno de {{ appointment.customer_name }}">Reprogramar</button>

@@ -16,12 +16,38 @@ from database.database import (
     get_business_settings,
     get_business_settings_scoped,
     get_connection,
+    get_resource_scoped,
     get_weekly_schedule,
     get_weekly_schedule_scoped,
 )
 
 
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
+
+
+def _validate_resource(resource_id, business_id):
+    """Valida que `resource_id` pertenezca al negocio indicado.
+
+    Devuelve (resource_id_validado | None, reason | None).
+
+    - resource_id None -> (None, None): negocio sin recursos o reserva global.
+    - resource_id inválido o de OTRO negocio -> (None, "invalid_resource").
+    Nunca se confía en el id crudo recibido del cliente: siempre se comprueba
+    su business_id en la tabla resources.
+    """
+    if resource_id is None:
+        return None, None
+    try:
+        resource_id_int = int(resource_id)
+        if resource_id_int <= 0:
+            return None, "invalid_resource"
+    except (ValueError, TypeError):
+        return None, "invalid_resource"
+    resource = get_resource_scoped(resource_id_int, business_id)
+    if resource is None or not resource["active"]:
+        return None, "invalid_resource"
+    return resource_id_int, None
+
 
 
 def _to_minutes(hm):
@@ -288,12 +314,17 @@ def validate_appointment_time(date, time, business_id=None):
 # CONSULTAR DISPONIBILIDAD
 # ============================================================
 
-def get_available_times(date, business_id=None, service=None):
+def get_available_times(date, business_id=None, service=None, resource_id=None):
     if business_id is None:
         raise ValueError("business_id es obligatorio")
     """
     Devuelve los horarios que todavía están libres
     para una determinada fecha.
+
+    Si se solicita un resource_id, los horarios ocupados son los de ese
+    recurso más los bloqueos globales (resource_id IS NULL) del negocio.
+    Sin resource_id se conserva el comportamiento histórico: cualquier
+    turno confirmado del negocio ocupa la grilla.
 
     Si la fecha no es válida, es pasada o es domingo,
     devuelve una lista vacía.
@@ -320,16 +351,35 @@ def get_available_times(date, business_id=None, service=None):
                 return []
             service_duration = selected["duration"]
 
-        rows = connection.execute(
-            """
-            SELECT appointment_time, appointment_end
-            FROM appointments
-            WHERE appointment_date = ?
-            AND status = 'confirmed'
-            AND business_id = ?
-            """,
-            (date, business_id),
-        ).fetchall()
+        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id)
+        if resource_id is not None and resource_id_validated is None:
+            return []
+
+        if resource_id_validated is not None:
+            # Disponibilidad por recurso: ocupan ese recurso y los bloqueos
+            # globales (resource_id IS NULL) del negocio. Otros recursos NO.
+            rows = connection.execute(
+                """
+                SELECT appointment_time, appointment_end
+                FROM appointments
+                WHERE appointment_date = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                AND (resource_id = ? OR resource_id IS NULL)
+                """,
+                (date, business_id, resource_id_validated),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT appointment_time, appointment_end
+                FROM appointments
+                WHERE appointment_date = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                """,
+                (date, business_id),
+            ).fetchall()
 
         occupied_intervals = [
             (_to_minutes(row["appointment_time"]), _to_minutes(row["appointment_end"]))
@@ -364,6 +414,7 @@ def create_appointment(
     appointment_time,
     business_id,
     email=None,
+    resource_id=None,
 ):
     """
     Crea un turno.
@@ -454,6 +505,22 @@ def create_appointment(
         }
 
     # --------------------------------------------------------
+    # VALIDAR RECURSO (si se provee)
+    #
+    # El resource_id recibido del cliente se comprueba SIEMPRE contra el
+    # business_id actual en la tabla resources. Un recurso de otro negocio
+    # es rechazado con invalid_resource.
+    # --------------------------------------------------------
+
+    resource_id_validated, resource_reason = _validate_resource(resource_id, business_id)
+    if resource_reason is not None:
+        return {
+            "success": False,
+            "appointment_id": None,
+            "reason": resource_reason,
+        }
+
+    # --------------------------------------------------------
     # VALIDAR FECHA
     # --------------------------------------------------------
 
@@ -528,25 +595,53 @@ def create_appointment(
             # new_start < existing_end AND new_end > existing_start
             # scoped por business_id, solo turnos confirmados.
             # Cubre también el caso de inicio idéntico.
+            #
+            # Con recurso:
+            #   - bloquean este recurso (resource_id = ?)
+            #   - bloquean los turnos globales (resource_id IS NULL)
+            #   - NO bloquean otros recursos.
+            # Sin recurso (bloqueo global):
+            #   - bloquea todo el negocio (comportamiento histórico).
             # ------------------------------------------------
 
-            existing = connection.execute(
-                """
-                SELECT id
-                FROM appointments
-                WHERE appointment_date = ?
-                AND status = 'confirmed'
-                AND business_id = ?
-                AND ? < appointment_end
-                AND ? > appointment_time
-                """,
-                (
-                    appointment_date,
-                    business_id,
-                    appointment_time,
-                    appointment_end,
-                ),
-            ).fetchone()
+            if resource_id_validated is not None:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND business_id = ?
+                    AND (resource_id = ? OR resource_id IS NULL)
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (
+                        appointment_date,
+                        business_id,
+                        resource_id_validated,
+                        appointment_time,
+                        appointment_end,
+                    ),
+                ).fetchone()
+            else:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND business_id = ?
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (
+                        appointment_date,
+                        business_id,
+                        appointment_time,
+                        appointment_end,
+                    ),
+                ).fetchone()
 
             if existing:
                 connection.execute("ROLLBACK")
@@ -567,8 +662,8 @@ def create_appointment(
                 INSERT INTO appointments
                 (customer_name, phone, customer_email, service, appointment_date,
                  appointment_time, appointment_end, duration, business_id,
-                 management_token_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resource_id, management_token_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     customer_name,
@@ -580,6 +675,7 @@ def create_appointment(
                     appointment_end,
                     duration,
                     business_id,
+                    resource_id_validated,
                     management_token_hash,
                 ),
             )
@@ -598,6 +694,7 @@ def create_appointment(
                 "appointment_end": appointment_end,
                 "duration": duration,
                 "business_id": business_id,
+                "resource_id": resource_id_validated,
                 "reason": "created",
             }
 
@@ -651,11 +748,22 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
                         (status, status, appointment_date, appointment_date),
                 ).fetchall()
 
+        resource_by_id = {}
+        if business_id is not None:
+            for r in connection.execute(
+                "SELECT id, name FROM resources WHERE business_id = ? AND active = 1 ORDER BY name",
+                (business_id,),
+            ).fetchall():
+                resource_by_id[r["id"]] = r["name"]
 
-        return [
-            dict(row)
-            for row in rows
-        ]
+        result = []
+        for row in rows:
+            item = dict(row)
+            rid = item.get("resource_id")
+            if rid is not None and rid in resource_by_id:
+                item["resource_name"] = resource_by_id[rid]
+            result.append(item)
+        return result
 
 
     finally:
@@ -1121,27 +1229,55 @@ def reschedule_appointment(
             # VERIFICAR SOLAPAMIENTO POR INTERVALO
             #
             # Excluimos el propio turno que estamos moviendo.
+            #
+            # El turno conserva su resource_id histórico: si tenía recurso,
+            # sigue bloqueando solo ese recurso (+ bloqueos globales). Si no
+            # tenía recurso, sigue bloqueando todo el negocio.
             # ------------------------------------------------
 
-            existing = connection.execute(
-                """
-                SELECT id
-                FROM appointments
-                WHERE appointment_date = ?
-                AND status = 'confirmed'
-                AND id != ?
-                AND business_id = ?
-                AND ? < appointment_end
-                AND ? > appointment_time
-                """,
-                (
-                    new_date,
-                    appointment_id_int,
-                    business_id,
-                    new_time,
-                    new_end,
-                ),
-            ).fetchone()
+            historical_resource_id = appointment["resource_id"]
+            if historical_resource_id is not None:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND id != ?
+                    AND business_id = ?
+                    AND (resource_id = ? OR resource_id IS NULL)
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (
+                        new_date,
+                        appointment_id_int,
+                        business_id,
+                        historical_resource_id,
+                        new_time,
+                        new_end,
+                    ),
+                ).fetchone()
+            else:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND id != ?
+                    AND business_id = ?
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (
+                        new_date,
+                        appointment_id_int,
+                        business_id,
+                        new_time,
+                        new_end,
+                    ),
+                ).fetchone()
 
             if existing:
                 connection.execute("ROLLBACK")
@@ -1178,6 +1314,7 @@ def reschedule_appointment(
             return {
                 "success": True,
                 "reason": "rescheduled",
+                "resource_id": historical_resource_id,
             }
 
         except sqlite3.IntegrityError:
@@ -1196,6 +1333,7 @@ def reschedule_appointment_admin(
     new_date,
     new_time,
     business_id=None,
+    resource_id=None,
 ):
     """
     Cambia la fecha y hora de un turno confirmado desde el panel admin.
@@ -1205,6 +1343,10 @@ def reschedule_appointment_admin(
     turno al ``business_id`` actual. Mantiene las mismas validaciones de dominio
     (fecha válida, no pasada, no cerrado, horario válido, sin solapamiento) en
     una transacción atómica con ``BEGIN IMMEDIATE``.
+
+    Si se provee ``resource_id``, cambia el recurso asociado del turno. El
+    recurso indicado se valida contra el mismo ``business_id`` antes de
+    proceder.
     """
 
     if business_id is None:
@@ -1261,19 +1403,53 @@ def reschedule_appointment_admin(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
 
-            existing = connection.execute(
-                """
-                SELECT id
-                FROM appointments
-                WHERE appointment_date = ?
-                AND status = 'confirmed'
-                AND id != ?
-                AND business_id = ?
-                AND ? < appointment_end
-                AND ? > appointment_time
-                """,
-                (new_date, appointment_id_int, business_id, new_time, new_end),
-            ).fetchone()
+            # ------------------------------------------------
+            # VERIFICAR SOLAPAMIENTO POR INTERVALO
+            #
+            # Excluimos el propio turno que estamos moviendo.
+            #
+            # El turno conserva su resource_id histórico: si tenía recurso,
+            # sigue bloqueando solo ese recurso (+ bloqueos globales). Si no
+            # tenía recurso, sigue bloqueando todo el negocio.
+            # ------------------------------------------------
+
+            historical_resource_id = appointment["resource_id"]
+            if historical_resource_id is not None:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND id != ?
+                    AND business_id = ?
+                    AND (resource_id = ? OR resource_id IS NULL)
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (
+                        new_date,
+                        appointment_id_int,
+                        business_id,
+                        historical_resource_id,
+                        new_time,
+                        new_end,
+                    ),
+                ).fetchone()
+            else:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM appointments
+                    WHERE appointment_date = ?
+                    AND status = 'confirmed'
+                    AND id != ?
+                    AND business_id = ?
+                    AND ? < appointment_end
+                    AND ? > appointment_time
+                    """,
+                    (new_date, appointment_id_int, business_id, new_time, new_end),
+                ).fetchone()
 
             if existing:
                 connection.execute("ROLLBACK")
@@ -1289,7 +1465,11 @@ def reschedule_appointment_admin(
             )
 
             connection.commit()
-            return {"success": True, "reason": "rescheduled"}
+            return {
+                "success": True,
+                "reason": "rescheduled",
+                "resource_id": historical_resource_id,
+            }
 
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")

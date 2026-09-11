@@ -34,6 +34,10 @@ from database.database import (
     get_all_services_scoped,
     create_service_scoped,
     update_service_scoped,
+    get_resources_scoped,
+    get_resource_scoped,
+    create_resource_scoped,
+    set_resource_active_scoped,
 )
 
 from services.appointments import (
@@ -1067,6 +1071,9 @@ def _render_admin():
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
         services=services,
+        resources=get_resources_scoped(business_id),
+        resource_message=request.args.get("resource_message", ""),
+        resource_error=request.args.get("resource_error", ""),
         onboarding=onboarding,
         product_summary=onboarding["summary"],
         service_message=request.args.get("service_message", ""),
@@ -1290,6 +1297,141 @@ def admin_reschedule_appointment(appointment_id, slug=None):
         status="confirmed",
         error_message=error,
     ))
+
+
+@app.route("/admin/turnos/<int:appointment_id>/reprogramar/con-recurso", methods=["POST"])
+@app.route("/b/<slug>/admin/turnos/<int:appointment_id>/reprogramar/con-recurso", methods=["POST"])
+def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    new_date = request.form.get("new_date", "").strip()
+    new_time = request.form.get("new_time", "").strip()
+    resource_id_raw = request.form.get("resource_id", "").strip()
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    resource_id = None
+    if resource_id_raw:
+        try:
+            resource_id = int(resource_id_raw)
+        except (TypeError, ValueError):
+            resource_id = None
+
+    error = None
+    if not new_date or not new_time:
+        error = "Completá la fecha y la hora para reprogramar."
+    else:
+        res = reschedule_appointment_admin(
+            appointment_id,
+            new_date,
+            new_time,
+            business_id=business_id,
+            resource_id=resource_id,
+        )
+        if not res["success"]:
+            error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
+
+    return redirect(_admin_url(
+        status="confirmed",
+        error_message=error,
+    ))
+
+
+@app.route("/admin/turnos/crear", methods=["POST"])
+@app.route("/b/<slug>/admin/turnos/crear", methods=["POST"])
+def admin_create_appointment_manual(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    customer_name = request.form.get("customer_name", "").strip()
+    phone = request.form.get("phone", "").strip()
+    service_name = request.form.get("service_name", "").strip()
+    appointment_date = request.form.get("appointment_date", "").strip()
+    appointment_time = request.form.get("appointment_time", "").strip()
+    notes = request.form.get("notes", "").strip()
+    resource_id_raw = request.form.get("resource_id", "").strip()
+
+    resource_id = None
+    if resource_id_raw:
+        try:
+            resource_id = int(resource_id_raw)
+        except (TypeError, ValueError):
+            resource_id = None
+
+    if not customer_name:
+        return redirect(_admin_url(status="confirmed", error_message="El nombre del cliente es obligatorio."))
+    if not phone:
+        return redirect(_admin_url(status="confirmed", error_message="El teléfono del cliente es obligatorio."))
+    if not service_name:
+        return redirect(_admin_url(status="confirmed", error_message="El servicio es obligatorio."))
+    if not appointment_date:
+        return redirect(_admin_url(status="confirmed", error_message="La fecha es obligatoria."))
+    if not appointment_time:
+        return redirect(_admin_url(status="confirmed", error_message="El horario es obligatorio."))
+
+    duration = None
+    service = None
+    for s in get_all_services_scoped(business_id):
+        if s["name"] == service_name:
+            service = s
+            break
+    if service is None:
+        return redirect(_admin_url(status="confirmed", error_message="El servicio seleccionado no existe."))
+    duration = service["duration"]
+
+    # Validar recurso si se indica.
+    if resource_id is not None:
+        resource = get_resource_scoped(resource_id, business_id)
+        if resource is None:
+            return redirect(_admin_url(status="confirmed", error_message="El recurso seleccionado no existe o no pertenece a este negocio."))
+        if not resource["active"]:
+            return redirect(_admin_url(status="confirmed", error_message="No podés reservar un recurso inactivo."))
+
+    res = create_appointment(
+        customer_name=customer_name,
+        phone=phone,
+        service_name=service_name,
+        appointment_date=appointment_date,
+        appointment_time=appointment_time,
+        status="confirmed",
+        business_id=business_id,
+        resource_id=resource_id,
+        notes=notes or "",
+    )
+    if not res.get("success"):
+        reason = res.get("reason") or "No se pudo crear la reserva."
+        return redirect(_admin_url(
+            status="confirmed",
+            error_message="No se pudo crear la reserva: " + _human_appointment_error(reason),
+        ))
+
+    return redirect(_admin_url(
+        status="confirmed",
+        message=f"Turno creado: {customer_name} - {appointment_date} {appointment_time}",
+    ))
+
+
+def _human_appointment_error(reason):
+    mapping = {
+        "invalid_service": "El servicio indicado no es válido.",
+        "invalid_time": "El horario indicado no es válido o ya no está disponible.",
+        "occupied": "Ese horario ya está ocupado.",
+        "invalid_date": "La fecha indicada no es válida.",
+        "closed": "El negocio está cerrado en esa fecha.",
+        "past": "No se puede reservar una fecha pasada.",
+        "required_fields": "Faltan datos obligatorios.",
+    }
+    return mapping.get(reason, reason or "Operación no permitida.")
 
 
 # ============================================================
@@ -1708,6 +1850,47 @@ def business_api_servicios(slug):
     g.current_business = business
     return _get_public_services_response(get_current_business_id())
 
+
+# ============================================================
+# API - RECURSOS (público)
+# ============================================================
+
+def _get_public_resources_response(business_id):
+    """Devuelve los recursos activos del negocio actual."""
+    if not is_api_request_allowed(get_client_ip(), "api:recursos", business_id):
+        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+    if business_id is None:
+        return jsonify({"success": False, "error": "No hay un negocio activo para esta solicitud."}), 404
+
+    resources = get_resources_scoped(business_id, only_active=True)
+    recursos = []
+    for row in resources:
+        recursos.append({
+            "id": row["id"],
+            "nombre": row["name"]
+        })
+
+    return jsonify({
+        "success": True,
+        "recursos": recursos
+    })
+
+
+@app.route("/api/recursos", methods=["GET"])
+def api_recursos():
+    return _get_public_resources_response(get_current_business_id())
+
+
+@app.route("/b/<slug>/api/recursos", methods=["GET"])
+def business_api_recursos(slug):
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+
+    g.current_business = business
+    return _get_public_resources_response(get_current_business_id())
+
+
 # ============================================================
 # API - PUNTOS DE FIDELIZACIÓN (cliente)
 # ============================================================
@@ -1759,8 +1942,17 @@ def _get_public_availability_response(fecha, business_id):
     if not is_api_request_allowed(get_client_ip(), "api:disponibilidad", business_id):
         return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
+    # resource_id opcional: permite filtrar disponibilidad por recurso
+    resource_id_raw = request.args.get("resource_id")
+    resource_id = None
+    if resource_id_raw:
+        try:
+            resource_id = int(resource_id_raw)
+        except (ValueError, TypeError):
+            return jsonify({"success": False, "error": "resource_id inválido."}), 400
+
     try:
-        horarios = get_available_times(fecha, business_id, request.args.get("servicio"))
+        horarios = get_available_times(fecha, business_id, request.args.get("servicio"), resource_id)
         return jsonify({
             "success": True,
             "fecha": fecha,
@@ -1882,6 +2074,8 @@ def business_api_turnos(slug):
 def _create_public_appointment_response(business_id):
 
     if not is_api_request_allowed(get_client_ip(), "api:reservar", business_id):
+
+
         return jsonify({
             "success": False,
             "error": "Demasiadas solicitudes. Esperá un momento."
@@ -1976,6 +2170,21 @@ def _create_public_appointment_response(business_id):
 
 
         # ----------------------------------------------------
+        # VALIDAR RECURSO (opcional)
+        # ----------------------------------------------------
+
+        resource_id_raw = data.get("resource_id")
+        resource_id = None
+        if resource_id_raw is not None:
+            try:
+                resource_id = int(resource_id_raw)
+                if resource_id <= 0:
+                    resource_id = None
+            except (ValueError, TypeError):
+                return jsonify({"success": False, "error": "resource_id inválido."}), 400
+
+
+        # ----------------------------------------------------
         # CREAR TURNO
         # ----------------------------------------------------
 
@@ -1994,6 +2203,8 @@ def _create_public_appointment_response(business_id):
             business_id=business_id,
 
             email=email or None,
+
+            resource_id=resource_id,
         )
 
 
@@ -2097,17 +2308,20 @@ def _create_public_appointment_response(business_id):
             except Exception:
                 logger.exception("Error enviando confirmación de turno")
 
-            return jsonify({
-
+            response_data = {
                 "success": True,
-
-                "appointment_id": resultado.get(
-                    "appointment_id"
-                ),
+                "appointment_id": resultado.get("appointment_id"),
                 "management_token": resultado.get("management_token"),
-
                 "message": "El turno fue reservado correctamente."
-            }), 201
+            }
+            if resultado.get("resource_id"):
+                response_data["resource_id"] = resultado["resource_id"]
+                # Obtener el nombre del recurso para la respuesta
+                resource = get_resource_scoped(resultado["resource_id"], business_id)
+                if resource:
+                    response_data["resource_nombre"] = resource["name"]
+
+            return jsonify(response_data), 201
 
         if resultado.get("reason") == "past_time":
             return jsonify({
@@ -2121,6 +2335,13 @@ def _create_public_appointment_response(business_id):
                 "success": False,
                 "reason": "invalid_service",
                 "error": "El servicio seleccionado no está disponible.",
+            }), 400
+
+        if resultado.get("reason") == "invalid_resource":
+            return jsonify({
+                "success": False,
+                "reason": "invalid_resource",
+                "error": "El recurso seleccionado no es válido o no está disponible.",
             }), 400
 
 
@@ -2142,6 +2363,88 @@ def _create_public_appointment_response(business_id):
             "success": False,
             "error": "No se pudo realizar la reserva."
         }), 500
+
+
+# ============================================================
+# RECURSOS (reservables, multi-tenant, scoped por business_id)
+# ============================================================
+
+
+@app.route("/admin/recursos")
+@app.route("/b/<slug>/admin/recursos")
+def admin_recursos(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    resources = get_resources_scoped(business_id)
+    settings = get_business_settings_scoped(business_id)
+    business_name = (
+        settings["business_name"] if settings and settings.get("business_name") else "Mi negocio"
+    )
+    business_initials = (
+        settings["business_initials"] if settings and settings.get("business_initials") else ""
+    )
+    return render_template(
+        "admin.html",
+        resources=resources,
+        business_name=business_name,
+        business_initials=business_initials,
+        admin_prefix=("" if business_id == 1 else f"/b/{g.current_business['slug']}"),
+    )
+
+
+@app.route("/admin/recursos/crear", methods=["POST"])
+@app.route("/b/<slug>/admin/recursos/crear", methods=["POST"])
+def admin_create_resource(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(_admin_url(resource_error="El nombre del recurso es obligatorio."))
+    if len(name) > 120:
+        return redirect(_admin_url(resource_error="El nombre del recurso es demasiado largo."))
+    result = create_resource_scoped(business_id, name)
+    if not result.get("success"):
+        if result.get("reason") == "duplicate_name":
+            return redirect(_admin_url(resource_error="Ya existe un recurso con ese nombre en este negocio."))
+        return redirect(_admin_url(resource_error="No se pudo crear el recurso."))
+    return redirect(_admin_url(resource_message="El recurso se creó correctamente."))
+
+
+@app.route("/admin/recursos/<int:resource_id>/estado", methods=["POST"])
+@app.route("/b/<slug>/admin/recursos/<int:resource_id>/estado", methods=["POST"])
+def admin_toggle_resource(resource_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    resource = get_resource_scoped(resource_id, business_id)
+    if resource is None:
+        return redirect(_admin_url(resource_error="No se encontró el recurso."))
+    new_active = request.form.get("active") == "1"
+    set_resource_active_scoped(resource_id, business_id, new_active)
+    return redirect(_admin_url(resource_message="El estado del recurso se actualizó."))
+
+
+def _resources_url(**kwargs):
+    """URL de la página de recursos, con/sin prefijo de slug."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_recursos_slug", slug=business["slug"], **kwargs)
+    return url_for("admin_recursos", **kwargs)
 
 
 @app.route(

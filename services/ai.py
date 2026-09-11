@@ -22,6 +22,8 @@ from database.database import (
     get_business_settings_scoped,
     get_weekly_schedule,
     get_weekly_schedule_scoped,
+    get_resources_scoped,
+    get_resource_scoped,
 )
 
 
@@ -96,6 +98,7 @@ Tu objetivo es ayudar a los clientes a:
 - consultar precios
 - consultar horarios
 - consultar disponibilidad
+- consultar recursos reservables
 - reservar turnos
 - consultar sus turnos
 - cancelar turnos
@@ -157,6 +160,24 @@ REGLAS GENERALES
 15. Si una pregunta no tiene relación con el negocio,
     explicá amablemente que solamente podés ayudar
     con servicios y turnos.
+
+
+============================================================
+RECURSOS RESERVABLES
+============================================================
+
+Algunos negocios tienen recursos reservables (canchas, consultorios, cabinas, etc.).
+La lista de recursos activos se encuentra en la sección "RECURSOS ACTIVOS".
+
+16b. Si el cliente pregunta por recursos disponibles o quiere reservar un recurso específico,
+     utilizá consultar_disponibilidad con el parámetro resource_id opcional.
+
+16c. Si el cliente quiere reservar un turno con un recurso específico,
+     inclúyelo en reservar_turno con el parámetro resource_id.
+     El resource_id debe coincidir con uno de los recursos listados en "RECURSOS ACTIVOS".
+
+16d. Si el negocio no tiene recursos (la lista está vacía),
+     no preguntes por recursos ni los incluyas en la reserva.
 
 
 ============================================================
@@ -253,6 +274,20 @@ def get_services_prompt(business_id=None):
     )
 
 
+def get_resources_prompt(business_id=None):
+    """Genera la lista actual de recursos desde la base de datos."""
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+    resources = get_resources_scoped(business_id, only_active=True)
+    if not resources:
+        return "No hay recursos reservables en este momento."
+
+    return "\n".join(
+        f"- {resource['name']} (ID: {resource['id']})"
+        for resource in resources
+    )
+
+
 def get_business_hours_prompt(business_id=None):
     """Genera los horarios semanales actuales desde la base de datos."""
     if business_id is None:
@@ -292,7 +327,8 @@ consultar_disponibilidad_declaration = types.FunctionDeclaration(
 
     description=(
         "Consulta los horarios disponibles del negocio "
-        "para una fecha determinada."
+        "para una fecha determinada. "
+        "Si se especifica resource_id, filtra por ese recurso."
     ),
 
     parameters_json_schema={
@@ -304,12 +340,51 @@ consultar_disponibilidad_declaration = types.FunctionDeclaration(
                 "description": (
                     "Fecha en formato YYYY-MM-DD."
                 ),
-            }
+            },
+            "servicio": {
+                "type": "string",
+                "description": (
+                    "Nombre opcional del servicio para filtrar por duración."
+                ),
+            },
+            "resource_id": {
+                "type": "integer",
+                "description": (
+                    "ID opcional del recurso reservable. "
+                    "Si se especifica, devuelve disponibilidad solo para ese recurso. "
+                    "Debe coincidir con un recurso de 'RECURSOS ACTIVOS'."
+                ),
+            },
         },
 
         "required": [
             "fecha"
         ],
+
+        "additionalProperties": False,
+    },
+)
+
+
+# ============================================================
+# HERRAMIENTA 1b
+# CONSULTAR RECURSOS
+# ============================================================
+
+consultar_recursos_declaration = types.FunctionDeclaration(
+    name="consultar_recursos",
+
+    description=(
+        "Devuelve la lista de recursos reservables activos del negocio. "
+        "Útil cuando el cliente pregunta qué recursos están disponibles."
+    ),
+
+    parameters_json_schema={
+        "type": "object",
+
+        "properties": {},
+
+        "required": [],
 
         "additionalProperties": False,
     },
@@ -370,6 +445,15 @@ reservar_turno_declaration = types.FunctionDeclaration(
                 "type": "string",
                 "description": (
                     "Hora en formato HH:MM."
+                ),
+            },
+
+            "resource_id": {
+                "type": "integer",
+                "description": (
+                    "ID opcional del recurso reservable. "
+                    "Si se especifica, reserva ese recurso específico. "
+                    "Debe coincidir con un recurso de 'RECURSOS ACTIVOS'."
                 ),
             },
         },
@@ -570,6 +654,7 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
 BARBERIA_TOOL = types.Tool(
     function_declarations=[
         consultar_disponibilidad_declaration,
+        consultar_recursos_declaration,
         reservar_turno_declaration,
         buscar_turnos_declaration,
         cancelar_turno_declaration,
@@ -587,16 +672,49 @@ def execute_tool(name, arguments, business_id=None):
         return {"success": False, "error": "Contexto de negocio inválido."}
 
     # ========================================================
+    # CONSULTAR RECURSOS
+    # ========================================================
+
+    if name == "consultar_recursos":
+
+        try:
+
+            resources = get_resources_scoped(business_id, only_active=True)
+            recursos = [
+                {"id": r["id"], "nombre": r["name"]}
+                for r in resources
+            ]
+
+            return {
+                "success": True,
+                "recursos": recursos,
+            }
+
+        except Exception as error:
+
+            logger.exception(
+                "Error consultando recursos."
+            )
+
+            return {
+                "success": False,
+                "error": "No se pudo consultar los recursos.",
+            }
+
+
+    # ========================================================
     # CONSULTAR DISPONIBILIDAD
     # ========================================================
 
     if name == "consultar_disponibilidad":
 
         fecha = arguments["fecha"]
+        servicio = arguments.get("servicio")
+        resource_id = arguments.get("resource_id")
 
         try:
 
-            horarios = get_available_times(fecha, business_id, arguments.get("servicio"))
+            horarios = get_available_times(fecha, business_id, servicio, resource_id)
 
             return {
                 "success": True,
@@ -637,6 +755,18 @@ def execute_tool(name, arguments, business_id=None):
                     "message": "El servicio solicitado no está disponible.",
                 }
 
+            # Validar resource_id si se provee
+            resource_id = arguments.get("resource_id")
+            if resource_id is not None:
+                # Verificar que el recurso existe y está activo en este negocio
+                resources = get_resources_scoped(business_id, only_active=True)
+                resource_ids = {r["id"] for r in resources}
+                if resource_id not in resource_ids:
+                    return {
+                        "success": False,
+                        "message": "El recurso especificado no está disponible.",
+                    }
+
             email = (arguments.get("email") or "").strip()
             if notifications_enabled(business_id) and not email:
                 return {
@@ -662,6 +792,8 @@ def execute_tool(name, arguments, business_id=None):
                 business_id=business_id,
 
                 email=email or None,
+
+                resource_id=resource_id,
             )
 
 
@@ -693,7 +825,7 @@ def execute_tool(name, arguments, business_id=None):
             except Exception:
                 logger.exception("Error enviando confirmación de turno")
 
-            return {
+            response = {
                 "success": True,
 
                 "appointment_id": resultado["appointment_id"],
@@ -704,6 +836,13 @@ def execute_tool(name, arguments, business_id=None):
                     "correctamente."
                 ),
             }
+            if resultado.get("resource_id"):
+                response["resource_id"] = resultado["resource_id"]
+                resource = get_resource_scoped(resultado["resource_id"], business_id)
+                if resource:
+                    response["resource_nombre"] = resource["name"]
+
+            return response
 
 
         except Exception as error:
@@ -1038,6 +1177,7 @@ def format_reservation_confirmation(
     servicio,
     fecha,
     hora,
+    resource_nombre=None,
 ):
 
     business_name = get_business_identity()["business_name"]
@@ -1070,12 +1210,13 @@ def format_reservation_confirmation(
             "%d/%m/%Y"
         )
 
+        resource_text = f"\n🏟️ **{resource_nombre}**" if resource_nombre else ""
 
         return (
             f"¡Listo, {nombre}! Tu turno para "
             f"**{servicio}** quedó reservado correctamente.\n\n"
             f"📅 **{dia_semana} {fecha_formateada}**\n"
-            f"🕐 **{hora} hs**\n\n"
+            f"🕐 **{hora} hs**{resource_text}\n\n"
             f"¡Te esperamos en **{business_name}**!"
         )
 
@@ -1620,6 +1761,7 @@ días de la semana y fechas relativas.
                     fecha=arguments["fecha"],
 
                     hora=arguments["hora"],
+                    resource_nombre=result.get("resource_nombre"),
                 )
 
 

@@ -496,6 +496,88 @@ def update_service_scoped(service_id, business_id, name, price, duration, active
 
 
 # ============================================================
+# RECURSOS RESERVABLES — CAPA MULTI-NEGOCIO (SCOPED)
+# ============================================================
+
+def get_resources_scoped(business_id, only_active=False):
+    """Devuelve los recursos de un negocio específico.
+
+    Si `only_active` es True, solo devuelve los activos.
+    Siempre scoped por business_id: un negocio jamás lista recursos de otro.
+    """
+    connection = get_connection()
+    try:
+        query = "SELECT id, name, active FROM resources WHERE business_id = ?"
+        if only_active:
+            query += " AND active = 1"
+        query += " ORDER BY id"
+        return connection.execute(query, (business_id,)).fetchall()
+    finally:
+        connection.close()
+
+
+def get_resource_scoped(resource_id, business_id):
+    """Obtiene un recurso por id SOLO si pertenece al negocio indicado.
+
+    Devuelve None si no existe o si pertenece a otro negocio.
+    """
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT id, name, active
+            FROM resources
+            WHERE id = ? AND business_id = ?
+            """,
+            (resource_id, business_id),
+        ).fetchone()
+    finally:
+        connection.close()
+
+
+def create_resource_scoped(business_id, name, active=True):
+    """Crea un recurso asociado explícitamente a un negocio.
+
+    Devuelve el id del recurso creado.
+    """
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            INSERT INTO resources (business_id, name, active)
+            VALUES (?, ?, ?)
+            """,
+            (business_id, name, 1 if active else 0),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def set_resource_active_scoped(resource_id, business_id, active):
+    """Activa o desactiva un recurso solo si pertenece al negocio indicado.
+
+    Devuelve True si la operación modificó una fila (recurso propio),
+    False si el recurso no existe o pertenece a otro negocio.
+    """
+    connection = get_connection()
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE resources
+            SET active = ?
+            WHERE id = ? AND business_id = ?
+            """,
+            (1 if active else 0, resource_id, business_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+    finally:
+        connection.close()
+
+
+# ============================================================
 # CONFIGURACIÓN / HORARIOS / TURNOS — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
 
