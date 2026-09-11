@@ -881,39 +881,137 @@ tbody tr:hover {
     border-color: #F87171;
 }
 
+/* SIDEBAR TOGGLE (HAMBURGUESA) */
+
+.sidebar-toggle {
+    display: none;
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #C9DDF8;
+    border-radius: 12px;
+    background: #FFFFFF;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(11,27,58,.05);
+    transition: all 0.2s;
+    flex-shrink: 0;
+    margin-right: 12px;
+}
+
+.sidebar-toggle:hover {
+    background: #EEF6FF;
+    border-color: #1463FF;
+}
+
+.sidebar-toggle:focus-visible {
+    outline: 3px solid #1463FF;
+    outline-offset: 2px;
+}
+
+.hamburger {
+    position: relative;
+    width: 22px;
+    height: 2px;
+    background: #102A56;
+    border-radius: 2px;
+    transition: background 0.2s;
+}
+
+.hamburger::before,
+.hamburger::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: #102A56;
+    border-radius: 2px;
+    transition: transform 0.2s;
+}
+
+.hamburger::before {
+    top: -7px;
+}
+
+.hamburger::after {
+    bottom: -7px;
+}
+
+.sidebar-toggle[aria-expanded="true"] .hamburger {
+    background: transparent;
+}
+
+.sidebar-toggle[aria-expanded="true"] .hamburger::before {
+    transform: rotate(45deg) translate(5px, 5px);
+}
+
+.sidebar-toggle[aria-expanded="true"] .hamburger::after {
+    transform: rotate(-45deg) translate(5px, -5px);
+}
+
+/* SIDEBAR OVERLAY */
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 27, 58, 0.4);
+    z-index: 40;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.sidebar-overlay.overlay-visible {
+    display: block;
+    opacity: 1;
+}
+
 /* ============================================================
    RESPONSIVE
    ============================================================ */
 
 @media (max-width: 850px) {
 
+    .sidebar-toggle {
+        display: flex;
+    }
+
     .sidebar {
-        width: 70px;
-        padding: 20px 10px;
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 280px;
+        max-width: 85vw;
+        z-index: 50;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: 0 0 0 1px rgba(11,27,58,.08), 0 8px 32px rgba(11,27,58,.12);
     }
 
-    .brand {
-        justify-content: center;
-        padding-left: 0;
-        padding-right: 0;
+    .sidebar.sidebar-open {
+        transform: translateX(0);
     }
 
-    .brand > div:last-child {
-        display: none;
+    /* En mobile, el sidebar SIEMPRE muestra labels (no se colapsa a 70px) */
+    .sidebar .brand > div:last-child {
+        display: block;
     }
 
-    .nav-item {
-        justify-content: center;
-        font-size: 0;
+    .sidebar .nav-item {
+        justify-content: flex-start;
+        font-size: 14px;
     }
 
-    .nav-item span {
-        font-size: 18px;
+    .sidebar .nav-item span {
+        font-size: 14px;
     }
 
-    .sidebar-footer {
-        justify-content: center;
-        font-size: 0;
+    .sidebar .sidebar-footer {
+        justify-content: flex-start;
+        font-size: 12px;
     }
 
     .main-content {
@@ -986,11 +1084,19 @@ tbody tr:hover {
 
     td {
         padding: 12px 14px;
-        font-size: 12px;
+        font-size: 14px;
     }
 
     th {
         padding: 12px 14px;
+        font-size: 13px;
+    }
+}
+
+/* Tablet breakpoint (600-850px): settings-form 2 columnas si hay espacio */
+@media (min-width: 601px) and (max-width: 850px) {
+    .settings-form {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 

@@ -30,7 +30,7 @@
              SIDEBAR
              ===================================================== -->
 
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
 
             <div class="brand">
 
@@ -96,6 +96,8 @@
 
         </aside>
 
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
 
 
         <!-- =====================================================
@@ -108,6 +110,10 @@
             <!-- HEADER -->
 
             <header class="topbar">
+
+                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+                    <span class="hamburger" aria-hidden="true"></span>
+                </button>
 
                 <div>
 
@@ -1008,6 +1014,59 @@
             timeSelect.addEventListener('change', function() {
                 if (this.value) {
                     submitBtn.disabled = false;
+                }
+            });
+        })();
+
+        // Sidebar toggle para mobile/tablet
+        (function() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('sidebar-toggle');
+            var overlay = document.getElementById('sidebar-overlay');
+
+            if (!sidebar || !toggleBtn || !overlay) return;
+
+            function openSidebar() {
+                sidebar.classList.add('sidebar-open');
+                overlay.classList.add('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Cerrar menú');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeSidebar() {
+                sidebar.classList.remove('sidebar-open');
+                overlay.classList.remove('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Abrir menú');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.body.style.overflow = '';
+            }
+
+            function toggleSidebar() {
+                if (sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
+            }
+
+            toggleBtn.addEventListener('click', toggleSidebar);
+            overlay.addEventListener('click', closeSidebar);
+
+            // Cerrar sidebar al navegar en mobile (opcional: al clickear un nav-item)
+            var navItems = sidebar.querySelectorAll('.nav-item');
+            navItems.forEach(function(item) {
+                item.addEventListener('click', function() {
+                    if (window.innerWidth <= 850) {
+                        closeSidebar();
+                    }
+                });
+            });
+
+            // Cerrar con tecla Escape
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
                 }
             });
         })();
