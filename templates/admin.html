@@ -633,7 +633,7 @@
 
                 <div class="settings-card">
                     <div class="section-header"><div><h3>Alta manual de turno</h3><p>Creá una reserva directamente desde el panel.</p></div></div>
-                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/crear" class="settings-form">
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/turnos/crear" class="settings-form" id="manual-appointment-form">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <label>Cliente
                             <input type="text" name="customer_name" required>
@@ -642,21 +642,24 @@
                             <input type="text" name="phone" required>
                         </label>
                         <label>Servicio
-                            <select name="service_name" required>
+                            <select name="service_name" id="manual-service" required>
                                 {% for service in services %}
-                                <option value="{{ service.name }}">{{ service.name }}</option>
+                                <option value="{{ service.name }}" data-duration="{{ service.duration }}">{{ service.name }}</option>
                                 {% endfor %}
                             </select>
                         </label>
                         <label>Fecha
-                            <input type="date" name="appointment_date" required>
+                            <input type="date" name="appointment_date" id="manual-date" required>
                         </label>
                         <label>Horario
-                            <input type="time" name="appointment_time" required>
+                            <select name="appointment_time" id="manual-time" required disabled>
+                                <option value="">Seleccioná servicio y fecha primero</option>
+                            </select>
+                            <input type="time" name="appointment_time_fallback" id="manual-time-fallback" class="fallback-time-input" hidden>
                         </label>
                         {% if resources %}
                         <label>Recurso
-                            <select name="resource_id">
+                            <select name="resource_id" id="manual-resource">
                                 <option value="">Sin recurso</option>
                                 {% for r in resources %}
                                 <option value="{{ r.id }}">{{ r.name }}</option>
@@ -668,7 +671,7 @@
                             <input type="text" name="notes">
                         </label>
                         <div class="settings-actions">
-                            <button type="submit" class="refresh-button">Crear turno</button>
+                            <button type="submit" class="refresh-button" id="manual-submit" disabled>Crear turno</button>
                         </div>
                     </form>
                 </div>
@@ -923,6 +926,91 @@
                 });
             });
         });
+
+        // Alta manual de turnos - carga dinámica de horarios disponibles
+        (function() {
+            var form = document.getElementById('manual-appointment-form');
+            if (!form) return;
+
+            var serviceSelect = document.getElementById('manual-service');
+            var dateInput = document.getElementById('manual-date');
+            var resourceSelect = document.getElementById('manual-resource');
+            var timeSelect = document.getElementById('manual-time');
+            var timeFallback = document.getElementById('manual-time-fallback');
+            var submitBtn = document.getElementById('manual-submit');
+
+            var adminPrefix = '{{ admin_prefix or '' }}';
+
+            function fetchAvailableSlots() {
+                var service = serviceSelect.value;
+                var date = dateInput.value;
+                var resource = resourceSelect ? resourceSelect.value : '';
+
+                if (!service || !date) {
+                    timeSelect.innerHTML = '<option value="">Seleccioná servicio y fecha primero</option>';
+                    timeSelect.disabled = true;
+                    submitBtn.disabled = true;
+                    return;
+                }
+
+                timeSelect.innerHTML = '<option value="">Cargando horarios...</option>';
+                timeSelect.disabled = true;
+                submitBtn.disabled = true;
+
+                var url = adminPrefix + '/api/disponibilidad/' + encodeURIComponent(date);
+                var params = [];
+                params.push('servicio=' + encodeURIComponent(service));
+                if (resource) {
+                    params.push('resource_id=' + encodeURIComponent(resource));
+                }
+                if (params.length) {
+                    url += '?' + params.join('&');
+                }
+
+                fetch(url)
+                    .then(function(response) {
+                        return response.json();
+                    })
+                    .then(function(data) {
+                        if (data.success && data.horarios_disponibles && data.horarios_disponibles.length > 0) {
+                            timeSelect.innerHTML = '<option value="">Elegí un horario</option>';
+                            data.horarios_disponibles.forEach(function(horario) {
+                                var opt = document.createElement('option');
+                                opt.value = horario;
+                                opt.textContent = horario;
+                                timeSelect.appendChild(opt);
+                            });
+                            timeSelect.disabled = false;
+                            submitBtn.disabled = false;
+                            timeFallback.hidden = true;
+                        } else {
+                            timeSelect.innerHTML = '<option value="">No hay horarios disponibles</option>';
+                            timeSelect.disabled = true;
+                            submitBtn.disabled = true;
+                            timeFallback.hidden = true;
+                        }
+                    })
+                    .catch(function() {
+                        timeSelect.innerHTML = '<option value="">Error al cargar horarios</option>';
+                        timeSelect.disabled = true;
+                        submitBtn.disabled = true;
+                        timeFallback.hidden = false;
+                    });
+            }
+
+            serviceSelect.addEventListener('change', fetchAvailableSlots);
+            dateInput.addEventListener('change', fetchAvailableSlots);
+            if (resourceSelect) {
+                resourceSelect.addEventListener('change', fetchAvailableSlots);
+            }
+
+            // Fallback: si el select está disabled, habilitar input time oculto
+            timeSelect.addEventListener('change', function() {
+                if (this.value) {
+                    submitBtn.disabled = false;
+                }
+            });
+        })();
 
     </script>
 

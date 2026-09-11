@@ -1077,6 +1077,30 @@ tbody tr:hover {
 }
 
 /* ============================================================
+   ALTA MANUAL DE TURNOS - SELECTOR DE HORARIOS
+   ============================================================ */
+
+.fallback-time-input {
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    color: #102A56;
+    font: inherit;
+    padding: 9px 12px;
+    width: 100%;
+    font-size: 13px;
+}
+
+#manual-time:disabled {
+    background: #F8FAFF;
+    color: #9CA3AF;
+}
+
+#manual-time:not(:disabled) {
+    background: #FFFFFF;
+    color: #102A56;
+}
+
+/* ============================================================
    ACCESIBILIDAD: RESPETAR MOVIMIENTO REDUCIDO
    ============================================================ */
 
