@@ -1046,6 +1046,7 @@ def _render_admin():
             "business_description": "",
             "timezone": "UTC",
             "notifications_enabled": 0,
+            "notification_email": "",
         }
     services = get_all_services_scoped(business_id)
     onboarding = product.get_onboarding_state(business_id, settings, services)
@@ -1200,6 +1201,7 @@ def admin_update_business_settings(slug=None):
     business_description = request.form.get("business_description", "").strip()
     timezone = request.form.get("timezone", "").strip()
     notifications_enabled = request.form.get("notifications_enabled") == "1"
+    notification_email = request.form.get("notification_email", "").strip()
 
     if not business_name or not business_type or not business_initials:
         return redirect(_admin_url(
@@ -1224,6 +1226,7 @@ def admin_update_business_settings(slug=None):
         business_description,
         timezone,
         notifications_enabled=notifications_enabled,
+        notification_email=notification_email,
     )
 
     return redirect(_admin_url(
@@ -2376,24 +2379,7 @@ def admin_recursos(slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    business_id = get_current_business_id()
-    if business_id is None:
-        abort(404)
-    resources = get_resources_scoped(business_id)
-    settings = get_business_settings_scoped(business_id)
-    business_name = (
-        settings["business_name"] if settings and settings.get("business_name") else "Mi negocio"
-    )
-    business_initials = (
-        settings["business_initials"] if settings and settings.get("business_initials") else ""
-    )
-    return render_template(
-        "admin.html",
-        resources=resources,
-        business_name=business_name,
-        business_initials=business_initials,
-        admin_prefix=("" if business_id == 1 else f"/b/{g.current_business['slug']}"),
-    )
+    return _render_admin()
 
 
 @app.route("/admin/recursos/crear", methods=["POST"])

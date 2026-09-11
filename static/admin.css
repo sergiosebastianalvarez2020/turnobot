@@ -324,6 +324,73 @@ nav {
     resize: vertical;
 }
 
+.settings-toggle {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toggle-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #102A56;
+}
+
+.toggle-wrap input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    background: #C9DDF8;
+    border: 1px solid #C9DDF8;
+    position: relative;
+    flex-shrink: 0;
+    transition: background .2s, border-color .2s;
+}
+
+.toggle-wrap input[type="checkbox"]:checked {
+    background: #1463FF;
+    border-color: #1463FF;
+}
+
+.toggle-wrap input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    box-shadow: 0 1px 3px rgba(11,27,58,.15);
+    transition: transform .2s;
+}
+
+.toggle-wrap input[type="checkbox"]:checked::after {
+    transform: translateX(18px);
+}
+
+.toggle-wrap input[type="checkbox"]:focus-visible {
+    outline: 3px solid #1463FF;
+    outline-offset: 2px;
+}
+
+.toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-hint {
+    color: #4A6590;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .settings-wide,
 .settings-actions {
     grid-column: 1 / -1;

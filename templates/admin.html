@@ -468,7 +468,6 @@
                     {% for resource in resources %}
                     <form method="POST" action="{{ admin_prefix or '' }}/admin/recursos/{{ resource.id }}/estado" class="service-row">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="active" value="1">
                         <label>
                             <span class="sr-only">Recurso</span>
                             <input type="text" name="name" value="{{ resource.name }}" readonly class="readonly-name">
