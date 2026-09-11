@@ -27,9 +27,6 @@ from database.database import (
     update_appointment_status_scoped,
     update_business_settings,
     update_business_settings_scoped,
-    get_all_services,
-    create_service,
-    update_service,
     get_active_services_scoped,
     get_all_services_scoped,
     create_service_scoped,
@@ -38,6 +35,9 @@ from database.database import (
     get_resource_scoped,
     create_resource_scoped,
     set_resource_active_scoped,
+    get_all_weekly_schedules_scoped,
+    update_weekly_schedule_scoped,
+    get_weekly_schedule_scoped,
 )
 
 from services.appointments import (
@@ -1045,6 +1045,8 @@ def _render_admin():
             "business_type": "Negocio",
             "business_description": "",
             "timezone": "UTC",
+            "slot_duration": 60,
+            "break_between_slots": 0,
             "notifications_enabled": 0,
             "notification_email": "",
         }
@@ -1060,6 +1062,7 @@ def _render_admin():
         and business_id
         and memberships.can_manage_memberships(actor_user_id, business_id)
     )
+    weekly_schedule = get_all_weekly_schedules_scoped(business_id) if business_id else []
     return render_template(
         "admin.html",
         appointments=get_appointments(status=status, appointment_date=appointment_date, business_id=business_id),
@@ -1069,6 +1072,7 @@ def _render_admin():
         business_name=settings["business_name"],
         business_initials=settings["business_initials"],
         business_settings=settings,
+        weekly_schedule=weekly_schedule,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
         services=services,
@@ -1080,6 +1084,8 @@ def _render_admin():
         service_message=request.args.get("service_message", ""),
         service_error=request.args.get("service_error", ""),
         reschedule_error=request.args.get("error_message", ""),
+        schedule_message=request.args.get("schedule_message", ""),
+        schedule_error=request.args.get("schedule_error", ""),
         can_manage_memberships=can_manage_memberships,
         smtp_configured=smtp_configured(),
     )
@@ -1202,6 +1208,8 @@ def admin_update_business_settings(slug=None):
     timezone = request.form.get("timezone", "").strip()
     notifications_enabled = request.form.get("notifications_enabled") == "1"
     notification_email = request.form.get("notification_email", "").strip()
+    slot_duration_raw = request.form.get("slot_duration", "").strip()
+    break_between_slots_raw = request.form.get("break_between_slots", "").strip()
 
     if not business_name or not business_type or not business_initials:
         return redirect(_admin_url(
@@ -1215,6 +1223,31 @@ def admin_update_business_settings(slug=None):
             config_error="La zona horaria indicada no es válida.",
         ))
 
+    slot_duration = None
+    break_between_slots = None
+    if slot_duration_raw:
+        try:
+            slot_duration = int(slot_duration_raw)
+        except (TypeError, ValueError):
+            return redirect(_admin_url(
+                config_error="La duración de slot debe ser un número entero.",
+            ))
+        if slot_duration < 1:
+            return redirect(_admin_url(
+                config_error="La duración de slot debe ser al menos 1 minuto.",
+            ))
+    if break_between_slots_raw:
+        try:
+            break_between_slots = int(break_between_slots_raw)
+        except (TypeError, ValueError):
+            return redirect(_admin_url(
+                config_error="El intervalo entre turnos debe ser un número entero.",
+            ))
+        if break_between_slots < 0:
+            return redirect(_admin_url(
+                config_error="El intervalo entre turnos no puede ser negativo.",
+            ))
+
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
@@ -1227,6 +1260,8 @@ def admin_update_business_settings(slug=None):
         timezone,
         notifications_enabled=notifications_enabled,
         notification_email=notification_email,
+        slot_duration=slot_duration,
+        break_between_slots=break_between_slots,
     )
 
     return redirect(_admin_url(
@@ -1234,7 +1269,40 @@ def admin_update_business_settings(slug=None):
     ))
 
 
-@app.route("/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])
+@app.route("/admin/horarios/guardar", methods=["POST"])
+@app.route("/b/<slug>/admin/horarios/guardar", methods=["POST"])
+def admin_save_weekly_schedule(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    for day in range(7):
+        day_prefix = f"day_{day}"
+        is_open = request.form.get(f"{day_prefix}_open") == "1"
+        morning_start = request.form.get(f"{day_prefix}_morning_start", "").strip() or None
+        morning_end = request.form.get(f"{day_prefix}_morning_end", "").strip() or None
+        afternoon_start = request.form.get(f"{day_prefix}_afternoon_start", "").strip() or None
+        afternoon_end = request.form.get(f"{day_prefix}_afternoon_end", "").strip() or None
+
+        if not is_open:
+            morning_start = None
+            morning_end = None
+            afternoon_start = None
+            afternoon_end = None
+
+        update_weekly_schedule_scoped(
+            business_id, day, is_open, morning_start, morning_end,
+            afternoon_start, afternoon_end,
+        )
+
+    return redirect(_admin_url(
+        schedule_message="Los horarios semanales se guardaron correctamente.",
+    ))
 @app.route("/b/<slug>/admin/turnos/<int:appointment_id>/cancelar", methods=["POST"])
 def admin_cancel_appointment(appointment_id, slug=None):
     denied = _require_admin_membership()

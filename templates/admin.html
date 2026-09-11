@@ -328,6 +328,24 @@
                         <input type="text" name="timezone" value="{{ business_settings['timezone'] if business_settings else '' }}" required>
                     </label>
 
+                    <label>
+                        Duración de slot (minutos)
+                        <input type="number" name="slot_duration" min="1" step="1" value="{{ business_settings['slot_duration'] if business_settings else 60 }}" required>
+                    </label>
+
+                    <label>
+                        Intervalo entre turnos (minutos)
+                        <input type="number" name="break_between_slots" min="0" step="1" value="{{ business_settings['break_between_slots'] if business_settings else 0 }}" required>
+                    </label>
+
+                    <label class="settings-hint-wide">
+                        <strong>Duración de slot:</strong> granularidad de la grilla de horarios. Un slot de 30 min permite turnos en :00, :30. No afecta la duración de servicios existentes.
+                    </label>
+
+                    <label class="settings-hint-wide">
+                        <strong>Intervalo entre turnos:</strong> tiempo adicional entre un turno y el siguiente. Se suma a la duración de slot para calcular el paso de la grilla.
+                    </label>
+
                     <div class="settings-toggle">
                         <label class="toggle-wrap">
                             <input type="checkbox" name="notifications_enabled" value="1" {% if business_settings and business_settings['notifications_enabled'] %}checked{% endif %}>
@@ -354,6 +372,76 @@
 
                     <div class="settings-actions">
                         <button type="submit" class="refresh-button">Guardar configuración</button>
+                    </div>
+                </form>
+
+            </section>
+
+
+            <section class="settings-card" id="horarios">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Horarios semanales</h3>
+                        <p>Definí los horarios de atención para cada día de la semana. Sólo los días habilitados aparecen en la grilla de turnos.</p>
+                    </div>
+                </div>
+
+                {% if schedule_message %}
+                <div class="settings-feedback settings-success" role="status">{{ schedule_message }}</div>
+                {% endif %}
+                {% if schedule_error %}
+                <div class="settings-feedback settings-error" role="alert">{{ schedule_error }}</div>
+                {% endif %}
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/horarios/guardar" class="settings-form schedule-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    {% set day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"] %}
+
+                    {% for day in range(7) %}
+                    {% set sched = weekly_schedule[day] if weekly_schedule and day < weekly_schedule|length else None %}
+                    {% set day_is_open = sched and sched.is_open %}
+
+                    <div class="schedule-day-row">
+                        <div class="schedule-day-header">
+                            <label class="schedule-day-checkbox">
+                                <input type="checkbox" name="day_{{ day }}_open" value="1" {% if day_is_open %}checked{% endif %}>
+                                <strong>{{ day_names[day] }}</strong>
+                            </label>
+                        </div>
+
+                        <div class="schedule-day-times">
+                            <label class="schedule-time-field">
+                                Mañana
+                                <input type="time" name="day_{{ day }}_morning_start"
+                                       value="{{ sched.morning_start if sched and sched.morning_start else '' }}"
+                                       {% if not day_is_open %}disabled{% endif %}>
+                            </label>
+                            <label class="schedule-time-field">
+                                Fin mañana
+                                <input type="time" name="day_{{ day }}_morning_end"
+                                       value="{{ sched.morning_end if sched and sched.morning_end else '' }}"
+                                       {% if not day_is_open %}disabled{% endif %}>
+                            </label>
+                            <label class="schedule-time-field">
+                                Tarde
+                                <input type="time" name="day_{{ day }}_afternoon_start"
+                                       value="{{ sched.afternoon_start if sched and sched.afternoon_start else '' }}"
+                                       {% if not day_is_open %}disabled{% endif %}>
+                            </label>
+                            <label class="schedule-time-field">
+                                Fin tarde
+                                <input type="time" name="day_{{ day }}_afternoon_end"
+                                       value="{{ sched.afternoon_end if sched and sched.afternoon_end else '' }}"
+                                       {% if not day_is_open %}disabled{% endif %}>
+                            </label>
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Guardar horarios</button>
                     </div>
                 </form>
 
@@ -826,6 +914,15 @@
                 }
             );
 
+        document.querySelectorAll('.schedule-day-checkbox input[type="checkbox"]').forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var row = this.closest('.schedule-day-row');
+                var timeInputs = row.querySelectorAll('.schedule-time-field input[type="time"]');
+                timeInputs.forEach(function(input) {
+                    input.disabled = !checkbox.checked;
+                });
+            });
+        });
 
     </script>
 

@@ -630,13 +630,15 @@ def update_business_settings_scoped(
     timezone,
     notifications_enabled=None,
     notification_email=None,
+    slot_duration=None,
+    break_between_slots=None,
 ):
     """Actualiza la configuración de un negocio específico.
 
-    `notifications_enabled` y `notification_email` son opcionales: si se pasan
-    como None, la columna correspondiente NO cambia (COALESCE). La operación
-    está scoped por business_id: un tenant jamás modifica la configuración de
-    otro tenant.
+    `notifications_enabled`, `notification_email`, `slot_duration` y
+    `break_between_slots` son opcionales: si se pasan como None, la columna
+    correspondiente NO cambia (COALESCE). La operación está scoped por
+    business_id: un tenant jamás modifica la configuración de otro tenant.
     """
     connection = get_connection()
     try:
@@ -649,7 +651,9 @@ def update_business_settings_scoped(
                 business_description = ?,
                 timezone = ?,
                 notifications_enabled = COALESCE(?, notifications_enabled),
-                notification_email = COALESCE(?, notification_email)
+                notification_email = COALESCE(?, notification_email),
+                slot_duration = COALESCE(?, slot_duration),
+                break_between_slots = COALESCE(?, break_between_slots)
             WHERE business_id = ?
             """,
             (
@@ -660,7 +664,72 @@ def update_business_settings_scoped(
                 timezone,
                 (1 if notifications_enabled else 0) if notifications_enabled is not None else None,
                 (notification_email or "").strip() if notification_email is not None else None,
+                slot_duration if slot_duration is not None else None,
+                break_between_slots if break_between_slots is not None else None,
                 business_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def get_all_weekly_schedules_scoped(business_id):
+    """Devuelve los horarios semanales de un negocio específico, ordenados por día."""
+    connection = get_connection()
+    try:
+        return connection.execute(
+            """
+            SELECT day_of_week, is_open, morning_start, morning_end,
+                   afternoon_start, afternoon_end
+            FROM weekly_schedules
+            WHERE business_id = ?
+            ORDER BY day_of_week
+            """,
+            (business_id,),
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def update_weekly_schedule_scoped(
+    business_id,
+    day_of_week,
+    is_open,
+    morning_start,
+    morning_end,
+    afternoon_start,
+    afternoon_end,
+):
+    """Actualiza el horario semanal de un día específico para un negocio.
+
+    Si is_open es False, los horarios se establecen en NULL.
+    """
+    connection = get_connection()
+    try:
+        if not is_open:
+            morning_start = None
+            morning_end = None
+            afternoon_start = None
+            afternoon_end = None
+        connection.execute(
+            """
+            UPDATE weekly_schedules
+            SET is_open = ?,
+                morning_start = ?,
+                morning_end = ?,
+                afternoon_start = ?,
+                afternoon_end = ?
+            WHERE business_id = ? AND day_of_week = ?
+            """,
+            (
+                1 if is_open else 0,
+                morning_start,
+                morning_end,
+                afternoon_start,
+                afternoon_end,
+                business_id,
+                day_of_week,
             ),
         )
         connection.commit()

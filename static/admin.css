@@ -920,6 +920,10 @@ tbody tr:hover {
         padding: 25px 18px;
     }
 
+    .settings-form {
+        grid-template-columns: 1fr;
+    }
+
     .stats {
         grid-template-columns: 1fr;
     }
@@ -967,6 +971,19 @@ tbody tr:hover {
         width: 100%;
     }
 
+    .schedule-day-row {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .schedule-day-header {
+        min-width: auto;
+    }
+
+    .schedule-day-times {
+        grid-template-columns: 1fr;
+    }
+
     td {
         padding: 12px 14px;
         font-size: 12px;
@@ -975,6 +992,88 @@ tbody tr:hover {
     th {
         padding: 12px 14px;
     }
+}
+
+.settings-hint-wide {
+    color: #4A6590;
+    font-size: 11px;
+    line-height: 1.4;
+    font-weight: 600;
+    grid-column: 1 / -1;
+}
+
+/* ============================================================
+   HORARIOS SEMANALES
+   ============================================================ */
+
+.schedule-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 24px;
+}
+
+.schedule-day-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 12px 0;
+    border-bottom: 1px solid #EEF6FF;
+}
+
+.schedule-day-row:last-child {
+    border-bottom: 0;
+}
+
+.schedule-day-header {
+    min-width: 100px;
+    padding-top: 4px;
+}
+
+.schedule-day-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    color: #102A56;
+}
+
+.schedule-day-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.schedule-day-times {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    flex: 1;
+}
+
+.schedule-time-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4A6590;
+}
+
+.schedule-time-field input[type="time"] {
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    color: #102A56;
+    font: inherit;
+    padding: 9px 12px;
+    width: 100%;
+    font-size: 13px;
+}
+
+.schedule-time-field input[type="time"]:disabled {
+    background: #F8FAFF;
+    color: #9CA3AF;
 }
 
 /* ============================================================
