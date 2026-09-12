@@ -18,14 +18,24 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from database.database import (
     create_business_with_owner,
     create_invitation,
+    create_membership_scoped,
+    create_password_reset_token,
     create_platform_session,
     create_platform_user,
+    create_user_scoped,
+    consume_invitation_atomically,
+    consume_password_reset_token,
+    consume_staff_invitation_atomically,
     get_invitation_by_token_hash,
+    get_membership_scoped,
+    get_password_reset_token,
     get_platform_user_by_email,
+    get_user_by_email_scoped,
     get_user_by_id_scoped,
     list_members_scoped,
-    consume_invitation_atomically,
     revoke_active_invitations,
+    revoke_all_sessions_scoped,
+    revoke_previous_reset_tokens,
     set_business_pending,
 )
 
@@ -221,3 +231,130 @@ def resend_invitation(business_id, user_id, email):
         hash_token(token), expires_at,
     )
     return token, expires_at
+
+
+# ============================================================
+# RECUPERACIÓN DE CONTRASEÑA (password reset)
+# ============================================================
+
+PASSWORD_RESET_LIFETIME_HOURS = 1
+
+
+def password_reset_expires_iso():
+    delta = datetime.timedelta(hours=PASSWORD_RESET_LIFETIME_HOURS)
+    return (
+        datetime.datetime.now(datetime.timezone.utc) + delta
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def request_password_reset(email):
+    """Genera un token de reset para un usuario existente.
+
+    Devuelve {"success": bool, "reason": str|None, "reset_token": str|None}.
+    El token plaintext se devuelve una sola vez; en DB solo vive el hash.
+    Siempre devuelve success=True aunque el email no exista (no se filtra
+    qué emails están registrados).
+    """
+    user = get_user_by_email_scoped(email)
+    if user is None:
+        return {"success": True, "reason": None, "reset_token": None}
+    token = secrets.token_urlsafe(32)
+    expires_at = password_reset_expires_iso()
+    create_password_reset_token(
+        user["id"], hash_token(token), expires_at,
+    )
+    return {"success": True, "reason": None, "reset_token": token}
+
+
+def get_reset_token(token):
+    """Devuelve el token de reset activo (o None si vencido/usado)."""
+    return get_password_reset_token(hash_token(token))
+
+
+def reset_password(token, password):
+    """Consume un token de reset y establece la contraseña.
+
+    Revoca todas las sesiones activas existentes del usuario tras un reset
+    exitoso, invalidando acceso previo comprometido.
+
+    Devuelve {"success": bool, "reason": str|None, "user_id": int|None}.
+    """
+    if not password or len(password) < 12:
+        return {"success": False, "reason": "weak_password", "user_id": None}
+    user_id = consume_password_reset_token(hash_token(token), generate_password_hash(password))
+    if user_id is None:
+        return {"success": False, "reason": "invalid_token", "user_id": None}
+    revoke_all_sessions_scoped(user_id)
+    return {"success": True, "reason": None, "user_id": user_id}
+
+
+# ============================================================
+# INVITACIÓN DE STAFF/ADMIN (reutiliza invitations)
+# ============================================================
+
+STAFF_INVITATION_ROLES = {"admin", "staff"}
+
+
+def create_staff_invitation(business_id, email, role_name, actor_user_id=None):
+    """Crea una invitación de staff/admin para un negocio existente.
+
+    Si el usuario no existe, se crea inactivo (active=0) pendiente de que
+    acepte la invitación. Si ya existe como miembro del negocio, se revocan
+    sus invitaciones activas y se genera una nueva.
+
+    `actor_user_id` (opcional): si se provee, se verifica que el actor sea
+    OWNER del negocio (no admin) y que no se invite a sí mismo.
+
+    Devuelve {"success": bool, "reason": str|None, "invitation_token": str|None}.
+    """
+    if role_name not in STAFF_INVITATION_ROLES:
+        return {"success": False, "reason": "invalid_role", "invitation_token": None}
+
+    if actor_user_id is not None:
+        membership = get_membership_scoped(actor_user_id, business_id)
+        if not membership or membership["role_name"] != "owner":
+            return {"success": False, "reason": "forbidden", "invitation_token": None}
+
+    email = (email or "").strip().lower()
+    target_user = get_user_by_email_scoped(email)
+    if target_user is not None and actor_user_id is not None:
+        if target_user["id"] == actor_user_id:
+            return {"success": False, "reason": "cannot_invite_yourself", "invitation_token": None}
+
+    if target_user is None:
+        placeholder_hash = generate_password_hash(secrets.token_urlsafe(24))
+        user_id = create_user_scoped(email, placeholder_hash, active=False)
+        if user_id is None:
+            return {"success": False, "reason": "user_creation_failed", "invitation_token": None}
+    else:
+        user_id = target_user["id"]
+
+    token = secrets.token_urlsafe(32)
+    expires_at = _invitation_expires_iso()
+    if target_user is not None:
+        revoke_active_invitations(business_id, user_id)
+    create_invitation(
+        business_id, user_id, email, role_name,
+        hash_token(token), expires_at,
+    )
+    return {"success": True, "reason": None, "invitation_token": token}
+
+
+def get_staff_invitation_for_business(business_id, token):
+    """Devuelve la invitación activa de staff/admin para un negocio (o None)."""
+    return get_invitation_by_token_hash(business_id, hash_token(token))
+
+
+def accept_staff_invitation(business_id, token, password):
+    """Un staff/admin acepta la invitación: establece contraseña y crea membership.
+
+    Devuelve {"success": bool, "reason": str|None, "user_id": int|None}.
+    """
+    if not password or len(password) < 12:
+        return {"success": False, "reason": "weak_password", "user_id": None}
+    result = consume_staff_invitation_atomically(
+        business_id, hash_token(token), generate_password_hash(password),
+    )
+    if result is None:
+        return {"success": False, "reason": "invalid_token", "user_id": None}
+    return {"success": True, "reason": None, "user_id": result["user_id"]}

@@ -19,7 +19,7 @@
 </head>
 
 
-<body>
+<body{% set bs = business_settings %}{% if bs %} style="{% if bs['primary_color'] %}--tb-primary: {{ bs['primary_color'] }}; --tb-primary-hover: color-mix(in srgb, {{ bs['primary_color'] }} 85%, #000);{% endif %}{% if bs['secondary_color'] %} --tb-secondary: {{ bs['secondary_color'] }};{% endif %}{% if bs['logo_url'] %} --brand-logo-url: url('{{ bs['logo_url'] }}');{% endif %}"{% endif %}>
 
     <a class="skip-link" href="#main-content">Saltar al contenido</a>
 
@@ -379,6 +379,34 @@
                     <p class="settings-hint">
                         Cada reserva nueva también avisa a este email del negocio
                         (separado del cliente). Vacío = sin avisos al negocio.
+                    </p>
+
+                    <hr class="settings-divider">
+
+                    <h4 class="settings-subheading">Identidad visual</h4>
+
+                    <label class="settings-wide">
+                        Logo (URL)
+                        <input type="url" name="logo_url" value="{{ business_settings['logo_url'] if business_settings else '' }}" placeholder="https://ejemplo.com/logo.png">
+                    </label>
+                    <p class="settings-hint">
+                        URL de la imagen del logo. Se muestra en el sitio público y en los emails.
+                    </p>
+
+                    <label>
+                        Color primario
+                        <input type="color" name="primary_color" value="{{ business_settings['primary_color'] if business_settings and business_settings['primary_color'] else '#1463FF' }}">
+                    </label>
+                    <p class="settings-hint">
+                        Color principal de la interfaz y botones.
+                    </p>
+
+                    <label>
+                        Color secundario
+                        <input type="color" name="secondary_color" value="{{ business_settings['secondary_color'] if business_settings and business_settings['secondary_color'] else '#0B1B3A' }}">
+                    </label>
+                    <p class="settings-hint">
+                        Color secundario para acentos y encabezados.
                     </p>
 
                     <div class="settings-actions">

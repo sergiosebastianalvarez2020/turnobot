@@ -355,7 +355,9 @@ def get_business_settings():
             """
             SELECT business_name, business_type, business_initials,
                    business_description, timezone,
-                   slot_duration, break_between_slots
+                   slot_duration, break_between_slots,
+                   notifications_enabled, notification_email,
+                   logo_url, primary_color, secondary_color
             FROM business_settings
             WHERE id = 1
             """
@@ -611,7 +613,8 @@ def get_business_settings_scoped(business_id):
             SELECT business_name, business_type, business_initials,
                    business_description, timezone,
                    slot_duration, break_between_slots,
-                   notifications_enabled, notification_email
+                   notifications_enabled, notification_email,
+                   logo_url, primary_color, secondary_color
             FROM business_settings
             WHERE business_id = ?
             """,
@@ -632,13 +635,17 @@ def update_business_settings_scoped(
     notification_email=None,
     slot_duration=None,
     break_between_slots=None,
+    logo_url=None,
+    primary_color=None,
+    secondary_color=None,
 ):
     """Actualiza la configuración de un negocio específico.
 
-    `notifications_enabled`, `notification_email`, `slot_duration` y
-    `break_between_slots` son opcionales: si se pasan como None, la columna
-    correspondiente NO cambia (COALESCE). La operación está scoped por
-    business_id: un tenant jamás modifica la configuración de otro tenant.
+    `notifications_enabled`, `notification_email`, `slot_duration`,
+    `break_between_slots`, `logo_url`, `primary_color` y `secondary_color` son
+    opcionales: si se pasan como None, la columna correspondiente NO cambia
+    (COALESCE). La operación está scoped por business_id: un tenant jamás
+    modifica la configuración de otro tenant.
     """
     connection = get_connection()
     try:
@@ -653,7 +660,10 @@ def update_business_settings_scoped(
                 notifications_enabled = COALESCE(?, notifications_enabled),
                 notification_email = COALESCE(?, notification_email),
                 slot_duration = COALESCE(?, slot_duration),
-                break_between_slots = COALESCE(?, break_between_slots)
+                break_between_slots = COALESCE(?, break_between_slots),
+                logo_url = COALESCE(?, logo_url),
+                primary_color = COALESCE(?, primary_color),
+                secondary_color = COALESCE(?, secondary_color)
             WHERE business_id = ?
             """,
             (
@@ -666,6 +676,9 @@ def update_business_settings_scoped(
                 (notification_email or "").strip() if notification_email is not None else None,
                 slot_duration if slot_duration is not None else None,
                 break_between_slots if break_between_slots is not None else None,
+                (logo_url or "").strip() if logo_url is not None else None,
+                (primary_color or "").strip() if primary_color is not None else None,
+                (secondary_color or "").strip() if secondary_color is not None else None,
                 business_id,
             ),
         )
@@ -2007,5 +2020,182 @@ def set_user_active(user_id, active):
             (1 if active else 0, user_id),
         )
         connection.commit()
+    finally:
+        connection.close()
+
+
+# ============================================================
+# PASSWORD RESET TOKENS
+#
+# Separados de `invitations`: los tokens de reset no tienen semántica de
+# negocio/rol, aplican a cualquier usuario activo y son de un solo uso.
+# El token siempre se guarda con hash SHA-256; el plaintext viaja solo en
+# el email al destinatario correcto.
+# ============================================================
+
+
+def create_password_reset_token(user_id, token_hash, expires_at):
+    """Crea un token de recuperación de contraseña. Devuelve el id creado."""
+    connection = get_connection()
+    try:
+        revoke_previous_reset_tokens(user_id)
+        cursor = connection.execute(
+            """
+            INSERT INTO password_reset_tokens
+            (user_id, token_hash, expires_at, used_at, created_at)
+            VALUES (?, ?, ?, NULL, CURRENT_TIMESTAMP)
+            """,
+            (user_id, token_hash, expires_at),
+        )
+        connection.commit()
+        return cursor.lastrowid
+    finally:
+        connection.close()
+
+
+def revoke_previous_reset_tokens(user_id):
+    """Marca como usados todos los tokens anteriores de un usuario (solo uno activo)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            """UPDATE password_reset_tokens
+               SET used_at = datetime('now')
+               WHERE user_id = ? AND used_at IS NULL""",
+            (user_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def get_password_reset_token(token_hash):
+    """Devuelve el token de reset activo por hash (no usado, sin expirar)."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT prt.*, u.email AS user_email
+            FROM password_reset_tokens prt
+            JOIN users u ON u.id = prt.user_id
+            WHERE prt.token_hash = ?
+              AND prt.used_at IS NULL
+              AND prt.expires_at > datetime('now')
+            """,
+            (token_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
+def consume_password_reset_token(token_hash, password_hash):
+    """Consume un token de reset, establece la contraseña y marca el token como usado.
+
+    El UPDATE condicional es el lock lógico: exactamente una conexión puede
+    obtener rowcount=1 para un token vigente. Devuelve el user_id o None.
+    """
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT user_id FROM password_reset_tokens
+               WHERE token_hash = ?
+                 AND used_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            return None
+        cursor = connection.execute(
+            """UPDATE password_reset_tokens
+               SET used_at = datetime('now')
+               WHERE token_hash = ?
+                 AND used_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (token_hash,),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        cursor = connection.execute(
+            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            (password_hash, row["user_id"]),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        connection.commit()
+        return row["user_id"]
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+# ============================================================
+# STAFF INVITATIONS (reutiliza la tabla invitations)
+#
+# La tabla `invitations` ya soporta role_name, por lo que se reutiliza para
+# invitaciones de staff/admin. La diferencia con el owner:
+# - El usuario puede no existir todavía → se crea inactivo (active=0)
+# - Al aceptar la invitación, se crea la membership con el rol indicado
+# ============================================================
+
+
+def consume_staff_invitation_atomically(business_id, token_hash, password_hash):
+    """Consume una invitación de staff/admin y crea la membership.
+
+    A diferencia de `consume_invitation_atomically` (owner), aquí:
+    - Se activa el usuario (active=1)
+    - Se establece la contraseña
+    - Se crea la membership (business_users) con el role_name de la invitación
+
+    Devuelve {"user_id": int, "role_name": str} o None si el token no es válido.
+    """
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT user_id, role_name FROM invitations
+               WHERE business_id = ? AND token_hash = ?
+                 AND used_at IS NULL AND revoked_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (business_id, token_hash),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            return None
+        cursor = connection.execute(
+            """UPDATE invitations SET used_at = datetime('now')
+               WHERE business_id = ? AND token_hash = ?
+                 AND used_at IS NULL AND revoked_at IS NULL
+                 AND expires_at > datetime('now')""",
+            (business_id, token_hash),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        connection.execute(
+            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            (password_hash, row["user_id"]),
+        )
+        role_id = connection.execute(
+            "SELECT id FROM roles WHERE name = ?", (row["role_name"],),
+        ).fetchone()
+        if role_id is None:
+            connection.rollback()
+            return None
+        connection.execute(
+            """INSERT OR IGNORE INTO business_users (user_id, business_id, role_id)
+               VALUES (?, ?, ?)""",
+            (row["user_id"], business_id, role_id["id"]),
+        )
+        connection.commit()
+        return {"user_id": row["user_id"], "role_name": row["role_name"]}
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()

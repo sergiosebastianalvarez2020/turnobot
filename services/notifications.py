@@ -565,3 +565,103 @@ def send_approved_invitation_email(owner_email, business_name, invitation_link, 
     if not ok:
         logger.error("EMAIL 2 falló a %s: %s", owner_email, detail)
     return ok, None if ok else "send_failed"
+
+
+def send_staff_invitation_email(staff_email, invitation_link, business_name, role_name):
+    """EMAIL 3: invitación de staff/admin a un negocio existente.
+
+    El owner invita a un staff/admin por email. El destinatario recibe un enlace
+    para establecer su contraseña y activar su cuenta. El token viaja solo en
+    este email; la aplicación NUNCA loguea el token.
+
+    Devuelve (sent: bool, reason: str|None).
+    """
+    business_name = business_name or "Mi negocio"
+    role_label = "administrador" if role_name == "admin" else "miembro del equipo"
+    lifetime = platform_service_invitation_lifetime()
+    text = (
+        f"Hola,\n\n"
+        f"El dueño de {business_name} te invitó a unirte como {role_label}.\n"
+        "Configurá tu contraseña con este enlace:\n"
+        f"{invitation_link}\n\n"
+        f"El enlace es de un solo uso y vence en {lifetime} horas.\n\n"
+        "Saludos,\nTurnoBot"
+    )
+    html = (
+        f"<h2>Invitación a {business_name}</h2>"
+        f"<p>Hola,</p>"
+        f"<p>El dueño de <strong>{business_name}</strong> te invitó a unirte "
+        f"como <strong>{role_label}</strong>.</p>"
+        f'<p><a href="{invitation_link}" '
+        f'style="background:#1463FF;color:#fff;padding:10px 18px;'
+        f'border-radius:8px;text-decoration:none;">Configurar mi contraseña</a></p>'
+        f"<p>El enlace es de un solo uso y vence en {lifetime} horas.</p>"
+        f"<p>Saludos,<br>TurnoBot</p>"
+    )
+    subject = f"Invitación a {business_name} - configurá tu acceso"
+    ok, detail = _send_email(staff_email, subject, html, text)
+    if not ok:
+        logger.error("EMAIL 3 falló a %s: %s", staff_email, detail)
+    return ok, None if ok else "send_failed"
+
+
+def send_password_reset_email(user_email, reset_link, business_name=""):
+    """EMAIL 4: recuperación de contraseña.
+
+    El usuario solicita reset por email y recibe un enlace de un solo uso para
+    establecer una nueva contraseña. El token viaja solo en este email; la
+    aplicación NUNCA loguea el token.
+
+    Devuelve (sent: bool, reason: str|None).
+    """
+    business_name = business_name or "nuestro servicio"
+    lifetime = platform_service_reset_lifetime()
+    text = (
+        f"Hola,\n\n"
+        f"Recibimos una solicitud de recuperación de contraseña para {business_name}.\n"
+        "Si sos vos hacé clic en el siguiente enlace para establecer una nueva contraseña:\n"
+        f"{reset_link}\n\n"
+        f"El enlace es de un solo uso y vence en {lifetime} hora(s).\n"
+        "Si no solicitaste el cambio, ignorá este email.\n\n"
+        "Saludos,\nTurnoBot"
+    )
+    html = (
+        f"<h2>Recuperación de contraseña</h2>"
+        f"<p>Hola,</p>"
+        f"<p>Recibimos una solicitud de recuperación de contraseña.</p>"
+        f'<p><a href="{reset_link}" '
+        f'style="background:#1463FF;color:#fff;padding:10px 18px;'
+        f'border-radius:8px;text-decoration:none;">Restablecer mi contraseña</a></p>'
+        f"<p>El enlace es de un solo uso y vence en {lifetime} hora(s).</p>"
+        f"<p>Si no solicitaste el cambio, ignorá este email.</p>"
+        f"<p>Saludos,<br>TurnoBot</p>"
+    )
+    subject = f"Recuperación de contraseña - {business_name[:80]}"
+    ok, detail = _send_email(user_email, subject, html, text)
+    if not ok:
+        logger.error("EMAIL 4 (reset) falló a %s: %s", user_email, detail)
+    return ok, None if ok else "send_failed"
+
+
+def platform_service_invitation_lifetime():
+    """Import perezoso de INVITATION_LIFETIME_HOURS desde platform_service.
+
+    Evita el import circular: notifications.py es importado por platform.py.
+    """
+    try:
+        from services.platform import invitation_lifetime_hours
+        return invitation_lifetime_hours()
+    except Exception:
+        return 72
+
+
+def platform_service_reset_lifetime():
+    """Import perezoso de PASSWORD_RESET_LIFETIME_HOURS desde platform_service.
+
+    Evita el import circular: notifications.py es importado por platform.py.
+    """
+    try:
+        from services.platform import PASSWORD_RESET_LIFETIME_HOURS
+        return PASSWORD_RESET_LIFETIME_HOURS
+    except Exception:
+        return 1

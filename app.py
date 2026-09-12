@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from logging.handlers import RotatingFileHandler
 import hashlib
@@ -17,7 +18,13 @@ from flask import Flask, abort, g, render_template, request, jsonify, session, r
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from services.ai import ask_ai
-from services.notifications import send_confirmation_email, smtp_configured, notifications_enabled
+from services.notifications import (
+    send_confirmation_email,
+    send_password_reset_email,
+    send_staff_invitation_email,
+    smtp_configured,
+    notifications_enabled,
+)
 from services.knowledge import (
     get_knowledge_scoped,
     search_knowledge_scoped,
@@ -227,6 +234,19 @@ def inject_admin_prefix():
     return {"admin_prefix": admin_prefix}
 
 
+def _settings_value(settings, key, default=""):
+    """Acceso seguro a una clave de settings (dict o sqlite3.Row).
+
+    sqlite3.Row no soporta .get(); usa [] con try/except KeyError.
+    """
+    if not settings:
+        return default
+    try:
+        return settings[key] or default
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 @app.context_processor
 def inject_business_settings():
     business_id = get_current_business_id()
@@ -237,11 +257,14 @@ def inject_business_settings():
     )
     return {
         "business_settings": settings,
-        "business_name": settings["business_name"] if settings else "Mi negocio",
-        "business_type": settings["business_type"] if settings else "Negocio",
-        "business_initials": settings["business_initials"] if settings else "",
-        "business_description": settings["business_description"] if settings else "",
-        "timezone": settings["timezone"] if settings else "UTC",
+        "business_name": _settings_value(settings, "business_name", "Mi negocio"),
+        "business_type": _settings_value(settings, "business_type", "Negocio"),
+        "business_initials": _settings_value(settings, "business_initials", ""),
+        "business_description": _settings_value(settings, "business_description", ""),
+        "timezone": _settings_value(settings, "timezone", "UTC"),
+        "logo_url": _settings_value(settings, "logo_url", ""),
+        "primary_color": _settings_value(settings, "primary_color", ""),
+        "secondary_color": _settings_value(settings, "secondary_color", ""),
     }
 
 MAX_MESSAGE_LENGTH = 1_000
@@ -267,6 +290,11 @@ def build_public_frontend_config(settings=None):
             "timezone": value("timezone", "UTC"),
             "notifications_enabled": bool(value("notifications_enabled", 0)),
         },
+        "branding": {
+            "logo_url": value("logo_url", ""),
+            "primary_color": value("primary_color", "#1463FF"),
+            "secondary_color": value("secondary_color", "#0B1B3A"),
+        },
         "content": {
             "welcome_label": "BIENVENIDO A {business_name}",
             "welcome_title": "Tu próxima visita empieza acá.",
@@ -280,8 +308,8 @@ def build_public_frontend_config(settings=None):
             ],
         },
         "theme": {
-            "primary": "#1463FF",
-            "secondary": "#0B1B3A",
+            "primary": value("primary_color", "#1463FF"),
+            "secondary": value("secondary_color", "#0B1B3A"),
             "background": "#EAF4FF",
             "text": "#102A56",
             "font_family": "DM Sans",
@@ -771,6 +799,184 @@ def logout_slug(slug):
 
 
 # ============================================================
+# PASSWORD RESET (usuario de negocio)
+# ============================================================
+
+FORGOT_REQUEST_LIMIT = 5
+
+
+@app.route("/forgot", methods=["GET", "POST"])
+def forgot_password():
+    """Formulario público para solicitar recuperación de contraseña."""
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return "Solicitud no válida", 400
+        if not _is_request_allowed(_rate_limit_key("forgot", get_client_ip()), FORGOT_REQUEST_LIMIT):
+            return redirect(url_for("forgot_password", sent="1"))
+        email = (request.form.get("email", "") or "").strip().lower()
+        if email:
+            result = platform_service.request_password_reset(email)
+            token = result.get("reset_token")
+            if token:
+                business = g.current_business
+                business_name = (
+                    business["name"] if business else "nuestro servicio"
+                )
+                reset_link = request.url_root.rstrip("/") + url_for("reset_password", token=token)
+                send_password_reset_email(email, reset_link, business_name)
+        return redirect(url_for("forgot_password", sent="1"))
+    business = g.current_business
+    business_settings = (
+        get_business_settings_scoped(business["id"]) if business else get_business_settings()
+    )
+    business_name = (
+        business_settings["business_name"] if business_settings and business_settings["business_name"]
+        else "Mi negocio"
+    )
+    return render_template(
+        "forgot.html",
+        business_name=business_name,
+        sent=request.args.get("sent") == "1",
+    )
+
+
+@app.route("/reset/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    """Establece una nueva contraseña usando el token de reset."""
+    reset_token = platform_service.get_reset_token(token)
+    if reset_token is None:
+        return render_template("reset.html", invalid=True), 404
+
+    if request.method == "GET":
+        return render_template(
+            "reset.html",
+            invalid=False,
+            email=reset_token["user_email"],
+        )
+
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    password = request.form.get("password", "")
+    password2 = request.form.get("password2", "")
+    if password != password2:
+        return render_template(
+            "reset.html", invalid=False, email=reset_token["user_email"],
+            error="Las contraseñas no coinciden.",
+        ), 200
+
+    result = platform_service.reset_password(token, password)
+    if not result["success"]:
+        if result["reason"] == "weak_password":
+            error = "La contraseña debe tener al menos 12 caracteres."
+        else:
+            error = "Enlace no válido o vencido."
+        return render_template("reset.html", invalid=False, email="", error=error), 200
+
+    return redirect(url_for("login"))
+
+
+# ============================================================
+# INVITACIÓN DE STAFF/ADMIN (owner invita staff)
+# ============================================================
+
+@app.route("/admin/usuarios/invitar-enlace", methods=["POST"])
+@app.route("/b/<slug>/admin/usuarios/invitar-enlace", methods=["POST"])
+def admin_usuarios_invitar_enlace(slug=None):
+    """El owner invita a un staff/admin por email (invitación con link)."""
+    denied = _admin_usuarios_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    actor_user_id = session.get("user_id")
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    email = (request.form.get("email", "") or "").strip().lower()
+    role_name = request.form.get("role_name", "").strip()
+
+    if not email:
+        return redirect(_usuarios_url(usuarios_error="El email es obligatorio."))
+    if role_name not in ("admin", "staff"):
+        return redirect(_usuarios_url(usuarios_error="Rol no permitido."))
+
+    result = platform_service.create_staff_invitation(business_id, email, role_name, actor_user_id=actor_user_id)
+    if not result["success"]:
+        if result["reason"] == "forbidden":
+            return redirect(_usuarios_url(usuarios_error="Solo el owner puede invitar staff."))
+        if result["reason"] == "cannot_invite_yourself":
+            return redirect(_usuarios_url(usuarios_error="No podés invitarte a vos mismo."))
+        return redirect(_usuarios_url(usuarios_error="No se pudo crear la invitación."))
+
+    token = result["invitation_token"]
+    business = platform_service.get_business_by_id_platform(business_id)
+    business_name = business["name"] if business else "tu negocio"
+    invitation_link = request.url_root.rstrip("/") + url_for(
+        "staff_invitation", slug=g.current_business["slug"], token=token,
+    )
+    sent, reason = send_staff_invitation_email(
+        email, invitation_link, business_name, role_name,
+    )
+    if not sent and reason != "disabled":
+        return redirect(_usuarios_url(usuarios_error="No se pudo enviar el email de invitación."))
+    return redirect(_usuarios_url(usuarios_message="Invitación enviada a " + email + "."))
+
+
+@app.route("/b/<slug>/invitacion-staff/<token>", methods=["GET", "POST"])
+def staff_invitation(slug, token):
+    """Página pública donde el staff/admin acepta la invitación."""
+    business = g.current_business
+    if business is None or business.get("slug") != slug:
+        abort(404)
+
+    invitation = platform_service.get_staff_invitation_for_business(business["id"], token)
+    if invitation is None:
+        return render_template("staff_invitation.html", business_name=business["name"], invalid=True), 404
+
+    if request.method == "GET":
+        return render_template(
+            "staff_invitation.html",
+            business_name=business["name"],
+            invitation=invitation,
+            error=None,
+            invalid=False,
+        )
+
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+
+    password = request.form.get("password", "")
+    password2 = request.form.get("password2", "")
+    if password != password2:
+        return render_template(
+            "staff_invitation.html",
+            business_name=business["name"],
+            invitation=invitation,
+            error="Las contraseñas no coinciden.",
+            invalid=False,
+        ), 200
+
+    result = platform_service.accept_staff_invitation(business["id"], token, password)
+    if not result["success"]:
+        if result["reason"] == "weak_password":
+            error = "La contraseña debe tener al menos 12 caracteres."
+        else:
+            error = "Enlace no válido o vencido."
+        return render_template(
+            "staff_invitation.html",
+            business_name=business["name"],
+            invitation=invitation,
+            error=error,
+            invalid=False,
+        ), 200
+
+    return redirect(url_for("login_slug", slug=business["slug"]))
+
+
+# ============================================================
 # SUPERADMIN — Capa HTTP sobre services.platform
 # ============================================================
 
@@ -1072,8 +1278,11 @@ def _render_admin():
             "timezone": "UTC",
             "slot_duration": 60,
             "break_between_slots": 0,
-            "notifications_enabled": 0,
-            "notification_email": "",
+             "notifications_enabled": 0,
+             "notification_email": "",
+             "logo_url": "",
+             "primary_color": "",
+             "secondary_color": "",
         }
     services = get_all_services_scoped(business_id)
     onboarding = product.get_onboarding_state(business_id, settings, services)
@@ -1235,6 +1444,9 @@ def admin_update_business_settings(slug=None):
     notification_email = request.form.get("notification_email", "").strip()
     slot_duration_raw = request.form.get("slot_duration", "").strip()
     break_between_slots_raw = request.form.get("break_between_slots", "").strip()
+    logo_url = request.form.get("logo_url", "").strip()
+    primary_color = request.form.get("primary_color", "").strip()
+    secondary_color = request.form.get("secondary_color", "").strip()
 
     if not business_name or not business_type or not business_initials:
         return redirect(_admin_url(
@@ -1273,6 +1485,26 @@ def admin_update_business_settings(slug=None):
                 config_error="El intervalo entre turnos no puede ser negativo.",
             ))
 
+    _HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
+    if primary_color and not _HEX_COLOR_RE.match(primary_color):
+        return redirect(_admin_url(
+            config_error="El color primario debe ser un HEX válido (#RRGGBB).",
+        ))
+    if secondary_color and not _HEX_COLOR_RE.match(secondary_color):
+        return redirect(_admin_url(
+            config_error="El color secundario debe ser un HEX válido (#RRGGBB).",
+        ))
+    if logo_url:
+        logo_lower = logo_url.lower()
+        if not (logo_lower.startswith("http://") or logo_lower.startswith("https://")):
+            return redirect(_admin_url(
+                config_error="El logo debe ser una URL válida (http/https).",
+            ))
+        if " " in logo_url:
+            return redirect(_admin_url(
+                config_error="El logo no debe contener espacios.",
+            ))
+
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
@@ -1287,6 +1519,9 @@ def admin_update_business_settings(slug=None):
         notification_email=notification_email,
         slot_duration=slot_duration,
         break_between_slots=break_between_slots,
+        logo_url=logo_url,
+        primary_color=primary_color,
+        secondary_color=secondary_color,
     )
 
     return redirect(_admin_url(

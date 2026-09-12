@@ -192,6 +192,16 @@ body::after {
     flex-shrink: 0;
 }
 
+.brand-logo {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    border-radius: 14px;
+    background: var(--primary);
+    padding: 4px;
+    box-shadow: var(--shadow-blue);
+}
+
 .brand-info h1 {
     font-size: 22px;
     font-weight: 700;

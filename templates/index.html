@@ -39,7 +39,11 @@
             <div class="brand">
 
                 <div class="brand-mark">
+                    {% if public_frontend_config.branding.logo_url %}
+                    <img src="{{ public_frontend_config.branding.logo_url }}" alt="Logo" class="brand-logo">
+                    {% else %}
                     <span>{{ public_frontend_config.business.initials }}</span>
+                    {% endif %}
                 </div>
 
                 <div class="brand-info">
