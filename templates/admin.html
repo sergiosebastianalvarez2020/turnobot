@@ -147,13 +147,145 @@
                  ESTADÍSTICAS
                  ================================================= -->
 
-            {% if not onboarding.business_configured or not onboarding.has_service %}
-            <section class="settings-card" aria-labelledby="start-title">
-                <h3 id="start-title">Primeros pasos</h3>
-                <p>{% if not onboarding.business_configured %}Configurá los datos de tu negocio{% elif not onboarding.has_service %}Agregá al menos un servicio{% endif %} para empezar a recibir turnos.</p>
-                <a class="refresh-button" href="#configuracion">Configurar ahora</a>
+            <!-- =================================================
+                 ONBOARDING CHECKLIST
+                 ================================================= -->
+
+            {% if not onboarding.all_completed %}
+            <section class="settings-card" aria-labelledby="onboarding-title">
+                <div class="section-header">
+                    <div>
+                        <h3 id="onboarding-title">Prepará tu negocio</h3>
+                        <p>Completá estos pasos para que el sistema funcione de punta a punta.</p>
+                    </div>
+                    <div class="onboarding-progress">
+                        {{ onboarding.completed_count }}/{{ onboarding.total_steps }} pasos
+                    </div>
+                </div>
+
+                <div class="onboarding-steps">
+                    {% for step in onboarding.steps %}
+                    <div class="onboarding-step {% if step.completed %}completed{% endif %}">
+                        <div class="onboarding-step-icon">
+                            {% if step.completed %}✅{% elif step.skippable %}⏭️{% else %}○{% endif %}
+                        </div>
+                        <div class="onboarding-step-content">
+                            <span class="onboarding-step-label">{{ step.label }}</span>
+                            {% if step.completed %}
+                            <span class="onboarding-step-status done">Completado</span>
+                            {% elif step.skippable %}
+                            <span class="onboarding-step-status optional">Opcional</span>
+                            {% else %}
+                            <span class="onboarding-step-status pending">Pendiente</span>
+                            {% endif %}
+                        </div>
+                        <a href="{% if step.page %}{{ admin_prefix or '' }}/admin/conocimiento{% else %}#{{ step.anchor }}{% endif %}" class="onboarding-step-link">{{ step.action_text }}</a>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                {% if onboarding.all_completed %}
+                <div class="settings-feedback settings-success" role="status">
+                    ¡Todo listo! Tu negocio está operativo en
+                    <strong>{{ request.host_url.rstrip('/') }}{{ admin_prefix or '' }}/</strong>
+                </div>
+                {% else %}
+                <a class="refresh-button" href="{% if onboarding.steps %}{% if onboarding.steps[0].page %}{{ admin_prefix or '' }}/admin/conocimiento{% else %}#{{ onboarding.steps[0].anchor }}{% endif %}{% else %}#configuracion{% endif %}">
+                    Configurar ahora
+                </a>
+                {% endif %}
             </section>
-            {% endif %}
+            {% else %}
+            <section class="settings-card" aria-labelledby="ready-title">
+                <div class="section-header">
+                    <div>
+                        <h3 id="ready-title">¡Listo!</h3>
+                    </div>
+                </div>
+                <div class="settings-feedback settings-success" role="status">
+                    Tu negocio está completamente configurado y operativo.
+                </div>
+            </section>
+             {% endif %}
+
+             <!-- =================================================
+                  SMTP SETUP GUIDE
+                  ================================================= -->
+
+             {% if not smtp_configured %}
+
+             <section class="settings-card" aria-labelledby="smtp-title">
+
+                 <div class="section-header">
+                     <div>
+                         <h3 id="smtp-title">Configuración de email (SMTP)</h3>
+                         <p>Las notificaciones de turnos y recordatorios se envían por email.</p>
+                     </div>
+                 </div>
+
+                 <div class="settings-feedback settings-error" role="alert">
+                     El email no está configurado. Las notificaciones no se enviarán.
+                 </div>
+
+                 <div class="smtp-instructions">
+
+                     <h4>Variables de entorno requeridas</h4>
+
+                     <table class="smtp-table">
+
+                         <thead>
+
+                             <tr>
+                                 <th>Variable</th>
+                                 <th>Descripción</th>
+                                 <th>Ejemplo</th>
+                             </tr>
+
+                         </thead>
+
+                         <tbody>
+
+                             <tr>
+                                 <td><code>SMTP_HOST</code></td>
+                                 <td>Servidor SMTP</td>
+                                 <td><code>smtp.gmail.com</code></td>
+                             </tr>
+
+                             <tr>
+                                 <td><code>SMTP_PORT</code></td>
+                                 <td>Puerto (default 587)</td>
+                                 <td><code>587</code></td>
+                             </tr>
+
+                             <tr>
+                                 <td><code>SMTP_USER</code></td>
+                                 <td>Usuario / email remitente</td>
+                                 <td><code>turnos@mi-negocio.com</code></td>
+                             </tr>
+
+                             <tr>
+                                 <td><code>SMTP_PASSWORD</code></td>
+                                 <td>Contraseña o token de app</td>
+                                 <td>********</td>
+                             </tr>
+
+                         </tbody>
+
+                     </table>
+
+                     <p class="smtp-note">
+                         Reinicia el servidor después de configurar las variables.
+                     </p>
+
+                 </div>
+
+             </section>
+
+             {% endif %}
+
+             <!-- =================================================
+                  ESTADÍSTICAS
+                  ================================================= -->
 
             <section class="stats">
 
@@ -487,7 +619,7 @@
             </section>
 
 
-            <section class="settings-card services-admin-card">
+            <section class="settings-card services-admin-card" id="servicios">
 
                 <div class="section-header">
                     <div>

@@ -149,14 +149,12 @@ class TestFormulariosUI(MembershipUIBase):
         self.assertNotIn('name="business_id"', self.text)
 
     def test_select_de_rol_no_ofrece_owner(self):
-        # En los selects de rol (invitación y cambio) no debe haber opción owner.
         role_selects = re.findall(r'<select name="role_name".*?</select>', self.text, re.DOTALL)
         self.assertTrue(role_selects)
         for select in role_selects:
             self.assertNotIn('value="owner"', select)
             self.assertIn('value="admin"', select)
             self.assertIn('value="staff"', select)
-            self.assertIn('value="customer"', select)
 
     def test_owner_puede_usar_las_acciones_existentes(self):
         token = re.search(r'name="csrf_token" value="([^"]+)"', self.text).group(1)

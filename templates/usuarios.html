@@ -165,11 +165,59 @@
                     </div>
                 </form>
 
-                <p class="invite-note">
-                    El invitado podrá acceder a este negocio según el rol asignado.
-                </p>
+             <p class="invite-note">
+                 El invitado podrá acceder a este negocio según el rol asignado.
+             </p>
 
-            </section>
+             </section>
+
+
+             {% if is_owner %}
+
+
+             <!-- =================================================
+                  INVITAR STAFF POR LINK
+                  ================================================= -->
+
+
+             <section class="settings-card">
+
+                 <div class="section-header">
+                     <div>
+                         <h3>Invitar staff por link</h3>
+                         <p>Generá un link de invitación para un nuevo miembro del equipo.</p>
+                     </div>
+                 </div>
+
+                 <form method="POST" action="{{ admin_prefix or '' }}/admin/usuarios/invitar-enlace" class="settings-form">
+                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                     <label>
+                         Email
+                         <input type="email" name="email" required placeholder="nombre@ejemplo.com">
+                     </label>
+
+                     <label>
+                         Rol
+                         <select name="role_name" class="member-role-select">
+                             <option value="admin">Admin</option>
+                             <option value="staff">Staff</option>
+                         </select>
+                     </label>
+
+                     <div class="settings-actions">
+                         <button type="submit" class="refresh-button">Enviar invitación</button>
+                     </div>
+                 </form>
+
+                 <p class="invite-note">
+                     El invitado recibirá un email con el link para unirse.
+                 </p>
+
+             </section>
+
+
+             {% endif %}
 
 
             <!-- =================================================

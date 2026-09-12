@@ -212,7 +212,12 @@
                         <tbody>
                             {% for conv in conversations %}
                             <tr class="{% if conv.needs_human %}needs-human{% endif %}">
-                                <td>{{ conv.customer_name or '—' }}</td>
+                                <td>
+                                    {{ conv.customer_name or '—' }}
+                                    {% if conv.needs_human %}
+                                    <span class="needs-human-badge" title="Requiere atención humana">🔴</span>
+                                    {% endif %}
+                                </td>
                                 <td>{{ conv.customer_phone }}</td>
                                 <td class="last-message">
                                     {% if conv.last_message %}

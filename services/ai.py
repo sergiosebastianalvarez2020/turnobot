@@ -69,7 +69,7 @@ def get_gemini_client():
     return client
 
 
-MODEL = "gemini-3.6-flash"
+MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
 
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 

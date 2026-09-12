@@ -148,6 +148,11 @@ if not ADMIN_PASSWORD_HASH:
     logger.warning("ADMIN_PASSWORD_HASH no está configurada: acceso administrativo deshabilitado")
 if os.getenv("FLASK_ENV") == "production" and (not ADMIN_PASSWORD_HASH or os.getenv("COOKIE_SECURE") != "1"):
     raise RuntimeError("ADMIN_PASSWORD_HASH es obligatoria en producción")
+if os.getenv("FLASK_ENV") == "production" and not os.getenv("SMTP_HOST"):
+    logger.warning(
+        "SMTP_HOST no está configurada: las notificaciones de turnos no se enviarán por email. "
+        "Configure SMTP_HOST/SMTP_USER/SMTP_PASSWORD e incree el servidor."
+    )
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -1291,6 +1296,8 @@ def _render_admin():
         status = "confirmed"
     appointment_date = request.args.get("fecha") or None
     actor_user_id = session.get("user_id")
+    membership = get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
+    is_owner = bool(membership and membership["role_name"] == "owner")
     can_manage_memberships = bool(
         actor_user_id
         and business_id
@@ -1321,6 +1328,7 @@ def _render_admin():
         schedule_message=request.args.get("schedule_message", ""),
         schedule_error=request.args.get("schedule_error", ""),
         can_manage_memberships=can_manage_memberships,
+        is_owner=is_owner,
         smtp_configured=smtp_configured(),
     )
 
@@ -1802,12 +1810,15 @@ def admin_usuarios(slug=None):
     business_initials = (
         settings["business_initials"] if settings and settings["business_initials"] else ""
     )
+    membership = get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
+    is_owner = bool(membership and membership["role_name"] == "owner")
     return render_template(
         "usuarios.html",
         business_name=business_name,
         business_initials=business_initials,
         members=result["members"],
         current_user_id=actor_user_id,
+        is_owner=is_owner,
         message=request.args.get("usuarios_message", ""),
         error=request.args.get("usuarios_error", ""),
     )
