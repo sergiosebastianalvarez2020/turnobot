@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Conversación</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar" id="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span aria-hidden="true">📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span aria-hidden="true">👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item">
+                    <span aria-hidden="true">⭐</span>
+                    Fidelización
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conocimiento" class="nav-item">
+                    <span aria-hidden="true">📚</span>
+                    Conocimiento
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conversaciones" class="nav-item active">
+                    <span aria-hidden="true">💬</span>
+                    Conversaciones
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="nav-item">
+                    <span aria-hidden="true">📊</span>
+                    Inteligencia
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span aria-hidden="true">🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content" id="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+                    <span class="hamburger" aria-hidden="true"></span>
+                </button>
+
+                <div>
+
+                    <h2>Conversación</h2>
+
+                    <p>
+                        {{ session.customer_name or session.customer_phone }}
+                    </p>
+
+                </div>
+
+                <a href="{{ admin_prefix or '' }}/admin/conversaciones" class="back-link">
+                    ← Volver
+                </a>
+
+            </header>
+
+
+            {% if message %}
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
+            {% endif %}
+            {% if error %}
+            <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
+            {% endif %}
+
+
+            <!-- =====================================================
+                 INFO DE LA SESIÓN
+             ===================================================== -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Información de la conversación</h3>
+                    </div>
+                </div>
+
+                <div class="session-info-grid">
+                    <div class="session-info-item">
+                        <label>Cliente</label>
+                        <span>{{ session.customer_name or '—' }}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <label>Teléfono</label>
+                        <span>{{ session.customer_phone }}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <label>Email</label>
+                        <span>{{ session.customer_email or '—' }}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <label>Estado</label>
+                        <span>
+                            <span class="conv-status conv-status-{{ session.status }}">
+                                {% if session.status == 'active' %}Activa
+                                {% elif session.status == 'needs_human' %}🔴 Requiere atención
+                                {% elif session.status == 'human_resolved' %}✅ Resuelta
+                                {% else %}{{ session.status }}
+                                {% endif %}
+                            </span>
+                        </span>
+                    </div>
+                    <div class="session-info-item">
+                        <label>Creada</label>
+                        <span>{{ session.created_at[:16].replace('T', ' ') if session.created_at else '—' }}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <label>Última actividad</label>
+                        <span>{{ session.updated_at[:16].replace('T', ' ') if session.updated_at else '—' }}</span>
+                    </div>
+                </div>
+
+                <div class="session-actions">
+                    {% if session.status == 'needs_human' %}
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/conversaciones/{{ session.id }}/resolver" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="refresh-button conv-btn-resolve">Marcar como resuelta</button>
+                    </form>
+                    {% endif %}
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/conversaciones/{{ session.id }}/estado" class="inline-form">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <label>
+                            Cambiar estado
+                            <select name="status">
+                                <option value="active" {% if session.status == 'active' %}selected{% endif %}>Activa</option>
+                                <option value="needs_human" {% if session.status == 'needs_human' %}selected{% endif %}>Requiere atención</option>
+                                <option value="human_resolved" {% if session.status == 'human_resolved' %}selected{% endif %}>Resuelta</option>
+                                <option value="closed" {% if session.status == 'closed' %}selected{% endif %}>Cerrada</option>
+                            </select>
+                        </label>
+                        <button type="submit" class="refresh-button">Actualizar</button>
+                    </form>
+                    <a href="{{ admin_prefix or '' }}/admin/conversaciones" class="refresh-button" style="background: #6B7280;">← Volver al listado</a>
+                </div>
+
+            </section>
+
+
+            <!-- =====================================================
+                 MENSAJES
+             ===================================================== -->
+
+            <section class="settings-card messages-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Historial de mensajes</h3>
+                    </div>
+                </div>
+
+                {% if messages %}
+                <div class="messages-list">
+                    {% for msg in messages %}
+                    <div class="message-item message-{{ msg.role }}">
+                        <div class="message-header">
+                            <span class="message-role">
+                                {% if msg.role == 'user' %}👤 Cliente
+                                {% elif msg.role == 'assistant' %}🤖 IA
+                                {% elif msg.role == 'human' %}👨‍💼 Humano
+                                {% else %}{{ msg.role }}
+                                {% endif %}
+                            </span>
+                            <span class="message-time">{{ msg.created_at[:16].replace('T', ' ') if msg.created_at else '' }}</span>
+                        </div>
+                        <div class="message-content">{{ msg.content }}</div>
+                        {% if msg.needs_human %}
+                        <span class="needs-human-badge">⚠️ Requiere atención humana</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="empty-services">No hay mensajes en esta conversación.</p>
+                {% endif %}
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+    <script>
+        const dateElement = document.getElementById("current-date");
+        const now = new Date();
+        dateElement.textContent = now.toLocaleDateString("es-AR", {
+            weekday: "long", day: "numeric", month: "long", year: "numeric"
+        });
+
+        document.querySelectorAll('.schedule-day-checkbox input[type="checkbox"]').forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var row = this.closest('.schedule-day-row');
+                var timeInputs = row.querySelectorAll('.schedule-time-field input[type="time"]');
+                timeInputs.forEach(function(input) {
+                    input.disabled = !checkbox.checked;
+                });
+            });
+        });
+
+        // Sidebar toggle
+        (function() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('sidebar-toggle');
+            var overlay = document.getElementById('sidebar-overlay');
+
+            if (!sidebar || !toggleBtn || !overlay) return;
+
+            function openSidebar() {
+                sidebar.classList.add('sidebar-open');
+                overlay.classList.add('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Cerrar menú');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeSidebar() {
+                sidebar.classList.remove('sidebar-open');
+                overlay.classList.remove('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Abrir menú');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.body.style.overflow = '';
+            }
+
+            function toggleSidebar() {
+                if (sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
+            }
+
+            toggleBtn.addEventListener('click', toggleSidebar);
+            overlay.addEventListener('click', closeSidebar);
+
+            var navItems = sidebar.querySelectorAll('.nav-item');
+            navItems.forEach(function(item) {
+                item.addEventListener('click', function() {
+                    if (window.innerWidth <= 850) {
+                        closeSidebar();
+                    }
+                });
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                }
+            });
+        })();
+
+    </script>
+</body>
+
+</html>

@@ -18,6 +18,30 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from services.ai import ask_ai
 from services.notifications import send_confirmation_email, smtp_configured, notifications_enabled
+from services.knowledge import (
+    get_knowledge_scoped,
+    search_knowledge_scoped,
+    create_knowledge_scoped,
+    update_knowledge_scoped,
+    delete_knowledge_scoped,
+    get_knowledge_by_id_scoped,
+)
+from services.conversations import (
+    get_or_create_conversation_session_scoped,
+    add_conversation_message_scoped,
+    get_conversation_session_by_id_scoped,
+    list_conversation_sessions_scoped,
+    count_conversation_sessions_scoped,
+    get_conversation_messages_scoped,
+    request_human_handoff_scoped,
+    resolve_human_handoff_scoped,
+    update_session_status_scoped,
+    get_needs_human_sessions_scoped,
+    get_frequent_questions_scoped,
+    get_unanswered_questions_scoped,
+    get_conversation_stats_scoped,
+    track_question_scoped,
+)
 from database.database import (
     get_business_settings,
     get_business_settings_scoped,
@@ -1855,11 +1879,19 @@ def chat():
                 "error": "El mensaje es demasiado largo."
             }), 400
 
+        # Datos opcionales del cliente para persistencia de conversación
+        customer_phone = data.get("customer_phone", "").strip() if isinstance(data.get("customer_phone"), str) else ""
+        customer_name = data.get("customer_name", "").strip() if isinstance(data.get("customer_name"), str) else ""
+        customer_email = data.get("customer_email", "").strip() if isinstance(data.get("customer_email"), str) else ""
+
 
         response = ask_ai(
             message,
             conversation,
             business_id=get_current_business_id(),
+            customer_phone=customer_phone,
+            customer_name=customer_name,
+            customer_email=customer_email,
         )
 
 
@@ -2499,6 +2531,246 @@ def _resources_url(**kwargs):
     if business is not None and business.get("id") != 1:
         return url_for("admin_recursos_slug", slug=business["slug"], **kwargs)
     return url_for("admin_recursos", **kwargs)
+
+
+def _conocimiento_url(**kwargs):
+    """URL de la página de conocimiento, con/sin prefijo de slug."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_conocimiento_slug", slug=business["slug"], **kwargs)
+    return url_for("admin_conocimiento", **kwargs)
+
+
+@app.route("/admin/conocimiento")
+@app.route("/b/<slug>/admin/conocimiento")
+def admin_conocimiento(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    knowledge = get_knowledge_scoped(business_id)
+    settings = get_business_settings_scoped(business_id)
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_initials = settings["business_initials"] if settings else ""
+    return render_template(
+        "admin_conocimiento.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        knowledge=knowledge,
+        message=request.args.get("conocimiento_message", ""),
+        error=request.args.get("conocimiento_error", ""),
+    )
+
+
+@app.route("/admin/conocimiento/crear", methods=["POST"])
+@app.route("/b/<slug>/admin/conocimiento/crear", methods=["POST"])
+def admin_conocimiento_crear(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    type_ = request.form.get("type", "").strip()
+    question = request.form.get("question", "").strip()
+    answer = request.form.get("answer", "").strip()
+    tags = request.form.get("tags", "").strip()
+    if not type_ or not question or not answer:
+        return redirect(_conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios."))
+    actor_user_id = session.get("user_id")
+    create_knowledge_scoped(business_id, type_, question, answer, tags, actor_user_id)
+    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento creada correctamente."))
+
+
+@app.route("/admin/conocimiento/<int:knowledge_id>/editar", methods=["POST"])
+@app.route("/b/<slug>/admin/conocimiento/<int:knowledge_id>/editar", methods=["POST"])
+def admin_conocimiento_editar(knowledge_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    type_ = request.form.get("type", "").strip()
+    question = request.form.get("question", "").strip()
+    answer = request.form.get("answer", "").strip()
+    tags = request.form.get("tags", "").strip()
+    active = request.form.get("active") == "1"
+    if not type_ or not question or not answer:
+        return redirect(_conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios."))
+    if not update_knowledge_scoped(knowledge_id, business_id, type_, question, answer, tags, active):
+        return redirect(_conocimiento_url(conocimiento_error="No se pudo actualizar la entrada."))
+    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento actualizada correctamente."))
+
+
+@app.route("/admin/conocimiento/<int:knowledge_id>/eliminar", methods=["POST"])
+@app.route("/b/<slug>/admin/conocimiento/<int:knowledge_id>/eliminar", methods=["POST"])
+def admin_conocimiento_eliminar(knowledge_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    if not delete_knowledge_scoped(knowledge_id, business_id):
+        return redirect(_conocimiento_url(conocimiento_error="No se pudo eliminar la entrada."))
+    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento eliminada correctamente."))
+
+
+def _conversaciones_url(**kwargs):
+    """URL de la página de conversaciones, con/sin prefijo de slug."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_conversaciones_slug", slug=business["slug"], **kwargs)
+    return url_for("admin_conversaciones", **kwargs)
+
+
+@app.route("/admin/conversaciones")
+@app.route("/b/<slug>/admin/conversaciones")
+def admin_conversaciones(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    status_filter = request.args.get("status", "all")
+    if status_filter not in ("all", "active", "needs_human", "human_resolved", "closed"):
+        status_filter = "all"
+
+    status_filter_db = None if status_filter == "all" else status_filter
+    conversations = list_conversation_sessions_scoped(business_id, status=status_filter_db, limit=100)
+
+    settings = get_business_settings_scoped(business_id)
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_initials = settings["business_initials"] if settings else ""
+
+    stats = get_conversation_stats_scoped(business_id)
+
+    return render_template(
+        "admin_conversaciones.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        conversations=conversations,
+        stats=stats,
+        status_filter=status_filter,
+        message=request.args.get("conversaciones_message", ""),
+        error=request.args.get("conversaciones_error", ""),
+    )
+
+
+@app.route("/admin/conversaciones/<int:session_id>")
+@app.route("/b/<slug>/admin/conversaciones/<int:session_id>")
+def admin_conversaciones_detalle(session_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    session = get_conversation_session_by_id_scoped(session_id, business_id)
+    if not session:
+        return redirect(_conversaciones_url(conversaciones_error="Conversación no encontrada."))
+
+    messages = get_conversation_messages_scoped(session_id, business_id)
+
+    settings = get_business_settings_scoped(business_id)
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_initials = settings["business_initials"] if settings else ""
+
+    return render_template(
+        "admin_conversaciones_detalle.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        session=session,
+        messages=messages,
+        message=request.args.get("conversaciones_message", ""),
+        error=request.args.get("conversaciones_error", ""),
+    )
+
+
+@app.route("/admin/conversaciones/<int:session_id>/resolver", methods=["POST"])
+@app.route("/b/<slug>/admin/conversaciones/<int:session_id>/resolver", methods=["POST"])
+def admin_conversaciones_resolver(session_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    if not resolve_human_handoff_scoped(session_id, business_id):
+        return redirect(_conversaciones_url(conversaciones_error="No se pudo resolver la conversación."))
+
+    return redirect(_conversaciones_url(conversaciones_message="Conversación marcada como resuelta."))
+
+
+@app.route("/admin/conversaciones/<int:session_id>/estado", methods=["POST"])
+@app.route("/b/<slug>/admin/conversaciones/<int:session_id>/estado", methods=["POST"])
+def admin_conversaciones_estado(session_id, slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    new_status = request.form.get("status", "").strip()
+    if new_status not in ("active", "needs_human", "human_resolved", "closed"):
+        return redirect(_conversaciones_url(conversaciones_error="Estado inválido."))
+
+    if not update_session_status_scoped(session_id, business_id, new_status):
+        return redirect(_conversaciones_url(conversaciones_error="No se pudo actualizar el estado."))
+
+    return redirect(_conversaciones_url(conversaciones_message="Estado actualizado correctamente."))
+
+
+# ============================================================
+# ANALYTICS: INTELIGENCIA
+# ============================================================
+
+@app.route("/admin/inteligencia")
+@app.route("/b/<slug>/admin/inteligencia")
+def admin_inteligencia(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    frequent_questions = get_frequent_questions_scoped(business_id, limit=50)
+    unanswered_questions = get_unanswered_questions_scoped(business_id, limit=50)
+    stats = get_conversation_stats_scoped(business_id)
+
+    settings = get_business_settings_scoped(business_id)
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_initials = settings["business_initials"] if settings else ""
+
+    return render_template(
+        "admin_inteligencia.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        frequent_questions=frequent_questions,
+        unanswered_questions=unanswered_questions,
+        stats=stats,
+        message=request.args.get("inteligencia_message", ""),
+        error=request.args.get("inteligencia_error", ""),
+    )
 
 
 @app.route(

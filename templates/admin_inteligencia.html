@@ -7,7 +7,7 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>{{ business_name }} - Fidelización</title>
+    <title>{{ business_name }} - Inteligencia</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -53,7 +53,19 @@
                     Turnos
                 </a>
 
-                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item active">
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span aria-hidden="true">👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item">
                     <span aria-hidden="true">⭐</span>
                     Fidelización
                 </a>
@@ -68,7 +80,7 @@
                     Conversaciones
                 </a>
 
-                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="nav-item">
+                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="nav-item active">
                     <span aria-hidden="true">📊</span>
                     Inteligencia
                 </a>
@@ -119,10 +131,10 @@
 
                 <div>
 
-                    <h2>Fidelización</h2>
+                    <h2>Inteligencia</h2>
 
                     <p>
-                        Puntos por turnos completados de {{ business_name }}
+                        Análisis de consultas de tus clientes para mejorar la IA.
                     </p>
 
                 </div>
@@ -130,85 +142,90 @@
             </header>
 
 
+            {% if message %}
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
+            {% endif %}
             {% if error %}
             <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
             {% endif %}
 
-            {% if message %}
-            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
-            {% endif %}
 
-
-            <!-- =================================================
-                 CONFIGURACIÓN DE FIDELIZACIÓN
-                 ================================================= -->
+            <!-- =====================================================
+                 ESTADÍSTICAS GENERALES
+             ===================================================== -->
 
             <section class="settings-card">
 
                 <div class="section-header">
                     <div>
-                        <h3>Configuración</h3>
-                        <p>Activá el programa y definí cuántos puntos otorga un turno completado.</p>
+                        <h3>Resumen</h3>
                     </div>
                 </div>
 
-                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/configuracion" class="settings-form">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                    <div class="settings-toggle">
-                        <label class="toggle-wrap">
-                            <input type="checkbox" name="enabled" value="1" {% if loyalty_settings and loyalty_settings['enabled'] %}checked{% endif %}>
-                            <span class="toggle-label"><strong>Fidelización habilitada</strong></span>
-                        </label>
-                        <p class="settings-hint">
-                            Cuando está activa, cada turno marcado como completado genera puntos.
-                        </p>
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ stats.total_sessions }}</div>
+                        <div class="stat-label">Conversaciones</div>
                     </div>
-
-                    <label>
-                        Puntos por turno completado
-                        <input type="number" name="points_per_completed_appointment" value="{{ loyalty_settings['points_per_completed_appointment'] if loyalty_settings else 1 }}" min="0" step="1" required>
-                    </label>
-
-                    <div class="settings-actions">
-                        <button type="submit" class="refresh-button">Guardar configuración</button>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ stats.total_messages }}</div>
+                        <div class="stat-label">Mensajes</div>
                     </div>
-                </form>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ stats.needs_human }}</div>
+                        <div class="stat-label">Requieren humano</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ stats.resolved }}</div>
+                        <div class="stat-label">Resueltas</div>
+                    </div>
+                </div>
 
             </section>
-<!-- =================================================
-                 CLIENTES CON PUNTOS
-                 ================================================= -->
 
-            <section class="settings-card services-admin-card">
+
+            <!-- =====================================================
+                 PREGUNTAS FRECUENTES
+             ===================================================== -->
+
+            <section class="settings-card">
 
                 <div class="section-header">
                     <div>
-                        <h3>Clientes con puntos</h3>
-                        <p>Saldo actual de cada cliente. Hacé clic en un cliente para ver sus movimientos.</p>
+                        <h3>Preguntas más frecuentes</h3>
+                        <p>Top consultas de tus clientes. Útil para detectar qué información falta en la base de conocimiento.</p>
                     </div>
                 </div>
 
-                {% if accounts %}
+                {% if frequent_questions %}
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th scope="col">Cliente</th>
-                                <th scope="col">Teléfono</th>
-                                <th scope="col">Saldo (puntos)</th>
+                                <th scope="col">#</th>
+                                <th scope="col">Pregunta</th>
+                                <th scope="col">Consultas</th>
+                                <th scope="col">Derivadas a humano</th>
+                                <th scope="col">Última vez</th>
                                 <th scope="col">Acción</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for account in accounts %}
+                            {% for i, q in enumerate(frequent_questions) %}
                             <tr>
-                                <td>{{ account.customer_name or '—' }}</td>
-                                <td>{{ account.customer_phone }}</td>
-                                <td><strong>{{ account.points_balance }}</strong></td>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ q.question_text }}</td>
+                                <td><strong>{{ q.count }}</strong></td>
                                 <td>
-                                    <a class="refresh-button"
-                                       href="{{ admin_prefix or '' }}/admin/fidelizacion?account_id={{ account.id }}">Ver movimientos</a>
+                                    {% if q.needs_human_count > 0 %}
+                                    <span class="needs-human-badge">{{ q.needs_human_count }}</span>
+                                    {% else %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
+                                <td>
+                                    <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}" class="conv-btn">+ Agregar a conocimiento</a>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -216,85 +233,62 @@
                     </table>
                 </div>
                 {% else %}
-                <p class="empty-services">Aún no hay clientes con puntos.</p>
+                <p class="empty-services">No hay preguntas frecuentes registradas aún.</p>
                 {% endif %}
-
-                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/recalcular" class="settings-actions"
-                      style="margin-top: 16px;">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="refresh-button">Recalcular saldo desde el historial</button>
-                </form>
 
             </section>
 
 
-            <!-- =================================================
-                 DETALLE DE CLIENTE (movimientos y ajuste)
-                 ================================================= -->
+            <!-- =====================================================
+                 PREGUNTAS SIN RESPUESTA
+             ===================================================== -->
 
-            {% if selected_account %}
-            <section class="settings-card services-admin-card">
+            <section class="settings-card unanswered-card">
 
                 <div class="section-header">
                     <div>
-                        <h3>Movimientos de {{ selected_account.customer_name or selected_account.customer_phone }}</h3>
-                        <p>Saldo actual: <strong>{{ selected_account.points_balance }}</strong> puntos.</p>
+                        <h3>⚠️ Preguntas sin respuesta</h3>
+                        <p>Preguntas que la IA no pudo responder y fueron derivadas a humano. Prioridad para agregar a la base de conocimiento.</p>
                     </div>
                 </div>
 
-                {% if movements %}
+                {% if unanswered_questions %}
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th scope="col">Fecha</th>
-                                <th scope="col">Tipo</th>
-                                <th scope="col">Puntos</th>
-                                <th scope="col">Motivo</th>
+                                <th scope="col">#</th>
+                                <th scope="col">Pregunta</th>
+                                <th scope="col">Veces preguntada</th>
+                                <th scope="col">Derivaciones</th>
+                                <th scope="col">Última vez</th>
+                                <th scope="col">Acción</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for mv in movements %}
+                            {% for i, q in enumerate(unanswered_questions) %}
                             <tr>
-                                <td>{{ mv.created_at }}</td>
-                                <td>{{ 'Acreditación' if mv.type == 'earn' else 'Ajuste' }}</td>
-                                <td>{% if mv.delta > 0 %}+{% endif %}{{ mv.delta }}</td>
-                                <td>{{ mv.reason or '—' }}</td>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ q.question_text }}</td>
+                                <td><strong>{{ q.count }}</strong></td>
+                                <td><span class="needs-human-badge">{{ q.needs_human_count }}</span></td>
+                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
+                                <td>
+                                    <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}" class="conv-btn conv-btn-primary">+ Agregar a conocimiento</a>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
                 {% else %}
-                <p class="empty-services">Este cliente no tiene movimientos.</p>
+                <div class="empty-state">
+                    <span class="empty-icon">✅</span>
+                    <p>¡Todas las preguntas tienen respuesta! No hay derivaciones a humano pendientes.</p>
+                </div>
                 {% endif %}
 
-                <div class="section-header" style="margin-top: 24px;">
-                    <h3>Ajustar puntos</h3>
-                </div>
-
-                <form method="POST" action="{{ admin_prefix or '' }}/admin/fidelizacion/{{ selected_account.id }}/ajustar" class="settings-form">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-                    <label>
-                        Cantidad (+/-)
-                        <input type="number" name="delta" step="1" required
-                               aria-label="Cantidad de puntos a sumar o restar">
-                    </label>
-
-                    <label>
-                        Motivo (obligatorio)
-                        <input type="text" name="reason" required maxlength="200"
-                               placeholder="Ej.: corrección de turno, cortesía, reclamo">
-                    </label>
-
-                    <div class="settings-actions">
-                        <button type="submit" class="refresh-button">Aplicar ajuste</button>
-                    </div>
-                </form>
-
             </section>
-            {% endif %}
 
 
         </main>
@@ -303,7 +297,23 @@
 
 
     <script>
-        // Sidebar toggle para mobile/tablet
+        const dateElement = document.getElementById("current-date");
+        const now = new Date();
+        dateElement.textContent = now.toLocaleDateString("es-AR", {
+            weekday: "long", day: "numeric", month: "long", year: "numeric"
+        });
+
+        document.querySelectorAll('.schedule-day-checkbox input[type="checkbox"]').forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var row = this.closest('.schedule-day-row');
+                var timeInputs = row.querySelectorAll('.schedule-time-field input[type="time"]');
+                timeInputs.forEach(function(input) {
+                    input.disabled = !checkbox.checked;
+                });
+            });
+        });
+
+        // Sidebar toggle
         (function() {
             var sidebar = document.getElementById('sidebar');
             var toggleBtn = document.getElementById('sidebar-toggle');
@@ -338,7 +348,6 @@
             toggleBtn.addEventListener('click', toggleSidebar);
             overlay.addEventListener('click', closeSidebar);
 
-            // Cerrar sidebar al navegar en mobile
             var navItems = sidebar.querySelectorAll('.nav-item');
             navItems.forEach(function(item) {
                 item.addEventListener('click', function() {
@@ -348,7 +357,6 @@
                 });
             });
 
-            // Cerrar con tecla Escape
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
                     closeSidebar();
@@ -357,7 +365,6 @@
         })();
 
     </script>
-
 </body>
 
 </html>

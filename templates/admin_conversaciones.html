@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Conversaciones</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar" id="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span aria-hidden="true">📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span aria-hidden="true">👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item">
+                    <span aria-hidden="true">⭐</span>
+                    Fidelización
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conocimiento" class="nav-item">
+                    <span aria-hidden="true">📚</span>
+                    Conocimiento
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conversaciones" class="nav-item active">
+                    <span aria-hidden="true">💬</span>
+                    Conversaciones
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="nav-item">
+                    <span aria-hidden="true">📊</span>
+                    Inteligencia
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span aria-hidden="true">🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content" id="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+                    <span class="hamburger" aria-hidden="true"></span>
+                </button>
+
+                <div>
+
+                    <h2>Conversaciones</h2>
+
+                    <p>
+                        Historial de chats de tus clientes con la recepcionista IA.
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            {% if message %}
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
+            {% endif %}
+            {% if error %}
+            <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
+            {% endif %}
+
+
+            <!-- =====================================================
+                 FILTROS Y ESTADÍSTICAS
+             ===================================================== -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Filtros</h3>
+                    </div>
+                </div>
+
+                <div class="stats" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 16px;">
+                    <a href="{{ admin_prefix or '' }}/admin/conversaciones?status=all" class="stat-card {% if status_filter == 'all' %}active{% endif %}">
+                        <div class="stat-value">{{ stats.total_sessions }}</div>
+                        <div class="stat-label">Total</div>
+                    </a>
+                    <a href="{{ admin_prefix or '' }}/admin/conversaciones?status=active" class="stat-card {% if status_filter == 'active' %}active{% endif %}">
+                        <div class="stat-value">{{ stats.total_sessions - stats.needs_human - stats.resolved }}</div>
+                        <div class="stat-label">Activas</div>
+                    </a>
+                    <a href="{{ admin_prefix or '' }}/admin/conversaciones?status=needs_human" class="stat-card {% if status_filter == 'needs_human' %}active{% endif %}">
+                        <div class="stat-value">{{ stats.needs_human }}</div>
+                        <div class="stat-label">Requieren atención</div>
+                    </a>
+                    <a href="{{ admin_prefix or '' }}/admin/conversaciones?status=human_resolved" class="stat-card {% if status_filter == 'human_resolved' %}active{% endif %}">
+                        <div class="stat-value">{{ stats.resolved }}</div>
+                        <div class="stat-label">Resueltas</div>
+                    </a>
+                </div>
+
+            </section>
+
+
+            <!-- =====================================================
+                 LISTADO DE CONVERSACIONES
+             ===================================================== -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Conversaciones</h3>
+                    </div>
+                </div>
+
+                {% if conversations %}
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Cliente</th>
+                                <th scope="col">Teléfono</th>
+                                <th scope="col">Último mensaje</th>
+                                <th scope="col">Estado</th>
+                                <th scope="col">Actualizado</th>
+                                <th scope="col">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for conv in conversations %}
+                            <tr class="{% if conv.needs_human %}needs-human{% endif %}">
+                                <td>{{ conv.customer_name or '—' }}</td>
+                                <td>{{ conv.customer_phone }}</td>
+                                <td class="last-message">
+                                    {% if conv.last_message %}
+                                    {{ conv.last_message[:80] }}{% if conv.last_message|length > 80 %}...{% endif %}
+                                    {% else %}
+                                    <span class="text-muted">Sin mensajes</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="conv-status conv-status-{{ conv.status }}">
+                                        {% if conv.status == 'active' %}Activa
+                                        {% elif conv.status == 'needs_human' %}🔴 Requiere atención
+                                        {% elif conv.status == 'human_resolved' %}✅ Resuelta
+                                        {% else %}{{ conv.status }}
+                                        {% endif %}
+                                    </span>
+                                </td>
+                                <td>{{ conv.updated_at[:16].replace('T', ' ') if conv.updated_at else '—' }}</td>
+                                <td>
+                                    <div class="conv-actions">
+                                        <a href="{{ admin_prefix or '' }}/admin/conversaciones/{{ conv.id }}" class="conv-btn">Ver</a>
+                                        {% if conv.status == 'needs_human' %}
+                                        <form method="POST" action="{{ admin_prefix or '' }}/admin/conversaciones/{{ conv.id }}/resolver" class="inline-form">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="conv-btn conv-btn-resolve">Resolver</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="empty-services">No hay conversaciones.</p>
+                {% endif %}
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+    <script>
+        const dateElement = document.getElementById("current-date");
+        const now = new Date();
+        dateElement.textContent = now.toLocaleDateString("es-AR", {
+            weekday: "long", day: "numeric", month: "long", year: "numeric"
+        });
+
+        document.querySelectorAll('.schedule-day-checkbox input[type="checkbox"]').forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var row = this.closest('.schedule-day-row');
+                var timeInputs = row.querySelectorAll('.schedule-time-field input[type="time"]');
+                timeInputs.forEach(function(input) {
+                    input.disabled = !checkbox.checked;
+                });
+            });
+        });
+
+        // Sidebar toggle
+        (function() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('sidebar-toggle');
+            var overlay = document.getElementById('sidebar-overlay');
+
+            if (!sidebar || !toggleBtn || !overlay) return;
+
+            function openSidebar() {
+                sidebar.classList.add('sidebar-open');
+                overlay.classList.add('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Cerrar menú');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeSidebar() {
+                sidebar.classList.remove('sidebar-open');
+                overlay.classList.remove('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Abrir menú');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.body.style.overflow = '';
+            }
+
+            function toggleSidebar() {
+                if (sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
+            }
+
+            toggleBtn.addEventListener('click', toggleSidebar);
+            overlay.addEventListener('click', closeSidebar);
+
+            var navItems = sidebar.querySelectorAll('.nav-item');
+            navItems.forEach(function(item) {
+                item.addEventListener('click', function() {
+                    if (window.innerWidth <= 850) {
+                        closeSidebar();
+                    }
+                });
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                }
+            });
+        })();
+
+    </script>
+</body>
+
+</html>

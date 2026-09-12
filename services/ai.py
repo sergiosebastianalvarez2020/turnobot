@@ -25,6 +25,13 @@ from database.database import (
     get_resources_scoped,
     get_resource_scoped,
 )
+from services.knowledge import search_knowledge_scoped
+from services.conversations import (
+    get_or_create_conversation_session_scoped,
+    add_conversation_message_scoped,
+    track_question_scoped,
+    request_human_handoff_scoped,
+)
 
 
 # ============================================================
@@ -648,6 +655,43 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
 
 
 # ============================================================
+# HERRAMIENTA: SOLICITAR ATENCIÓN HUMANA
+# ============================================================
+
+solicitar_atencion_humana_declaration = types.FunctionDeclaration(
+    name="solicitar_atencion_humana",
+    description=(
+        "Deriva la conversación a una persona del negocio cuando la IA "
+        "no puede resolver la consulta del cliente. Úsalo cuando el cliente "
+        "pida explícitamente hablar con una persona, o cuando la información "
+        "necesaria no esté disponible en el conocimiento del negocio, servicios, "
+        "horarios o recursos."
+    ),
+    parameters_json_schema={
+        "type": "object",
+        "properties": {
+            "motivo": {
+                "type": "string",
+                "description": "Breve motivo por el que se solicita atención humana.",
+            },
+        },
+        "required": ["motivo"],
+        "additionalProperties": False,
+    },
+)
+
+
+def _execute_solicitar_atencion_humana(arguments, business_id):
+    """Ejecuta la herramienta de solicitud de atención humana."""
+    # La sesión se marca como needs_human en la capa de persistencia
+    # Aquí solo confirmamos la acción
+    return {
+        "success": True,
+        "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto."
+    }
+
+
+# ============================================================
 # TOOL DE GEMINI
 # ============================================================
 
@@ -659,6 +703,7 @@ BARBERIA_TOOL = types.Tool(
         buscar_turnos_declaration,
         cancelar_turno_declaration,
         reprogramar_turno_declaration,
+        solicitar_atencion_humana_declaration,
     ]
 )
 
@@ -1077,22 +1122,38 @@ def execute_tool(name, arguments, business_id=None):
             }
 
 
+    return {
+        "success": True,
+        "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto."
+    }
+
+
+    # ========================================================
+    # SOLICITAR ATENCIÓN HUMANA
+    # ========================================================
+
+    if name == "solicitar_atencion_humana":
+
+        motivo = arguments.get("motivo", "El cliente solicita hablar con una persona.")
+
+        try:
+            return _execute_solicitar_atencion_humana(arguments, business_id)
+
+        except Exception as error:
+
+            logger.exception(
+                "Error solicitando atención humana."
+            )
+
+            return {
+                "success": False,
+                "error": "No se pudo solicitar atención humana.",
+            }
+
+
     # ========================================================
     # HERRAMIENTA DESCONOCIDA
     # ========================================================
-
-    logger.warning(
-        "Herramienta desconocida: %s",
-        name,
-    )
-
-    return {
-        "success": False,
-
-        "error": (
-            f"Herramienta desconocida: {name}"
-        ),
-    }
 
 
 # ============================================================
@@ -1441,6 +1502,9 @@ def ask_ai(
     message,
     conversation=None,
     business_id=None,
+    customer_phone=None,
+    customer_name=None,
+    customer_email=None,
 ):
 
     if business_id is None:
@@ -1449,6 +1513,24 @@ def ask_ai(
     if conversation is None:
 
         conversation = []
+
+
+    # ========================================================
+    # PERSISTENCIA DE CONVERSACIÓN
+    # ========================================================
+
+    session = None
+    session_id = None
+    if customer_phone:
+        session = get_or_create_conversation_session_scoped(
+            business_id, customer_phone, customer_name, customer_email
+        )
+        if session:
+            session_id = session["id"]
+            # Guardar mensaje del usuario
+            add_conversation_message_scoped(session_id, business_id, "user", message)
+            # Registrar pregunta para analytics
+            track_question_scoped(business_id, message)
 
 
     # ========================================================
@@ -1488,6 +1570,16 @@ def ask_ai(
 
     services_text = get_services_prompt(business_id)
     business_hours_text = get_business_hours_prompt(business_id)
+
+    # Buscar conocimiento relevante del negocio para la pregunta del usuario
+    knowledge_entries = search_knowledge_scoped(business_id, message, limit=3)
+    knowledge_text = ""
+    if knowledge_entries:
+        knowledge_lines = []
+        for entry in knowledge_entries:
+            knowledge_lines.append(f"[INFO NEGOCIO] Pregunta: {entry['question']}\nRespuesta: {entry['answer']}")
+        knowledge_text = "\n\n--- CONOCIMIENTO DEL NEGOCIO ---\n\n" + "\n\n".join(knowledge_lines)
+
     instructions = f"""
 {SYSTEM_PROMPT}
 
@@ -1516,6 +1608,7 @@ HORARIOS ACTUALES
 ============================================================
 
 {business_hours_text}
+{knowledge_text}
 
 ============================================================
 FECHA ACTUAL
@@ -1653,7 +1746,16 @@ días de la semana y fechas relativas.
 
             try:
 
-                return response.text
+                response_text = response.text
+
+                # Guardar respuesta del asistente
+                if session_id:
+                    add_conversation_message_scoped(session_id, business_id, "assistant", response_text)
+                    # Detectar si la respuesta indica necesidad de humano
+                    if _detect_needs_human(response_text):
+                        request_human_handoff_scoped(session_id, business_id)
+
+                return response_text
 
             except Exception:
 
@@ -1884,6 +1986,34 @@ días de la semana y fechas relativas.
                 "procesar la información. "
                 "Por favor, intentá nuevamente."
             )
+
+
+def _detect_needs_human(text):
+    """Detecta si la respuesta indica que se necesita intervención humana.
+
+    Busca patrones que sugieren que la IA no pudo responder adecuadamente.
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    # Patrones que indican que la IA no sabe responder
+    patterns = [
+        "no tengo esa información",
+        "no dispongo de esa información",
+        "no tengo acceso a esa información",
+        "no puedo responder",
+        "no sé",
+        "no tengo conocimiento",
+        "esa información no está disponible",
+        "consultar con el negocio",
+        "hablar con alguien",
+        "contactar al negocio",
+        "derivar a una persona",
+        "hablar con una persona",
+        "atención humana",
+        "personal del negocio",
+    ]
+    return any(pattern in text_lower for pattern in patterns)
 
 
 # ============================================================

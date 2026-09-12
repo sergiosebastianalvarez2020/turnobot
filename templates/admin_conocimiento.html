@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Conocimiento</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar" id="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span aria-hidden="true">📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span aria-hidden="true">👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item">
+                    <span aria-hidden="true">⭐</span>
+                    Fidelización
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conocimiento" class="nav-item active">
+                    <span aria-hidden="true">📚</span>
+                    Conocimiento
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span aria-hidden="true">🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content" id="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+                    <span class="hamburger" aria-hidden="true"></span>
+                </button>
+
+                <div>
+
+                    <h2>Conocimiento del negocio</h2>
+
+                    <p>
+                        Información específica que la IA utiliza para responder a los clientes.
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            {% if message %}
+            <div class="settings-feedback settings-success" role="status">{{ message }}</div>
+            {% endif %}
+            {% if error %}
+            <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
+            {% endif %}
+
+
+            <!-- =====================================================
+                 FORMULARIO CREAR
+             ===================================================== -->
+
+            <section class="settings-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Nueva entrada de conocimiento</h3>
+                        <p>Agregá información que la IA debe conocer para responder a los clientes.</p>
+                    </div>
+                </div>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/conocimiento/crear" class="settings-form knowledge-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <label>
+                        Tipo
+                        <select name="type" required>
+                            <option value="faq">FAQ</option>
+                            <option value="instruction">Instrucción</option>
+                            <option value="policy">Política</option>
+                        </select>
+                    </label>
+
+                    <label class="settings-wide">
+                        Pregunta
+                        <textarea name="question" rows="2" required placeholder="Ej: ¿Aceptan transferencia?"></textarea>
+                    </label>
+
+                    <label class="settings-wide">
+                        Respuesta
+                        <textarea name="answer" rows="3" required placeholder="Ej: Sí, aceptamos transferencias al alias MINE.NEGOCIO."></textarea>
+                    </label>
+
+                    <label>
+                        Tags (opcional)
+                        <input type="text" name="tags" placeholder="Ej: pagos, transferencia, alias">
+                    </label>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Crear entrada</button>
+                    </div>
+                </form>
+
+            </section>
+
+
+            <!-- =====================================================
+                 LISTADO DE CONOCIMIENTO
+             ===================================================== -->
+
+            <section class="settings-card knowledge-list-card">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Base de conocimiento</h3>
+                        <p>Información que la IA utiliza para responder. Solo se usa la información activa.</p>
+                    </div>
+                </div>
+
+                {% if knowledge %}
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Tipo</th>
+                                <th scope="col">Pregunta</th>
+                                <th scope="col">Respuesta</th>
+                                <th scope="col">Tags</th>
+                                <th scope="col">Estado</th>
+                                <th scope="col">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in knowledge %}
+                            <tr>
+                                <td>
+                                    <span class="knowledge-type knowledge-type-{{ item.type }}">
+                                        {{ item.type|capitalize }}
+                                    </span>
+                                </td>
+                                <td>{{ item.question }}</td>
+                                <td>{{ item.answer }}</td>
+                                <td>
+                                    {% if item.tags %}
+                                    <span class="knowledge-tags">{{ item.tags }}</span>
+                                    {% else %}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <form method="POST" action="{{ admin_prefix or '' }}/admin/conocimiento/{{ item.id }}/editar" class="inline-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <label class="toggle-wrap">
+                                            <input type="checkbox" name="active" value="1" {% if item.active %}checked{% endif %}
+                                                   onchange="this.form.submit()">
+                                            <span class="toggle-label">{{ "Activo" if item.active else "Inactivo" }}</span>
+                                        </label>
+                                    </form>
+                                </td>
+                                <td>
+                                    <div class="knowledge-actions">
+                                        <button type="button" class="knowledge-edit-btn"
+                                                data-id="{{ item.id }}"
+                                                data-type="{{ item.type }}"
+                                                data-question="{{ item.question }}"
+                                                data-answer="{{ item.answer }}"
+                                                data-tags="{{ item.tags or '' }}"
+                                                data-active="{{ item.active }}"
+                                                aria-label="Editar entrada">
+                                            Editar
+                                        </button>
+                                        <form method="POST" action="{{ admin_prefix or '' }}/admin/conocimiento/{{ item.id }}/eliminar" class="inline-form"
+                                              onsubmit="return confirm('¿Eliminar esta entrada de conocimiento?');">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="danger-button knowledge-delete-btn"
+                                                    aria-label="Eliminar entrada">
+                                                Eliminar
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="empty-services">No hay entradas de conocimiento cargadas.</p>
+                {% endif %}
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+    <!-- Modal editar -->
+    <div class="modal-overlay" id="knowledge-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="edit-modal-title">Editar entrada</h3>
+                <button type="button" class="modal-close" aria-label="Cerrar">&times;</button>
+            </div>
+            <form method="POST" id="knowledge-edit-form" class="modal-body">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="knowledge_id" id="edit-knowledge-id">
+                <label>
+                    Tipo
+                    <select name="type" id="edit-type" required>
+                        <option value="faq">FAQ</option>
+                        <option value="instruction">Instrucción</option>
+                        <option value="policy">Política</option>
+                    </select>
+                </label>
+                <label class="settings-wide">
+                    Pregunta
+                    <textarea name="question" id="edit-question" rows="2" required></textarea>
+                </label>
+                <label class="settings-wide">
+                    Respuesta
+                    <textarea name="answer" id="edit-answer" rows="3" required></textarea>
+                </label>
+                <label>
+                    Tags
+                    <input type="text" name="tags" id="edit-tags">
+                </label>
+                <label class="toggle-wrap">
+                    <input type="checkbox" name="active" id="edit-active" value="1">
+                    <span class="toggle-label"><strong>Activo</strong></span>
+                </label>
+                <div class="modal-actions">
+                    <button type="button" class="refresh-button modal-cancel">Cancelar</button>
+                    <button type="submit" class="refresh-button">Guardar cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <script>
+        const dateElement = document.getElementById("current-date");
+        const now = new Date();
+        dateElement.textContent = now.toLocaleDateString("es-AR", {
+            weekday: "long", day: "numeric", month: "long", year: "numeric"
+        });
+
+        document.querySelectorAll('.schedule-day-checkbox input[type="checkbox"]').forEach(function(checkbox) {
+            checkbox.addEventListener('change', function() {
+                var row = this.closest('.schedule-day-row');
+                var timeInputs = row.querySelectorAll('.schedule-time-field input[type="time"]');
+                timeInputs.forEach(function(input) {
+                    input.disabled = !checkbox.checked;
+                });
+            });
+        });
+
+        // Modal editar conocimiento
+        (function() {
+            var modal = document.getElementById('knowledge-edit-modal');
+            var closeBtn = modal.querySelector('.modal-close');
+            var cancelBtn = modal.querySelector('.modal-cancel');
+            var form = document.getElementById('knowledge-edit-form');
+            var editBtns = document.querySelectorAll('.knowledge-edit-btn');
+
+            function openModal(btn) {
+                document.getElementById('edit-knowledge-id').value = btn.dataset.id;
+                document.getElementById('edit-type').value = btn.dataset.type;
+                document.getElementById('edit-question').value = btn.dataset.question;
+                document.getElementById('edit-answer').value = btn.dataset.answer;
+                document.getElementById('edit-tags').value = btn.dataset.tags || '';
+                document.getElementById('edit-active').checked = btn.dataset.active == 'true';
+                form.action = '{{ admin_prefix or "" }}/admin/conocimiento/' + btn.dataset.id + '/editar';
+                modal.classList.add('modal-visible');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeModal() {
+                modal.classList.remove('modal-visible');
+                document.body.style.overflow = '';
+            }
+
+            editBtns.forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    openModal(this);
+                });
+            });
+
+            closeBtn.addEventListener('click', closeModal);
+            cancelBtn.addEventListener('click', closeModal);
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) closeModal();
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.classList.contains('modal-visible')) {
+                    closeModal();
+                }
+            });
+        })();
+
+        // Sidebar toggle
+        (function() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('sidebar-toggle');
+            var overlay = document.getElementById('sidebar-overlay');
+
+            if (!sidebar || !toggleBtn || !overlay) return;
+
+            function openSidebar() {
+                sidebar.classList.add('sidebar-open');
+                overlay.classList.add('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Cerrar menú');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeSidebar() {
+                sidebar.classList.remove('sidebar-open');
+                overlay.classList.remove('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Abrir menú');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.body.style.overflow = '';
+            }
+
+            function toggleSidebar() {
+                if (sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
+            }
+
+            toggleBtn.addEventListener('click', toggleSidebar);
+            overlay.addEventListener('click', closeSidebar);
+
+            var navItems = sidebar.querySelectorAll('.nav-item');
+            navItems.forEach(function(item) {
+                item.addEventListener('click', function() {
+                    if (window.innerWidth <= 850) {
+                        closeSidebar();
+                    }
+                });
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                }
+            });
+        })();
+    </script>
+</body>
+
+</html>
