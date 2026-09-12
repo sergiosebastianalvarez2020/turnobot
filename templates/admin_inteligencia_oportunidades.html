@@ -7,7 +7,7 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>{{ business_name }} - Inteligencia</title>
+    <title>{{ business_name }} - Oportunidades de Mejora</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -131,13 +131,17 @@
 
                 <div>
 
-                    <h2>Inteligencia</h2>
+                    <h2>Oportunidades de Mejora</h2>
 
                     <p>
-                        Análisis de consultas de tus clientes para mejorar la IA.
+                        Preguntas frecuentes sin respuesta en la base de conocimiento.
                     </p>
 
                 </div>
+
+                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="back-link">
+                    ← Volver a Inteligencia
+                </a>
 
             </header>
 
@@ -151,156 +155,7 @@
 
 
             <!-- =====================================================
-                 ESTADÍSTICAS GENERALES
-             ===================================================== -->
-
-            <section class="settings-card">
-
-                <div class="section-header">
-                    <div>
-                        <h3>Resumen</h3>
-                    </div>
-                </div>
-
-                <div class="stats">
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.total_sessions }}</div>
-                        <div class="stat-label">Conversaciones</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.total_messages }}</div>
-                        <div class="stat-label">Mensajes</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.needs_human }}</div>
-                        <div class="stat-label">Requieren humano</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.resolved }}</div>
-                        <div class="stat-label">Resueltas</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.answered_by_ai }}</div>
-                        <div class="stat-label">Resueltas por IA</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.resolution_rate }}%</div>
-                        <div class="stat-label">Tasa de resolución IA</div>
-                    </div>
-                </div>
-
-            </section>
-
-
-            <!-- =====================================================
-                 PREGUNTAS FRECUENTES
-             ===================================================== -->
-
-            <section class="settings-card">
-
-                <div class="section-header">
-                    <div>
-                        <h3>🔥 Preguntas más frecuentes</h3>
-                        <p>Top consultas de tus clientes. Útil para detectar qué información falta en la base de conocimiento.</p>
-                    </div>
-                </div>
-
-                {% if frequent_questions %}
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th scope="col">#</th>
-                                <th scope="col">Pregunta</th>
-                                <th scope="col">Consultas</th>
-                                <th scope="col">Derivadas a humano</th>
-                                <th scope="col">Última vez</th>
-                                <th scope="col">Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for i, q in enumerate(frequent_questions) %}
-                            <tr>
-                                <td>{{ loop.index }}</td>
-                                <td>{{ q.question_text }}</td>
-                                <td><strong>{{ q.count }}</strong></td>
-                                <td>
-                                    {% if q.needs_human_count > 0 %}
-                                    <span class="needs-human-badge">{{ q.needs_human_count }}</span>
-                                    {% else %}
-                                    <span class="text-muted">—</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
-                                <td>
-                                    <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}&source=analytics" class="conv-btn">+ Agregar a conocimiento</a>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <p class="empty-services">No hay preguntas frecuentes registradas aún.</p>
-                {% endif %}
-
-            </section>
-
-
-            <!-- =====================================================
-                 PREGUNTAS SIN RESPUESTA
-             ===================================================== -->
-
-            <section class="settings-card unanswered-card">
-
-                <div class="section-header">
-                    <div>
-                        <h3>⚠️ Preguntas que la IA no pudo resolver</h3>
-                        <p>Preguntas que la IA no pudo responder y fueron derivadas a humano. Prioridad para agregar a la base de conocimiento.</p>
-                    </div>
-                </div>
-
-                {% if unanswered_questions %}
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th scope="col">#</th>
-                                <th scope="col">Pregunta</th>
-                                <th scope="col">Veces preguntada</th>
-                                <th scope="col">Derivaciones</th>
-                                <th scope="col">Última vez</th>
-                                <th scope="col">Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for i, q in enumerate(unanswered_questions) %}
-                            <tr>
-                                <td>{{ loop.index }}</td>
-                                <td>{{ q.question_text }}</td>
-                                <td><strong>{{ q.count }}</strong></td>
-                                <td><span class="needs-human-badge">{{ q.needs_human_count }}</span></td>
-                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
-                                <td>
-                                    <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}&source=analytics" class="conv-btn conv-btn-primary">+ Agregar a conocimiento</a>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    <span class="empty-icon">✅</span>
-                    <p>¡Todas las preguntas tienen respuesta! No hay derivaciones a humano pendientes.</p>
-                </div>
-                {% endif %}
-
-            </section>
-
-
-            <!-- =====================================================
-                 OPORTUNIDADES DE MEJORA
+                 OPORTUNIDADES DE MEJORA - LISTADO COMPLETO
              ===================================================== -->
 
             <section class="settings-card opportunities-card">
@@ -310,7 +165,6 @@
                         <h3>💡 Oportunidades de mejora</h3>
                         <p>Preguntas frecuentes que NO tienen entrada en la base de conocimiento. Agregarlas hará que la IA responda automáticamente.</p>
                     </div>
-                    <a href="{{ admin_prefix or '' }}/admin/inteligencia/oportunidades" class="conv-btn conv-btn-secondary">Ver todas →</a>
                 </div>
 
                 {% if opportunities %}
@@ -327,7 +181,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, q in enumerate(opportunities[:10]) %}
+                            {% for i, q in enumerate(opportunities) %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ q.question_text }}</td>
@@ -354,10 +208,6 @@
                     <p>¡No hay oportunidades pendientes! Todas las preguntas frecuentes están cubiertas por la base de conocimiento.</p>
                 </div>
                 {% endif %}
-
-                <div class="settings-actions">
-                    <a href="{{ admin_prefix or '' }}/admin/inteligencia/oportunidades" class="conv-btn">Ver lista completa</a>
-                </div>
 
             </section>
 

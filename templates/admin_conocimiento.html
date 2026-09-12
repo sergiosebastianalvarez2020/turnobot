@@ -139,6 +139,16 @@
             <div class="settings-feedback settings-error" role="alert">{{ error }}</div>
             {% endif %}
 
+            <!-- Pre-fill indicator when coming from analytics -->
+            {% set prefill_question = request.args.get('question', '') %}
+            {% set prefill_source = request.args.get('source', '') %}
+            {% if prefill_question and prefill_source == 'analytics' %}
+            <div class="settings-feedback settings-info" role="status">
+                📝 Formulario pre-cargado desde <strong>Inteligencia → Oportunidades</strong>.
+                La pregunta viene de una consulta real de un cliente.
+            </div>
+            {% endif %}
+
 
             <!-- =====================================================
                  FORMULARIO CREAR
@@ -159,7 +169,7 @@
                     <label>
                         Tipo
                         <select name="type" required>
-                            <option value="faq">FAQ</option>
+                            <option value="faq" {% if prefill_source == 'analytics' %}selected{% endif %}>FAQ</option>
                             <option value="instruction">Instrucción</option>
                             <option value="policy">Política</option>
                         </select>
@@ -167,7 +177,7 @@
 
                     <label class="settings-wide">
                         Pregunta
-                        <textarea name="question" rows="2" required placeholder="Ej: ¿Aceptan transferencia?"></textarea>
+                        <textarea name="question" rows="2" required placeholder="Ej: ¿Aceptan transferencia?">{{ prefill_question }}</textarea>
                     </label>
 
                     <label class="settings-wide">
@@ -177,7 +187,7 @@
 
                     <label>
                         Tags (opcional)
-                        <input type="text" name="tags" placeholder="Ej: pagos, transferencia, alias">
+                        <input type="text" name="tags" placeholder="Ej: pagos, transferencia, alias" value="{% if prefill_source == 'analytics' %}faq, cliente{% endif %}">
                     </label>
 
                     <div class="settings-actions">

@@ -41,6 +41,7 @@ from services.conversations import (
     get_unanswered_questions_scoped,
     get_conversation_stats_scoped,
     track_question_scoped,
+    get_opportunities_scoped,
 )
 from database.database import (
     get_business_settings,
@@ -2755,6 +2756,7 @@ def admin_inteligencia(slug=None):
 
     frequent_questions = get_frequent_questions_scoped(business_id, limit=50)
     unanswered_questions = get_unanswered_questions_scoped(business_id, limit=50)
+    opportunities = get_opportunities_scoped(business_id, limit=20)
     stats = get_conversation_stats_scoped(business_id)
 
     settings = get_business_settings_scoped(business_id)
@@ -2767,6 +2769,35 @@ def admin_inteligencia(slug=None):
         business_initials=business_initials,
         frequent_questions=frequent_questions,
         unanswered_questions=unanswered_questions,
+        opportunities=opportunities,
+        stats=stats,
+        message=request.args.get("inteligencia_message", ""),
+        error=request.args.get("inteligencia_error", ""),
+    )
+
+
+@app.route("/admin/inteligencia/oportunidades")
+@app.route("/b/<slug>/admin/inteligencia/oportunidades")
+def admin_inteligencia_oportunidades(slug=None):
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    opportunities = get_opportunities_scoped(business_id, limit=50)
+    stats = get_conversation_stats_scoped(business_id)
+
+    settings = get_business_settings_scoped(business_id)
+    business_name = settings["business_name"] if settings else "Mi negocio"
+    business_initials = settings["business_initials"] if settings else ""
+
+    return render_template(
+        "admin_inteligencia_oportunidades.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        opportunities=opportunities,
         stats=stats,
         message=request.args.get("inteligencia_message", ""),
         error=request.args.get("inteligencia_error", ""),

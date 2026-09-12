@@ -353,12 +353,44 @@ def get_conversation_stats_scoped(business_id):
         resolved = connection.execute(
             "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND status = 'human_resolved'", (business_id,)
         ).fetchone()[0]
+        answered_by_ai = total_sessions - needs_human
+        resolution_rate = round((answered_by_ai / total_sessions * 100) if total_sessions > 0 else 0, 1)
         return {
             "total_sessions": total_sessions,
             "total_messages": total_messages,
             "needs_human": needs_human,
             "resolved": resolved,
+            "answered_by_ai": answered_by_ai,
+            "resolution_rate": resolution_rate,
         }
+    finally:
+        connection.close()
+
+
+def get_opportunities_scoped(business_id, limit=20):
+    """
+    Detecta oportunidades de mejora: preguntas frecuentes en analytics
+    que NO tienen entrada en business_knowledge.
+    """
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT ca.question_text, ca.count, ca.needs_human_count, ca.last_seen_at
+            FROM conversation_analytics ca
+            LEFT JOIN business_knowledge bk
+                ON bk.business_id = ca.business_id
+                AND bk.active = 1
+                AND (bk.question LIKE '%' || ca.question_text || '%' 
+                     OR ca.question_text LIKE '%' || bk.question || '%')
+            WHERE ca.business_id = ?
+                AND bk.id IS NULL
+            ORDER BY ca.count DESC, ca.needs_human_count DESC, ca.last_seen_at DESC
+            LIMIT ?
+            """,
+            (business_id, limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
     finally:
         connection.close()
 

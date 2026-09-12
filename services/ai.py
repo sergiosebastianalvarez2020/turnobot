@@ -1521,6 +1521,7 @@ def ask_ai(
 
     session = None
     session_id = None
+    human_intent_detected = False
     if customer_phone:
         session = get_or_create_conversation_session_scoped(
             business_id, customer_phone, customer_name, customer_email
@@ -1531,6 +1532,10 @@ def ask_ai(
             add_conversation_message_scoped(session_id, business_id, "user", message)
             # Registrar pregunta para analytics
             track_question_scoped(business_id, message)
+            # Detectar intención de hablar con humano
+            if _detect_human_intent(message):
+                human_intent_detected = True
+                request_human_handoff_scoped(session_id, business_id)
 
 
     # ========================================================
@@ -1580,6 +1585,10 @@ def ask_ai(
             knowledge_lines.append(f"[INFO NEGOCIO] Pregunta: {entry['question']}\nRespuesta: {entry['answer']}")
         knowledge_text = "\n\n--- CONOCIMIENTO DEL NEGOCIO ---\n\n" + "\n\n".join(knowledge_lines)
 
+    human_intent_note = ""
+    if human_intent_detected:
+        human_intent_note = "\n\n--- NOTA: El cliente ha solicitado hablar con una persona. La derivación ya fue registrada. Informa al cliente que una persona se pondrá en contacto con él. ---"
+
     instructions = f"""
 {SYSTEM_PROMPT}
 
@@ -1609,6 +1618,7 @@ HORARIOS ACTUALES
 
 {business_hours_text}
 {knowledge_text}
+{human_intent_note}
 
 ============================================================
 FECHA ACTUAL
@@ -1989,7 +1999,7 @@ días de la semana y fechas relativas.
 
 
 def _detect_needs_human(text):
-    """Detecta si la respuesta indica que se necesita intervención humana.
+    """Detecta si la respuesta de la IA indica que se necesita intervención humana.
 
     Busca patrones que sugieren que la IA no pudo responder adecuadamente.
     """
@@ -2012,6 +2022,42 @@ def _detect_needs_human(text):
         "hablar con una persona",
         "atención humana",
         "personal del negocio",
+    ]
+    return any(pattern in text_lower for pattern in patterns)
+
+
+def _detect_human_intent(text):
+    """Detecta si el USUARIO está pidiendo hablar con una persona.
+
+    Se usa para ofrecer proactivamente el handoff humano.
+    """
+    if not text:
+        return False
+    text_lower = text.lower()
+    patterns = [
+        "hablar con una persona",
+        "hablar con alguien",
+        "hablar con un humano",
+        "hablar con una persona real",
+        "quiero hablar con alguien",
+        "quiero hablar con una persona",
+        "necesito hablar con alguien",
+        "necesito hablar con una persona",
+        "hablar con el dueño",
+        "hablar con el encargado",
+        "hablar con el responsable",
+        "no me entendiste",
+        "no me entiendes",
+        "no entendiste",
+        "no me entendés",
+        "no me entendés nada",
+        "no me sirve",
+        "esto no sirve",
+        "quiero cancelar",
+        "cancelar todo",
+        "hablar con atencion al cliente",
+        "atencion al cliente",
+        "soporte humano",
     ]
     return any(pattern in text_lower for pattern in patterns)
 
