@@ -17,6 +17,9 @@
         <h1>{{ code }}</h1>
         <p>{{ message }}</p>
         <p><a href="/">Volver al inicio</a></p>
+        {% if request_id and request_id != '-' %}
+        <p style="font-size: 13px; color: #888; margin-top: 24px;">ID de solicitud: <code>{{ request_id }}</code></p>
+        {% endif %}
     </div>
 </body>
 </html>

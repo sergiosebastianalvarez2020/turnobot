@@ -13,6 +13,7 @@ Cubre:
 - tool fallida no puede terminar en confirmación falsa
 """
 
+import json
 import logging
 import unittest
 from unittest import mock
@@ -589,6 +590,164 @@ class TestErrorFormatStandardization(unittest.TestCase):
         data = resp.get_json()
         self.assertIn("code", data)
         self.assertEqual(data["code"], "RATE_LIMITED")
+
+
+class TestObservabilityBlockEtapa15(unittest.TestCase):
+    """Tests específicos del bloque de Observabilidad y Manejo de Errores (Etapa 15)."""
+
+    def setUp(self):
+        self.original_hash = application.ADMIN_PASSWORD_HASH
+        self.original_password = application.ADMIN_PASSWORD
+        application.ADMIN_PASSWORD_HASH = None
+        application.ADMIN_PASSWORD = None
+        application.rate_limit_state.clear()
+
+    def tearDown(self):
+        application.ADMIN_PASSWORD_HASH = self.original_hash
+        application.ADMIN_PASSWORD = self.original_password
+        application.rate_limit_state.clear()
+
+    def test_logging_context_filter_in_request(self):
+        client = application.app.test_client()
+        with _LogCapture("el_corte.web") as cap:
+            resp = client.get("/health", headers={"X-Request-ID": "custom-req-id-123"})
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(len(cap.records) > 0)
+            rec = cap.records[-1]
+            self.assertEqual(rec.request_id, "custom-req-id-123")
+            self.assertEqual(rec.endpoint, "health")
+            self.assertEqual(rec.method, "GET")
+            self.assertEqual(rec.path, "/health")
+            self.assertEqual(rec.business_id, "1")
+
+    def test_logging_context_filter_outside_request(self):
+        filt = application.RequestContextFilter()
+        rec = logging.LogRecord("test", logging.INFO, "path", 1, "msg", (), None)
+        filt.filter(rec)
+        self.assertEqual(rec.request_id, "-")
+        self.assertEqual(rec.business_id, "-")
+        self.assertEqual(rec.endpoint, "-")
+        self.assertEqual(rec.method, "-")
+        self.assertEqual(rec.path, "-")
+
+    def test_structured_formatter_plaintext(self):
+        formatter = application.StructuredFormatter()
+        rec = logging.LogRecord("test.logger", logging.INFO, "path", 1, "Operacion exitosa", (), None)
+        rec.request_id = "req-abc"
+        rec.business_id = "10"
+        rec.endpoint = "api_turnos"
+        rec.method = "POST"
+        rec.path = "/api/turnos"
+        formatted = formatter.format(rec)
+        self.assertIn("[req-abc]", formatted)
+        self.assertIn("[b:10]", formatted)
+        self.assertIn("[POST api_turnos]", formatted)
+        self.assertIn("Operacion exitosa", formatted)
+
+    def test_structured_formatter_json(self):
+        formatter = application.StructuredFormatter()
+        rec = logging.LogRecord("test.logger", logging.WARNING, "path", 1, "Alerta de sistema", (), None)
+        rec.request_id = "req-xyz"
+        rec.business_id = "5"
+        rec.endpoint = "chat"
+        rec.method = "POST"
+        rec.path = "/chat"
+        rec.status_code = 200
+        rec.latency_ms = 45.2
+
+        with mock.patch.object(application, "USE_JSON_LOGS", True):
+            formatted = formatter.format(rec)
+            data = json.loads(formatted)
+            self.assertEqual(data["level"], "WARNING")
+            self.assertEqual(data["logger"], "test.logger")
+            self.assertEqual(data["message"], "Alerta de sistema")
+            self.assertEqual(data["request_id"], "req-xyz")
+            self.assertEqual(data["business_id"], "5")
+            self.assertEqual(data["endpoint"], "chat")
+            self.assertEqual(data["method"], "POST")
+            self.assertEqual(data["path"], "/chat")
+            self.assertEqual(data["status_code"], 200)
+            self.assertEqual(data["latency_ms"], 45.2)
+
+    def test_after_request_correlation_log(self):
+        client = application.app.test_client()
+        with _LogCapture("el_corte.web") as cap:
+            resp = client.get("/health")
+            self.assertEqual(resp.status_code, 200)
+            correlation_records = [
+                r for r in cap.records
+                if "HTTP GET /health -> 200" in r.getMessage()
+            ]
+            self.assertTrue(len(correlation_records) >= 1)
+            record = correlation_records[0]
+            self.assertEqual(record.status_code, 200)
+            self.assertIsNotNone(record.latency_ms)
+            self.assertGreaterEqual(record.latency_ms, 0)
+
+    def test_after_request_correlation_omits_static(self):
+        client = application.app.test_client()
+        with _LogCapture("el_corte.web") as cap:
+            client.get("/static/css/style.css")
+            static_records = [
+                r for r in cap.records
+                if "/static/" in r.getMessage() and r.getMessage().startswith("HTTP ")
+            ]
+            self.assertEqual(len(static_records), 0)
+
+    def test_html_error_400_status_code(self):
+        with application.app.test_request_context("/", headers={"Accept": "text/html"}):
+            err = mock.Mock(description="Solicitud malformada")
+            resp, code = application.handle_400(err)
+            self.assertEqual(code, 400)
+            self.assertIn("400", resp)
+            self.assertIn("Solicitud malformada", resp)
+
+    def test_html_error_500_status_code(self):
+        with mock.patch.dict(application.app.view_functions, {"index": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_html"))}):
+            client = application.app.test_client()
+            application.app.config["PROPAGATE_EXCEPTIONS"] = False
+            resp = client.get("/", headers={"Accept": "text/html"})
+            self.assertEqual(resp.status_code, 500)
+            self.assertIn("text/html", resp.content_type)
+            body = resp.get_data(as_text=True)
+            self.assertIn("500", body)
+            self.assertNotIn("error_interno_confidencial_html", body)
+            self.assertNotIn("Traceback", body)
+
+    def test_multitenant_api_path_returns_json_error(self):
+        client = application.app.test_client()
+        resp = client.get("/b/negocio-demo/api/inexistente")
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn("application/json", resp.content_type)
+        data = resp.get_json()
+        self.assertIsNotNone(data)
+        self.assertFalse(data["success"])
+        self.assertEqual(data["code"], "NOT_FOUND")
+        self.assertIn("request_id", data)
+
+    def test_unhandled_exception_returns_json_when_requested(self):
+        with mock.patch.dict(application.app.view_functions, {"api_servicios": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_db"))}):
+            client = application.app.test_client()
+            application.app.config["PROPAGATE_EXCEPTIONS"] = False
+            resp = client.get("/api/servicios", headers={"Accept": "application/json"})
+            self.assertEqual(resp.status_code, 500)
+            self.assertIn("application/json", resp.content_type)
+            data = resp.get_json()
+            self.assertFalse(data["success"])
+            self.assertEqual(data["code"], "INTERNAL_ERROR")
+            self.assertEqual(data["error"], "Error interno del servidor.")
+            self.assertIn("request_id", data)
+            body = resp.get_data(as_text=True)
+            self.assertNotIn("error_interno_confidencial_db", body)
+            self.assertNotIn("Traceback", body)
+
+    def test_error_html_displays_request_id(self):
+        client = application.app.test_client()
+        resp = client.get("/pagina-que-no-existe", headers={"X-Request-ID": "mi-request-id-visible-999"})
+        self.assertEqual(resp.status_code, 404)
+        body = resp.get_data(as_text=True)
+        self.assertIn("mi-request-id-visible-999", body)
+        self.assertIn("ID de solicitud:", body)
 
 
 if __name__ == "__main__":

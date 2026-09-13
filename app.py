@@ -14,10 +14,10 @@ from time import monotonic
 import datetime
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import HTTPException
 
 from dotenv import load_dotenv
-from flask import Flask, abort, g, render_template, request, jsonify, session, redirect, url_for
-from werkzeug.security import check_password_hash, generate_password_hash
+from flask import Flask, abort, g, render_template, request, jsonify, session, redirect, url_for, has_request_context
 
 from services.ai import ask_ai
 from services.notifications import (
@@ -137,45 +137,124 @@ file_handler = RotatingFileHandler(
 )
 
 
+class RequestContextFilter(logging.Filter):
+    """Inyecta contexto HTTP en cada registro de log (request_id, business_id, endpoint, method, path)."""
+
+    def filter(self, record):
+        if has_request_context():
+            try:
+                existing_rid = getattr(record, "request_id", None)
+                if existing_rid and existing_rid != "-":
+                    record.request_id = existing_rid
+                else:
+                    record.request_id = getattr(g, "request_id", None) or request.headers.get("X-Request-ID", "").strip() or "-"
+            except Exception:
+                record.request_id = "-"
+
+            try:
+                existing_bid = getattr(record, "business_id", None)
+                if existing_bid and existing_bid != "-":
+                    record.business_id = str(existing_bid)
+                else:
+                    business_id = getattr(g, "business_id", None)
+                    if business_id is None:
+                        curr = getattr(g, "current_business", None)
+                        if isinstance(curr, dict):
+                            business_id = curr.get("id")
+                        elif curr is not None:
+                            try:
+                                business_id = curr["id"]
+                            except Exception:
+                                business_id = None
+                    record.business_id = str(business_id) if business_id is not None else "-"
+            except Exception:
+                record.business_id = "-"
+
+            try:
+                record.endpoint = getattr(g, "endpoint", None) or request.endpoint or "-"
+            except Exception:
+                record.endpoint = "-"
+
+            try:
+                record.method = getattr(g, "method", None) or request.method or "-"
+            except Exception:
+                record.method = "-"
+
+            try:
+                record.path = getattr(g, "path", None) or request.path or "-"
+            except Exception:
+                record.path = "-"
+        else:
+            if not hasattr(record, "request_id") or getattr(record, "request_id") is None:
+                record.request_id = "-"
+            if not hasattr(record, "business_id") or getattr(record, "business_id") is None:
+                record.business_id = "-"
+            if not hasattr(record, "endpoint") or getattr(record, "endpoint") is None:
+                record.endpoint = "-"
+            if not hasattr(record, "method") or getattr(record, "method") is None:
+                record.method = "-"
+            if not hasattr(record, "path") or getattr(record, "path") is None:
+                record.path = "-"
+        return True
+
+
+RequestIdFilter = RequestContextFilter
+
+
 class StructuredFormatter(logging.Formatter):
-    """Formatter que emite logs en JSON con contexto structured (request_id, endpoint, método, business_id)."""
+    """Formatter que emite logs en JSON o texto consistente con contexto enriquecido."""
 
     def format(self, record):
+        try:
+            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        req_id = getattr(record, "request_id", "-")
+        biz_id = getattr(record, "business_id", "-")
+        endpoint = getattr(record, "endpoint", "-")
+        method = getattr(record, "method", "-")
+        path = getattr(record, "path", "-")
+
         log_data = {
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timestamp": ts,
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "request_id": req_id,
+            "business_id": biz_id,
+            "endpoint": endpoint,
+            "method": method,
+            "path": path,
         }
-        for attr in ("request_id", "endpoint", "method", "business_id"):
+        for attr in ("status_code", "latency_ms"):
             val = getattr(record, attr, None)
             if val is not None:
                 log_data[attr] = val
-        if record.exc_info and USE_JSON_LOGS:
+
+        if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_data) if USE_JSON_LOGS else (
-            f"{log_data['timestamp']} {log_data['level']} {log_data['logger']} "
-            f"[{log_data.get('request_id', '-')}] {log_data['message']}"
-        )
+
+        if USE_JSON_LOGS:
+            return json.dumps(log_data)
+
+        context_part = f"[{req_id}] [b:{biz_id}] [{method} {endpoint}]"
+        extra_info = ""
+        if hasattr(record, "status_code") or hasattr(record, "latency_ms"):
+            status_val = getattr(record, "status_code", "-")
+            lat_val = getattr(record, "latency_ms", "-")
+            extra_info = f" (status={status_val} lat={lat_val}ms)"
+        exc_part = f"\n{self.formatException(record.exc_info)}" if record.exc_info else ""
+        return f"{ts} {record.levelname} {record.name} {context_part} {record.getMessage()}{extra_info}{exc_part}"
 
 
 file_handler.setFormatter(StructuredFormatter())
 
-
-class RequestIdFilter(logging.Filter):
-    """Inyecta request_id en cada registro de log."""
-
-    def filter(self, record):
-        try:
-            record.request_id = getattr(g, "request_id", None) or "-"
-        except RuntimeError:
-            record.request_id = "-"
-        return True
-
-
 for handler in logging.getLogger().handlers:
-    handler.addFilter(RequestIdFilter())
-file_handler.addFilter(RequestIdFilter())
+    handler.addFilter(RequestContextFilter())
+    if USE_JSON_LOGS:
+        handler.setFormatter(StructuredFormatter())
+file_handler.addFilter(RequestContextFilter())
 
 logger = logging.getLogger("el_corte.web")
 
@@ -267,19 +346,28 @@ def load_current_business():
     g.request_id = request_id
     g.endpoint = request.endpoint or "-"
     g.method = request.method
+    g.path = request.path
+    g.start_time = monotonic()
 
     if request.path.startswith("/b/"):
         if slug is None:
             g.current_business = None
+            g.business_id = None
             return abort(404)
         g.current_business = resolve_business(slug)
         if g.current_business is None:
             if hasattr(g, "current_business"):
                 delattr(g, "current_business")
+            g.business_id = None
             return abort(404)
+        g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
         return None
 
     g.current_business = resolve_business()
+    if g.current_business:
+        g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
+    else:
+        g.business_id = None
     return None
 
 
@@ -396,6 +484,22 @@ def add_security_headers(response):
         response.headers.setdefault("X-Request-ID", request_id)
     if os.getenv("FLASK_ENV") == "production":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+    # Correlación de petición HTTP (omitir /static/ para evitar ruido)
+    if not request.path.startswith("/static/"):
+        start_time = getattr(g, "start_time", None)
+        latency_ms = round((monotonic() - start_time) * 1000, 2) if start_time else 0.0
+        logger.info(
+            "HTTP %s %s -> %s (%sms)",
+            request.method,
+            request.path,
+            response.status_code,
+            latency_ms,
+            extra={
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+        )
     return response
 
 
@@ -407,6 +511,7 @@ _ERROR_MESSAGES = {
     400: "Solicitud inválida.",
     403: "Acceso prohibido.",
     404: "Recurso no encontrado.",
+    405: "Método no permitido.",
     429: "Demasiadas solicitudes. Intentá nuevamente en unos momentos.",
     500: "Error interno del servidor.",
 }
@@ -416,6 +521,7 @@ def _is_json_request():
     return (
         request.is_json
         or request.path.startswith("/api/")
+        or "/api/" in request.path
         or (request.headers.get("Accept", "") and "json" in request.headers.get("Accept", ""))
     )
 
@@ -434,7 +540,8 @@ def _html_error(code, message):
         "error.html",
         code=code,
         message=message,
-    )
+        request_id=getattr(g, "request_id", None) or "-",
+    ), code
 
 
 @app.errorhandler(400)
@@ -450,15 +557,17 @@ def handle_403(error):
     message = getattr(error, "description", None) or _ERROR_MESSAGES[403]
     if _is_json_request():
         return _json_error("FORBIDDEN", message), 403
-    return _html_error(403, message), 403
+    return _html_error(403, message)
 
 
 @app.errorhandler(404)
 def handle_404(error):
-    message = _ERROR_MESSAGES[404]
+    message = getattr(error, "description", None) or _ERROR_MESSAGES[404]
+    if not message or "The requested URL was not found" in message:
+        message = _ERROR_MESSAGES[404]
     if _is_json_request():
         return _json_error("NOT_FOUND", message), 404
-    return _html_error(404, message), 404
+    return _html_error(404, message)
 
 
 @app.errorhandler(405)
@@ -466,7 +575,7 @@ def handle_405(error):
     message = "Método no permitido."
     if _is_json_request():
         return _json_error("METHOD_NOT_ALLOWED", message), 405
-    return _html_error(405, message), 405
+    return _html_error(405, message)
 
 
 @app.errorhandler(429)
@@ -474,12 +583,23 @@ def handle_429(error):
     message = _ERROR_MESSAGES[429]
     if _is_json_request():
         return _json_error("RATE_LIMITED", message), 429
-    return _html_error(429, message), 429
+    return _html_error(429, message)
 
 
 @app.errorhandler(500)
 def handle_500(error):
     logger.exception("Error 500: %s", getattr(error, "description", str(error)))
+    message = _ERROR_MESSAGES[500]
+    if _is_json_request():
+        return _json_error("INTERNAL_ERROR", message), 500
+    return _html_error(500, message)
+
+
+@app.errorhandler(Exception)
+def handle_unhandled_exception(error):
+    if isinstance(error, HTTPException):
+        return error
+    logger.exception("Excepción no controlada: %s", error)
     message = _ERROR_MESSAGES[500]
     if _is_json_request():
         return _json_error("INTERNAL_ERROR", message), 500
