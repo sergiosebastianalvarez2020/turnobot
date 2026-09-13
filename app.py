@@ -808,6 +808,7 @@ def logout_slug(slug):
 # ============================================================
 
 FORGOT_REQUEST_LIMIT = 5
+REGISTRO_REQUEST_LIMIT = 3
 
 
 @app.route("/forgot", methods=["GET", "POST"])
@@ -842,6 +843,61 @@ def forgot_password():
         "forgot.html",
         business_name=business_name,
         sent=request.args.get("sent") == "1",
+    )
+
+
+# ============================================================
+# REGISTRO PÚBLICO DE NEGOCIOS
+# ============================================================
+
+@app.route("/registro", methods=["GET", "POST"])
+def registro():
+    """Formulario público para solicitar el alta de un nuevo negocio.
+
+    Un usuario anónimo puede solicitar el alta sin ser superadmin.
+    El negocio se crea en estado pending (active=0, pending=1) y requiere
+    aprobación manual del superadmin antes de activarse.
+    """
+    if request.method == "POST":
+        if not valid_csrf_token(request.form.get("csrf_token")):
+            return "Solicitud no válida", 400
+        if not _is_request_allowed(
+            _rate_limit_key("registro", get_client_ip()), REGISTRO_REQUEST_LIMIT
+        ):
+            return redirect(url_for("registro", error=" Demasiadas solicitudes. Intentá nuevamente en unos minutos."))
+
+        business_name = (request.form.get("business_name", "") or "").strip()
+        slug = (request.form.get("slug", "") or "").strip().lower()
+        owner_email = (request.form.get("owner_email", "") or "").strip().lower()
+
+        if not business_name:
+            return redirect(url_for("registro", error=" El nombre del negocio es obligatorio."))
+
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", owner_email):
+            return redirect(url_for("registro", error=" Ingresá un email válido."))
+
+        try:
+            result = platform_service.provision_business(business_name, slug or None, owner_email)
+        except Exception:
+            return redirect(url_for("registro", error=" No se pudo crear el negocio. Intentá con otro nombre, slug o email."))
+
+        if not result["success"]:
+            return redirect(url_for("registro", error=" No se pudo crear el negocio. Intentá con otro nombre o slug."))
+
+        business_id = result["business_id"]
+        send_apply_confirmation_email(owner_email, business_name)
+        send_apply_notice_to_superadmin(business_name, business_id)
+        return redirect(url_for("registro", sent="1"))
+
+    error = request.args.get("error")
+    sent = request.args.get("sent") == "1"
+    settings = get_business_settings()
+    business_name = settings["business_name"] if settings and settings["business_name"] else "TurnoBot"
+    return render_template(
+        "registro.html",
+        business_name=business_name,
+        sent=sent,
+        error=error,
     )
 
 
