@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import socket
 from datetime import datetime
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -9,10 +10,6 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
-
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 from services.appointments import (
     get_available_times,
@@ -84,12 +81,11 @@ MAX_TOOL_ITERATIONS = 5
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CONTENT_LENGTH = 2_000
 MAX_HISTORY_TOTAL_CHARS = int(os.getenv("GEMINI_MAX_TOTAL_CHARS", "8000"))
+MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 0.1
 RETRY_BACKOFF_MAX = 1.0
-
-MAX_TOOL_ITERATIONS = 5
 
 
 def get_business_identity(business_id=None):
@@ -128,8 +124,23 @@ def _classify_gemini_error(error):
     - is_transient: True si puede reintentarse
     - error_type: string corto para logging
     """
-    if isinstance(error, TimeoutError):
+    if isinstance(error, (TimeoutError, socket.timeout)):
         return "timeout", True, "TimeoutError"
+
+    try:
+        import httpx
+        if isinstance(error, httpx.TimeoutException):
+            return "timeout", True, "HttpTimeout"
+        if isinstance(error, (httpx.ConnectError, httpx.NetworkError)):
+            return "server", True, error.__class__.__name__
+    except ImportError:
+        pass
+
+    if isinstance(error, ConnectionError):
+        return "server", True, "ConnectionError"
+
+    if isinstance(error, OSError):
+        return "server", True, "OSError"
 
     if isinstance(error, (genai_errors.APIError,)):
         status = getattr(error, "status", None)
@@ -199,7 +210,7 @@ def _gemini_error_message(category):
 def _call_gemini_with_retry(contents, config, request_id=None, business_id=None):
     """Llama a Gemini con retry acotado para errores transitorios.
 
-    Registra latencia, intentos y tipo de error.
+    Registra latencia, intentos, tipo de error y uso de tokens.
     Devuelve (response, attempt_count, error_info).
     """
     last_error = None
@@ -213,6 +224,21 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
                 config=config,
             )
             latency_ms = int((monotonic() - start) * 1000)
+
+            prompt_tokens = None
+            candidate_tokens = None
+            total_tokens = None
+            usage = getattr(response, "usage_metadata", None)
+            if usage is not None:
+                if isinstance(usage, dict):
+                    prompt_tokens = usage.get("prompt_token_count")
+                    candidate_tokens = usage.get("candidates_token_count")
+                    total_tokens = usage.get("total_token_count")
+                else:
+                    prompt_tokens = getattr(usage, "prompt_token_count", None)
+                    candidate_tokens = getattr(usage, "candidates_token_count", None)
+                    total_tokens = getattr(usage, "total_token_count", None)
+
             _log_gemini_call(
                 request_id=request_id,
                 business_id=business_id,
@@ -220,6 +246,9 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
                 attempt=attempt,
                 status="success",
                 error_type=None,
+                prompt_tokens=prompt_tokens,
+                candidate_tokens=candidate_tokens,
+                total_tokens=total_tokens,
             )
             return response, attempt, None
         except Exception as error:
@@ -239,20 +268,28 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
             delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
             import time as _time
             _time.sleep(delay)
-    return None, attempt, _classify_gemini_error(last_error)
+
+    if last_error is not None:
+        cat, _, err_t = _classify_gemini_error(last_error)
+        return None, attempt, (cat, err_t)
+    return None, attempt, ("unknown", "UnknownError")
 
 
 def _log_gemini_call(request_id=None, business_id=None, latency_ms=0,
-                     attempt=0, status="unknown", error_type=None):
-    """Registra una llamada a Gemini con contexto estructurado."""
+                     attempt=0, status="unknown", error_type=None,
+                     prompt_tokens=None, candidate_tokens=None, total_tokens=None):
+    """Registra una llamada a Gemini con contexto estructurado y métricas de tokens."""
     logger.info(
-        "gemini_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s error_type=%s",
+        "gemini_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s error_type=%s prompt_tokens=%s candidate_tokens=%s total_tokens=%s",
         request_id or "-",
         business_id or "-",
         latency_ms,
         attempt,
         status,
         error_type or "-",
+        prompt_tokens if prompt_tokens is not None else "-",
+        candidate_tokens if candidate_tokens is not None else "-",
+        total_tokens if total_tokens is not None else "-",
     )
 
 
@@ -1856,6 +1893,8 @@ días de la semana y fechas relativas.
         ],
 
         temperature=0.2,
+
+        max_output_tokens=MAX_OUTPUT_TOKENS,
 
         automatic_function_calling=(
             types.AutomaticFunctionCallingConfig(

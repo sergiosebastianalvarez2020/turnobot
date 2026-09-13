@@ -15,6 +15,7 @@ Cubre:
 
 import json
 import logging
+import re
 import unittest
 from unittest import mock
 
@@ -48,9 +49,10 @@ class _LogCapture:
 
 class _MockResponse:
     """Simula una respuesta de Gemini con candidates."""
-    def __init__(self, text=None, function_calls=None, tool_iterations=None):
+    def __init__(self, text=None, function_calls=None, tool_iterations=None, usage_metadata=None):
         self.text = text
         self.tool_iterations = tool_iterations
+        self.usage_metadata = usage_metadata
         if function_calls is None:
             self.candidates = []
             if text is not None:
@@ -361,6 +363,40 @@ class TestGeminiRetryLogic(unittest.TestCase):
                 self.assertEqual(attempt, 1)
                 mock_sleep.assert_not_called()
 
+    def test_retry_on_connection_error(self):
+        ai.client = None
+        err = ConnectionError("connection reset by peer")
+        mock_client = _MockGenAIClient(errors=[err, None], responses=[_MockResponse(text="recuperado")])
+        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
+            with mock.patch("time.sleep"):
+                response, attempt, error_info = ai._call_gemini_with_retry([], None)
+                self.assertIsNotNone(response)
+                self.assertEqual(attempt, 2)
+                self.assertIsNone(error_info)
+
+    def test_retry_on_socket_timeout(self):
+        import socket
+        ai.client = None
+        err = socket.timeout("timed out")
+        mock_client = _MockGenAIClient(errors=[err, None], responses=[_MockResponse(text="recuperado")])
+        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
+            with mock.patch("time.sleep"):
+                response, attempt, error_info = ai._call_gemini_with_retry([], None)
+                self.assertIsNotNone(response)
+                self.assertEqual(attempt, 2)
+                self.assertIsNone(error_info)
+
+    def test_retry_residual_return_contract(self):
+        ai.client = None
+        err = genai_errors.ClientError(400, {"status": "INVALID_ARGUMENT", "message": "bad argument"})
+        mock_client = _MockGenAIClient(errors=[err])
+        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
+            response, attempt, error_info = ai._call_gemini_with_retry([], None)
+            self.assertIsNone(response)
+            self.assertEqual(len(error_info), 2)
+            category, error_type = error_info
+            self.assertEqual(category, "invalid_argument")
+
 
 class TestGeminiMetrics(unittest.TestCase):
 
@@ -419,6 +455,20 @@ class TestGeminiMetrics(unittest.TestCase):
                 iter_records = [r for r in cap.records if "tool_iterations=" in r.getMessage()]
                 self.assertTrue(len(iter_records) > 0)
                 self.assertIn("tool_iterations=1", iter_records[0].getMessage())
+
+    def test_usage_metadata_logged_when_present(self):
+        ai.client = None
+        usage = mock.Mock(prompt_token_count=120, candidates_token_count=35, total_token_count=155)
+        mock_client = _MockGenAIClient(responses=[_MockResponse(text="test tokens", usage_metadata=usage)])
+        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
+            with _LogCapture("el_corte") as cap:
+                response, attempt, _ = ai._call_gemini_with_retry([], None)
+                self.assertIsNotNone(response)
+                records = [r for r in cap.records if "prompt_tokens=120" in r.getMessage()]
+                self.assertTrue(len(records) > 0)
+                msg = records[0].getMessage()
+                self.assertIn("candidate_tokens=35", msg)
+                self.assertIn("total_tokens=155", msg)
 
 
 class TestHistoryLimit(unittest.TestCase):
@@ -748,6 +798,40 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("mi-request-id-visible-999", body)
         self.assertIn("ID de solicitud:", body)
+
+
+class TestGeminiTechnicalRobustness(unittest.TestCase):
+    """Verifica max_output_tokens y unicidad de constantes."""
+
+    def test_max_output_tokens_configured(self):
+        self.assertTrue(hasattr(ai, "MAX_OUTPUT_TOKENS"))
+        self.assertGreater(ai.MAX_OUTPUT_TOKENS, 0)
+        ai.client = None
+        captured_config = []
+
+        def mock_generate(model=None, contents=None, config=None):
+            captured_config.append(config)
+            return _MockResponse(text="ok")
+
+        mock_client = mock.Mock()
+        mock_client.models.generate_content.side_effect = mock_generate
+
+        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client), \
+             mock.patch.object(ai, "get_services_prompt", return_value=""), \
+             mock.patch.object(ai, "get_business_hours_prompt", return_value=""), \
+             mock.patch.object(ai, "get_business_identity", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
+             mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
+             mock.patch("services.ai.search_knowledge_scoped", return_value=[]), \
+             mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None):
+            ai.ask_ai("hola", business_id=1)
+            self.assertTrue(len(captured_config) > 0)
+            self.assertEqual(captured_config[0].max_output_tokens, ai.MAX_OUTPUT_TOKENS)
+
+    def test_max_tool_iterations_defined_once(self):
+        import inspect
+        source = inspect.getsource(ai)
+        matches = re.findall(r"^MAX_TOOL_ITERATIONS\s*=", source, flags=re.MULTILINE)
+        self.assertEqual(len(matches), 1)
 
 
 if __name__ == "__main__":
