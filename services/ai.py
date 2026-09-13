@@ -1,7 +1,14 @@
 import logging
 import os
+import re
 from datetime import datetime
+from time import monotonic
 from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+from google.genai import errors as genai_errors
 
 from dotenv import load_dotenv
 from google import genai
@@ -73,6 +80,17 @@ MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
 
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
+MAX_TOOL_ITERATIONS = 5
+MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_CONTENT_LENGTH = 2_000
+MAX_HISTORY_TOTAL_CHARS = int(os.getenv("GEMINI_MAX_TOTAL_CHARS", "8000"))
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 0.1
+RETRY_BACKOFF_MAX = 1.0
+
+MAX_TOOL_ITERATIONS = 5
+
 
 def get_business_identity(business_id=None):
     if business_id is None:
@@ -88,7 +106,154 @@ def get_business_identity(business_id=None):
         "timezone": DEFAULT_TIMEZONE,
     }
 
-MAX_TOOL_ITERATIONS = 5
+
+# ============================================================
+# GEMINI ERROR CLASSIFICATION & RETRY
+# ============================================================
+
+# Status strings used by the Google API (gemini status field on APIError).
+_TRANSIENT_STATUSES = {
+    "DEADLINE_EXCEEDED",
+    "UNAVAILABLE",
+    "RESOURCE_EXHAUSTED",
+    "INTERNAL",
+}
+
+
+def _classify_gemini_error(error):
+    """Clasifica un error de Gemini en una categoría para logging y retry.
+
+    Devuelve (category, is_transient, error_type).
+    - category: 'timeout', 'quota', 'auth', 'invalid_argument', 'server', 'unknown'
+    - is_transient: True si puede reintentarse
+    - error_type: string corto para logging
+    """
+    if isinstance(error, TimeoutError):
+        return "timeout", True, "TimeoutError"
+
+    if isinstance(error, (genai_errors.APIError,)):
+        status = getattr(error, "status", None)
+        code = getattr(error, "code", None)
+        if status == "UNAUTHENTICATED" or code == 401:
+            return "auth", False, "UNAUTHENTICATED"
+        if status == "PERMISSION_DENIED" or code == 403:
+            return "auth", False, "PERMISSION_DENIED"
+        if status == "INVALID_ARGUMENT" or code == 400:
+            return "invalid_argument", False, "INVALID_ARGUMENT"
+        if status == "NOT_FOUND" or code == 404:
+            return "invalid_argument", False, "NOT_FOUND"
+        if status == "DEADLINE_EXCEEDED":
+            return "timeout", True, "DEADLINE_EXCEEDED"
+        if status == "RESOURCE_EXHAUSTED" or code == 429:
+            return "quota", True, "RESOURCE_EXHAUSTED"
+        if status == "UNAVAILABLE" or code == 503:
+            return "server", True, "UNAVAILABLE"
+        if status == "INTERNAL" or (isinstance(code, int) and 500 <= code < 600):
+            return "server", True, "INTERNAL"
+        if status is not None:
+            return "unknown", False, str(status)
+        return "unknown", False, "APIError"
+
+    if isinstance(error, ValueError):
+        return "invalid_argument", False, "ValueError"
+
+    return "unknown", False, error.__class__.__name__
+
+
+def _is_transient_error(error):
+    """True si el error es transitorio y merece retry."""
+    _, is_transient, _ = _classify_gemini_error(error)
+    return is_transient
+
+
+def _gemini_error_message(category):
+    """Devuelve un mensaje amigable según la categoría de error."""
+    messages = {
+        "timeout": (
+            "Disculpá, la consulta tardó demasiado. "
+            "Por favor, intentá nuevamente en unos momentos."
+        ),
+        "quota": (
+            "Disculpá, el servicio de IA está temporalmente con limitaciones. "
+            "Por favor, intentá nuevamente en unos minutos."
+        ),
+        "auth": (
+            "Disculpá, en este momento estoy teniendo "
+            "un problema para procesar tu consulta."
+        ),
+        "invalid_argument": (
+            "Disculpá, no pude procesar tu consulta. "
+            "Por favor, intentá formularla de otra manera."
+        ),
+        "server": (
+            "Disculpá, en este momento estoy teniendo "
+            "un problema para procesar tu consulta."
+        ),
+    }
+    return messages.get(category, (
+        "Disculpá, en este momento estoy teniendo "
+        "un problema para procesar tu consulta."
+    ))
+
+
+def _call_gemini_with_retry(contents, config, request_id=None, business_id=None):
+    """Llama a Gemini con retry acotado para errores transitorios.
+
+    Registra latencia, intentos y tipo de error.
+    Devuelve (response, attempt_count, error_info).
+    """
+    last_error = None
+    attempt = 0
+    for attempt in range(1, MAX_RETRIES + 1):
+        start = monotonic()
+        try:
+            response = get_gemini_client().models.generate_content(
+                model=MODEL,
+                contents=contents,
+                config=config,
+            )
+            latency_ms = int((monotonic() - start) * 1000)
+            _log_gemini_call(
+                request_id=request_id,
+                business_id=business_id,
+                latency_ms=latency_ms,
+                attempt=attempt,
+                status="success",
+                error_type=None,
+            )
+            return response, attempt, None
+        except Exception as error:
+            latency_ms = int((monotonic() - start) * 1000)
+            category, is_transient, error_type = _classify_gemini_error(error)
+            _log_gemini_call(
+                request_id=request_id,
+                business_id=business_id,
+                latency_ms=latency_ms,
+                attempt=attempt,
+                status="error",
+                error_type=error_type,
+            )
+            last_error = error
+            if not is_transient or attempt >= MAX_RETRIES:
+                return None, attempt, (category, error_type)
+            delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
+            import time as _time
+            _time.sleep(delay)
+    return None, attempt, _classify_gemini_error(last_error)
+
+
+def _log_gemini_call(request_id=None, business_id=None, latency_ms=0,
+                     attempt=0, status="unknown", error_type=None):
+    """Registra una llamada a Gemini con contexto estructurado."""
+    logger.info(
+        "gemini_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s error_type=%s",
+        request_id or "-",
+        business_id or "-",
+        latency_ms,
+        attempt,
+        status,
+        error_type or "-",
+    )
 
 
 # ============================================================
@@ -1229,6 +1394,26 @@ def build_contents(
     return contents
 
 
+def truncate_history_by_total_chars(contents, max_total_chars=MAX_HISTORY_TOTAL_CHARS):
+    """Trunca contenidos viejos para mantener el total de caracteres en límite.
+
+    Conserva los mensajes más recientes. Descarta completamente los más antiguos
+    cuando el total supera el límite. No trunca contenido parcial para no
+    romper el formato esperado por Gemini.
+    """
+    while contents:
+        total = 0
+        for content in contents:
+            for part in (content.parts or []):
+                if part.text:
+                    total += len(part.text)
+        if total <= max_total_chars:
+            break
+        contents.pop(0)
+
+    return contents
+
+
 # ============================================================
 # FORMATEAR CONFIRMACIÓN DE RESERVA
 # ============================================================
@@ -1507,6 +1692,13 @@ def ask_ai(
     customer_email=None,
 ):
 
+    request_id = None
+    try:
+        from flask import g
+        request_id = getattr(g, "request_id", None)
+    except Exception:
+        pass
+
     if business_id is None:
         return "Disculpá, no se pudo identificar el negocio solicitado."
 
@@ -1648,6 +1840,7 @@ días de la semana y fechas relativas.
         conversation,
         message,
     )
+    contents = truncate_history_by_total_chars(contents)
 
 
     # ========================================================
@@ -1676,29 +1869,17 @@ días de la semana y fechas relativas.
     # PRIMERA LLAMADA
     # ========================================================
 
-    try:
+    response, attempt, error_info = _call_gemini_with_retry(
+        contents, config, request_id=request_id, business_id=business_id
+    )
 
-        response = get_gemini_client().models.generate_content(
-
-            model=MODEL,
-
-            contents=contents,
-
-            config=config,
+    if response is None:
+        category, error_type = error_info or ("unknown", "UnknownError")
+        logger.error(
+            "Gemini falló tras %d intento(s): category=%s error_type=%s",
+            attempt, category, error_type,
         )
-
-
-    except Exception:
-
-        logger.exception(
-            "Error llamando a Gemini."
-        )
-
-        return (
-            "Disculpá, en este momento estoy teniendo "
-            "un problema para procesar tu consulta."
-        )
-
+        return _gemini_error_message(category)
 
     # ========================================================
     # CICLO DE HERRAMIENTAS
@@ -1706,11 +1887,16 @@ días de la semana y fechas relativas.
 
     iteration = 0
 
-
     while True:
 
         iteration += 1
 
+        logger.info(
+            "tool_loop request_id=%s business_id=%s iteration=%d",
+            request_id or "-",
+            business_id or "-",
+            iteration,
+        )
 
         if iteration > MAX_TOOL_ITERATIONS:
 
@@ -1757,6 +1943,13 @@ días de la semana y fechas relativas.
             try:
 
                 response_text = response.text
+
+                logger.info(
+                    "ask_ai_complete request_id=%s business_id=%s tool_iterations=%d",
+                    request_id or "-",
+                    business_id or "-",
+                    iteration,
+                )
 
                 # Guardar respuesta del asistente
                 if session_id:
@@ -1909,6 +2102,24 @@ días de la semana y fechas relativas.
                 return format_cancellation_confirmation()
 
 
+            if (
+                tool_name == "cancelar_turno"
+                and result.get("success") is False
+            ):
+
+                logger.info(
+                    "CANCELACIÓN FALLIDA."
+                )
+
+                msg = result.get("message")
+                if msg:
+                    return f"Disculpá, {msg}"
+                return (
+                    "Disculpá, no se pudo cancelar el turno. "
+                    "Verificá los datos e intentá nuevamente."
+                )
+
+
             # =================================================
             # REPROGRAMACIÓN CONFIRMADA
             # =================================================
@@ -1928,6 +2139,24 @@ días de la semana y fechas relativas.
                     fecha=result["nueva_fecha"],
 
                     hora=result["nueva_hora"],
+                )
+
+
+            if (
+                tool_name == "reprogramar_turno"
+                and result.get("success") is False
+            ):
+
+                logger.info(
+                    "REPROGRAMACIÓN FALLIDA."
+                )
+
+                msg = result.get("message")
+                if msg:
+                    return f"Disculpá, {msg}"
+                return (
+                    "Disculpá, no se pudo reprogramar el turno. "
+                    "Verificá los datos e intentá nuevamente."
                 )
 
 
@@ -1972,30 +2201,17 @@ días de la semana y fechas relativas.
         # CONTINUAR CON GEMINI
         # ====================================================
 
-        try:
+        response, attempt, error_info = _call_gemini_with_retry(
+            contents, config, request_id=request_id, business_id=business_id
+        )
 
-            response = get_gemini_client().models.generate_content(
-
-                model=MODEL,
-
-                contents=contents,
-
-                config=config,
+        if response is None:
+            category, error_type = error_info or ("unknown", "UnknownError")
+            logger.error(
+                "Gemini falló durante tool-calling loop tras %d intento(s): category=%s error_type=%s",
+                attempt, category, error_type,
             )
-
-
-        except Exception:
-
-            logger.exception(
-                "Error llamando a Gemini durante continuación."
-            )
-
-
-            return (
-                "Disculpá, ocurrió un problema al "
-                "procesar la información. "
-                "Por favor, intentá nuevamente."
-            )
+            return _gemini_error_message(category)
 
 
 def _detect_needs_human(text):

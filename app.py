@@ -1,6 +1,8 @@
 import os
 import re
+import uuid
 import logging
+import json
 from logging.handlers import RotatingFileHandler
 import hashlib
 import secrets
@@ -121,17 +123,59 @@ from database.database import (
 
 load_dotenv()
 
+USE_JSON_LOGS = os.getenv("LOG_FORMAT", "plain").lower() == "json"
+
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    format="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s",
 )
+
 log_dir = os.getenv("LOG_DIR", "logs")
 os.makedirs(log_dir, exist_ok=True)
 file_handler = RotatingFileHandler(
     os.path.join(log_dir, "app.log"), maxBytes=5_000_000, backupCount=5, encoding="utf-8"
 )
-file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-logging.getLogger().addHandler(file_handler)
+
+
+class StructuredFormatter(logging.Formatter):
+    """Formatter que emite logs en JSON con contexto structured (request_id, endpoint, método, business_id)."""
+
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        for attr in ("request_id", "endpoint", "method", "business_id"):
+            val = getattr(record, attr, None)
+            if val is not None:
+                log_data[attr] = val
+        if record.exc_info and USE_JSON_LOGS:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data) if USE_JSON_LOGS else (
+            f"{log_data['timestamp']} {log_data['level']} {log_data['logger']} "
+            f"[{log_data.get('request_id', '-')}] {log_data['message']}"
+        )
+
+
+file_handler.setFormatter(StructuredFormatter())
+
+
+class RequestIdFilter(logging.Filter):
+    """Inyecta request_id en cada registro de log."""
+
+    def filter(self, record):
+        try:
+            record.request_id = getattr(g, "request_id", None) or "-"
+        except RuntimeError:
+            record.request_id = "-"
+        return True
+
+
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RequestIdFilter())
+file_handler.addFilter(RequestIdFilter())
 
 logger = logging.getLogger("el_corte.web")
 
@@ -211,12 +255,22 @@ def get_current_business_id():
 @app.before_request
 def load_current_business():
     """Carga el contexto request-scoped en función del slug de la URL o del fallback por defecto."""
+    view_args = request.view_args or {}
+    slug = view_args.get("slug")
+
+    # request_id
+    request_id = request.headers.get("X-Request-ID", "").strip()
+    if request_id:
+        request_id = request_id[:64]
+    else:
+        request_id = uuid.uuid4().hex
+    g.request_id = request_id
+    g.endpoint = request.endpoint or "-"
+    g.method = request.method
+
     if request.path.startswith("/b/"):
-        # Proteger el caso en que Flask no hizo match de ruta (view_args=None).
-        # Ej: /b/<slug>/admin/login no existe como ruta registrada → 404 seguro, nunca 500.
-        view_args = request.view_args or {}
-        slug = view_args.get("slug")
-        if not slug:
+        if slug is None:
+            g.current_business = None
             return abort(404)
         g.current_business = resolve_business(slug)
         if g.current_business is None:
@@ -337,9 +391,99 @@ def add_security_headers(response):
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    request_id = getattr(g, "request_id", None)
+    if request_id:
+        response.headers.setdefault("X-Request-ID", request_id)
     if os.getenv("FLASK_ENV") == "production":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
+
+
+# ============================================================
+# HANDLERS GLOBALES DE ERRORES
+# ============================================================
+
+_ERROR_MESSAGES = {
+    400: "Solicitud inválida.",
+    403: "Acceso prohibido.",
+    404: "Recurso no encontrado.",
+    429: "Demasiadas solicitudes. Intentá nuevamente en unos momentos.",
+    500: "Error interno del servidor.",
+}
+
+
+def _is_json_request():
+    return (
+        request.is_json
+        or request.path.startswith("/api/")
+        or (request.headers.get("Accept", "") and "json" in request.headers.get("Accept", ""))
+    )
+
+
+def _json_error(code, message):
+    return jsonify({
+        "success": False,
+        "error": message,
+        "code": code,
+        "request_id": getattr(g, "request_id", None) or "-",
+    })
+
+
+def _html_error(code, message):
+    return render_template(
+        "error.html",
+        code=code,
+        message=message,
+    )
+
+
+@app.errorhandler(400)
+def handle_400(error):
+    message = getattr(error, "description", None) or _ERROR_MESSAGES[400]
+    if _is_json_request():
+        return _json_error("BAD_REQUEST", message), 400
+    return _html_error(400, message)
+
+
+@app.errorhandler(403)
+def handle_403(error):
+    message = getattr(error, "description", None) or _ERROR_MESSAGES[403]
+    if _is_json_request():
+        return _json_error("FORBIDDEN", message), 403
+    return _html_error(403, message), 403
+
+
+@app.errorhandler(404)
+def handle_404(error):
+    message = _ERROR_MESSAGES[404]
+    if _is_json_request():
+        return _json_error("NOT_FOUND", message), 404
+    return _html_error(404, message), 404
+
+
+@app.errorhandler(405)
+def handle_405(error):
+    message = "Método no permitido."
+    if _is_json_request():
+        return _json_error("METHOD_NOT_ALLOWED", message), 405
+    return _html_error(405, message), 405
+
+
+@app.errorhandler(429)
+def handle_429(error):
+    message = _ERROR_MESSAGES[429]
+    if _is_json_request():
+        return _json_error("RATE_LIMITED", message), 429
+    return _html_error(429, message), 429
+
+
+@app.errorhandler(500)
+def handle_500(error):
+    logger.exception("Error 500: %s", getattr(error, "description", str(error)))
+    message = _ERROR_MESSAGES[500]
+    if _is_json_request():
+        return _json_error("INTERNAL_ERROR", message), 500
+    return _html_error(500, message)
 
 
 def csrf_token():
@@ -2143,6 +2287,7 @@ def chat():
         if not is_chat_request_allowed(get_client_ip(), get_current_business_id()):
             return jsonify({
                 "success": False,
+                "code": "RATE_LIMITED",
                 "error": "Esperá un momento antes de enviar otro mensaje."
             }), 429
 
@@ -2220,10 +2365,11 @@ def chat():
 
 def _get_public_services_response(business_id):
     if not is_api_request_allowed(get_client_ip(), "api:servicios", business_id):
-        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+        return jsonify({"success": False, "code": "RATE_LIMITED", "error": "Demasiadas solicitudes. Esperá un momento."}), 429
     if business_id is None:
         return jsonify({
             "success": False,
+            "code": "NOT_FOUND",
             "error": "No hay un negocio activo para esta solicitud."
         }), 404
 
@@ -2264,9 +2410,9 @@ def business_api_servicios(slug):
 def _get_public_resources_response(business_id):
     """Devuelve los recursos activos del negocio actual."""
     if not is_api_request_allowed(get_client_ip(), "api:recursos", business_id):
-        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+        return jsonify({"success": False, "code": "RATE_LIMITED", "error": "Demasiadas solicitudes. Esperá un momento."}), 429
     if business_id is None:
-        return jsonify({"success": False, "error": "No hay un negocio activo para esta solicitud."}), 404
+        return jsonify({"success": False, "code": "NOT_FOUND", "error": "No hay un negocio activo para esta solicitud."}), 404
 
     resources = get_resources_scoped(business_id, only_active=True)
     recursos = []
@@ -2309,9 +2455,9 @@ def _get_public_points_response(business_id):
     el historial detallado queda para el panel admin).
     """
     if not is_api_request_allowed(get_client_ip(), "api:puntos", business_id):
-        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+        return jsonify({"success": False, "code": "RATE_LIMITED", "error": "Demasiadas solicitudes. Esperá un momento."}), 429
     if business_id is None:
-        return jsonify({"success": False, "error": "No hay un negocio activo para esta solicitud."}), 404
+        return jsonify({"success": False, "code": "NOT_FOUND", "error": "No hay un negocio activo para esta solicitud."}), 404
 
     settings = ensure_loyalty_settings_scoped(business_id)
     if not settings or not settings.get("enabled"):
@@ -2346,7 +2492,7 @@ def business_api_puntos(slug):
 
 def _get_public_availability_response(fecha, business_id):
     if not is_api_request_allowed(get_client_ip(), "api:disponibilidad", business_id):
-        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+        return jsonify({"success": False, "code": "RATE_LIMITED", "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     # resource_id opcional: permite filtrar disponibilidad por recurso
     resource_id_raw = request.args.get("resource_id")
@@ -2399,7 +2545,7 @@ def business_api_disponibilidad(slug, fecha):
 
 def _get_public_appointments_response(business_id):
     if not is_api_request_allowed(get_client_ip(), "api:turnos", business_id):
-        return jsonify({"success": False, "error": "Demasiadas solicitudes. Esperá un momento."}), 429
+        return jsonify({"success": False, "code": "RATE_LIMITED", "error": "Demasiadas solicitudes. Esperá un momento."}), 429
 
     nombre = request.args.get(
         "nombre",
@@ -2480,10 +2626,9 @@ def business_api_turnos(slug):
 def _create_public_appointment_response(business_id):
 
     if not is_api_request_allowed(get_client_ip(), "api:reservar", business_id):
-
-
         return jsonify({
             "success": False,
+            "code": "RATE_LIMITED",
             "error": "Demasiadas solicitudes. Esperá un momento."
         }), 429
 
@@ -2551,6 +2696,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "email_required",
                 "reason": "email_required",
                 "error": "El email es obligatorio para poder enviarte la confirmación del turno."
             }), 400
@@ -2622,6 +2768,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "past_date",
                 "reason": "past_date",
                 "error": "No podés reservar una fecha que ya pasó."
             }), 400
@@ -2635,6 +2782,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "closed_day",
                 "reason": "closed_day",
                 "error": "Ese día estamos cerrados."
             }), 400
@@ -2648,6 +2796,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "invalid_date",
                 "reason": "invalid_date",
                 "error": "La fecha seleccionada no es válida."
             }), 400
@@ -2661,6 +2810,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "invalid_time",
                 "reason": "invalid_time",
                 "error": "El horario seleccionado no es válido."
             }), 400
@@ -2674,6 +2824,7 @@ def _create_public_appointment_response(business_id):
 
             return jsonify({
                 "success": False,
+                "code": "occupied",
                 "reason": "occupied",
                 "error": "Ese horario ya está ocupado."
             }), 400
@@ -2732,6 +2883,7 @@ def _create_public_appointment_response(business_id):
         if resultado.get("reason") == "past_time":
             return jsonify({
                 "success": False,
+                "code": "past_time",
                 "reason": "past_time",
                 "error": "Ese horario ya pasó.",
             }), 400
@@ -2739,6 +2891,7 @@ def _create_public_appointment_response(business_id):
         if resultado.get("reason") == "invalid_service":
             return jsonify({
                 "success": False,
+                "code": "invalid_service",
                 "reason": "invalid_service",
                 "error": "El servicio seleccionado no está disponible.",
             }), 400
@@ -2746,6 +2899,7 @@ def _create_public_appointment_response(business_id):
         if resultado.get("reason") == "invalid_resource":
             return jsonify({
                 "success": False,
+                "code": "invalid_resource",
                 "reason": "invalid_resource",
                 "error": "El recurso seleccionado no es válido o no está disponible.",
             }), 400
@@ -2757,6 +2911,7 @@ def _create_public_appointment_response(business_id):
 
         return jsonify({
             "success": False,
+            "code": "INTERNAL_ERROR",
             "error": "No se pudo realizar la reserva."
         }), 500
 
@@ -2767,6 +2922,7 @@ def _create_public_appointment_response(business_id):
 
         return jsonify({
             "success": False,
+            "code": "INTERNAL_ERROR",
             "error": "No se pudo realizar la reserva."
         }), 500
 
@@ -3279,6 +3435,7 @@ def _cancel_public_appointment_response(business_id):
     if not is_api_request_allowed(get_client_ip(), "api:cancelar", business_id):
         return jsonify({
             "success": False,
+            "code": "RATE_LIMITED",
             "error": "Demasiadas solicitudes. Esperá un momento."
         }), 429
 
@@ -3349,6 +3506,7 @@ def _cancel_public_appointment_response(business_id):
 
         return jsonify({
             "success": False,
+            "code": "INTERNAL_ERROR",
             "error": "No se pudo cancelar el turno."
         }), 500
 
@@ -3387,6 +3545,7 @@ def _get_public_reschedule_response(business_id):
     if not is_api_request_allowed(get_client_ip(), "api:reprogramar", business_id):
         return jsonify({
             "success": False,
+            "code": "RATE_LIMITED",
             "error": "Demasiadas solicitudes. Esperá un momento."
         }), 429
 
@@ -3465,6 +3624,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "occupied",
                 "reason": "occupied",
 
                 "error": "El nuevo horario ya está ocupado."
@@ -3481,6 +3641,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "not_found",
                 "reason": "not_found",
 
                 "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente."
@@ -3497,6 +3658,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "invalid_time",
                 "reason": "invalid_time",
 
                 "error": "El horario seleccionado no es válido."
@@ -3505,6 +3667,7 @@ def _get_public_reschedule_response(business_id):
         if resultado.get("reason") == "past_time":
             return jsonify({
                 "success": False,
+                "code": "past_time",
                 "reason": "past_time",
                 "error": "Ese horario ya pasó.",
             }), 400
@@ -3518,6 +3681,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "past_date",
                 "reason": "past_date",
 
                 "error": "No podés reprogramar el turno para una fecha que ya pasó."
@@ -3534,6 +3698,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "closed_day",
                 "reason": "closed_day",
 
                 "error": "Ese día estamos cerrados."
@@ -3550,6 +3715,7 @@ def _get_public_reschedule_response(business_id):
 
                 "success": False,
 
+                "code": "invalid_date",
                 "reason": "invalid_date",
 
                 "error": "La fecha seleccionada no es válida."
@@ -3578,6 +3744,7 @@ def _get_public_reschedule_response(business_id):
 
             "success": False,
 
+            "code": "INTERNAL_ERROR",
             "error": "No se pudo reprogramar el turno."
         }), 500
 
