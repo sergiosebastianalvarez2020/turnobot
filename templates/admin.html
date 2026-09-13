@@ -1030,6 +1030,23 @@
 
                 </div>
 
+                {% if pagination and pagination.total_pages > 1 %}
+                <nav class="pagination" aria-label="Paginación de turnos">
+                    {% if pagination.has_prev %}
+                    <a href="{{ admin_prefix or '' }}/admin?status={{ selected_status }}&fecha={{ selected_date }}&page={{ pagination.page - 1 }}&per_page={{ pagination.per_page }}" class="pagination-link" aria-label="Página anterior">« Anterior</a>
+                    {% else %}
+                    <span class="pagination-link disabled" aria-hidden="true">« Anterior</span>
+                    {% endif %}
+                    <span class="pagination-info" aria-live="polite">
+                        Página {{ pagination.page }} de {{ pagination.total_pages }} ({{ pagination.total }} turnos)
+                    </span>
+                    {% if pagination.has_next %}
+                    <a href="{{ admin_prefix or '' }}/admin?status={{ selected_status }}&fecha={{ selected_date }}&page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}" class="pagination-link" aria-label="Página siguiente">Siguiente »</a>
+                    {% else %}
+                    <span class="pagination-link disabled" aria-hidden="true">Siguiente »</span>
+                    {% endif %}
+                </nav>
+                {% endif %}
 
                 {% else %}
 
@@ -1234,6 +1251,120 @@
                     closeSidebar();
                 }
             });
+        })();
+
+        // AJAX form submissions para admin actions (sin recarga completa)
+        (function() {
+            var adminPrefix = '{{ admin_prefix or '' }}';
+
+            function showToast(message, isError) {
+                var container = document.getElementById('toast-container');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = 'toast-container';
+                    container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+                    document.body.appendChild(container);
+                }
+                var toast = document.createElement('div');
+                toast.style.cssText = 'background:' + (isError ? '#dc2626' : '#16a34a') + ';color:white;padding:12px 16px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);font-size:14px;max-width:320px;';
+                toast.textContent = message;
+                container.appendChild(toast);
+                setTimeout(function() {
+                    toast.style.opacity = '0';
+                    toast.style.transition = 'opacity 0.3s';
+                    setTimeout(function() { toast.remove(); }, 300);
+                }, 4000);
+            }
+
+            function handleAjaxForm(form, onSuccess) {
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    var formData = new FormData(form);
+                    var action = form.action;
+                    var submitBtn = form.querySelector('button[type="submit"]');
+                    var originalText = submitBtn ? submitBtn.textContent : '';
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = 'Procesando...';
+                    }
+
+                    fetch(action, {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    })
+                    .then(function(response) {
+                        return response.json();
+                    })
+                    .then(function(data) {
+                        if (data.success) {
+                            showToast(data.message || 'Operación completada', false);
+                            if (onSuccess) onSuccess(data);
+                            // Recargar solo la tabla de turnos si estamos en la sección de turnos
+                            if (window.location.pathname.indexOf('/admin') !== -1 && !action.includes('/servicios/') && !action.includes('/horarios/') && !action.includes('/configuracion') && !action.includes('/recursos/')) {
+                                setTimeout(function() { window.location.reload(); }, 500);
+                            }
+                        } else {
+                            showToast(data.error || 'Error en la operación', true);
+                        }
+                    })
+                    .catch(function() {
+                        showToast('Error de conexión', true);
+                    })
+                    .finally(function() {
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = originalText;
+                        }
+                    });
+                });
+            }
+
+            // Status change forms
+            document.querySelectorAll('form[action*="/turnos/"][action*="/estado"]').forEach(function(form) {
+                handleAjaxForm(form, function(data) {
+                    // Actualizar visualmente el estado en la fila
+                    var row = form.closest('tr');
+                    if (row) {
+                        var select = form.querySelector('select[name="status"]');
+                        if (select) {
+                            var status = select.value;
+                            var statusCell = row.querySelector('td:nth-child(5) .status');
+                            if (statusCell) {
+                                statusCell.className = 'status' + (status === 'cancelled' ? ' cancelled' : status === 'completed' ? ' completed' : status === 'no_show' ? ' no_show' : '');
+                                statusCell.innerHTML = '<span class="status-small-dot"></span>' +
+                                    (status === 'cancelled' ? 'Cancelado' : status === 'completed' ? 'Completado' : status === 'no_show' ? 'No se presentó' : 'Confirmado');
+                            }
+                        }
+                    }
+                });
+            });
+
+            // Reschedule forms
+            document.querySelectorAll('form[action*="/reprogramar"]').forEach(function(form) {
+                handleAjaxForm(form);
+            });
+
+            // Manual appointment creation
+            var manualForm = document.getElementById('manual-appointment-form');
+            if (manualForm) {
+                handleAjaxForm(manualForm, function(data) {
+                    if (data.appointment_id) {
+                        // Reset form
+                        manualForm.reset();
+                        var timeSelect = document.getElementById('manual-time');
+                        if (timeSelect) {
+                            timeSelect.innerHTML = '<option value="">Seleccioná servicio y fecha primero</option>';
+                            timeSelect.disabled = true;
+                        }
+                        var submitBtn = document.getElementById('manual-submit');
+                        if (submitBtn) submitBtn.disabled = true;
+                    }
+                });
+            }
         })();
 
     </script>

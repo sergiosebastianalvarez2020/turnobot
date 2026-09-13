@@ -17,6 +17,7 @@ from unittest import mock
 from werkzeug.security import generate_password_hash
 
 import app as application
+from app import rate_limit_state
 import database.database as database
 from database.database import get_connection
 from services import appointments
@@ -395,6 +396,208 @@ class TestAppointmentCounts(unittest.TestCase):
         counts = appointments.get_appointment_counts(1)
         self.assertEqual(counts["upcoming"], 1)
         self.assertEqual(counts["confirmed"], 1)
+
+
+class TestAdminPagination(unittest.TestCase):
+    """Tests de paginación en el panel admin."""
+
+    def setUp(self):
+        application.rate_limit_state.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_database_path = database.DATABASE_PATH
+        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+        database.init_database()
+
+        self.client = application.app.test_client()
+        self.original_hash = application.ADMIN_PASSWORD_HASH
+        self.original_password = application.ADMIN_PASSWORD
+        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD = None
+
+        login_page = self.client.get("/login")
+        self.csrf_token = re.search(
+            r'name="csrf_token" value="([^"]+)"', login_page.text
+        ).group(1)
+        self.client.post(
+            "/login",
+            data={"password": "correcta", "csrf_token": self.csrf_token},
+        )
+
+        # Crear 16 turnos (8 por día en 2 días hábiles consecutivos, solo horas en punto)
+        date_ = _next_open_day()
+        date2 = (datetime.fromisoformat(date_) + timedelta(days=1)).date().isoformat()
+        # Horarios válidos según schedule por defecto con slot_duration=60 (horas en punto)
+        valid_times = [
+            "09:00", "10:00", "11:00", "12:00",
+            "15:00", "16:00", "17:00", "18:00"
+        ]
+        for i, time in enumerate(valid_times):
+            appointments.create_appointment(
+                f"Cliente {i}", f"3838439{i:03d}", "Corte", date_, time, 1
+            )
+        for i, time in enumerate(valid_times):
+            appointments.create_appointment(
+                f"Cliente {i+8}", f"3838439{i+8:03d}", "Corte", date2, time, 1
+            )
+
+    def tearDown(self):
+        application.ADMIN_PASSWORD_HASH = self.original_hash
+        application.ADMIN_PASSWORD = self.original_password
+        database.DATABASE_PATH = self.original_database_path
+        self.temp_dir.cleanup()
+
+    def test_get_appointments_pagination(self):
+        """get_appointments respeta limit y offset."""
+        page1 = appointments.get_appointments(
+            status="confirmed", appointment_date=None, business_id=1, limit=10, offset=0
+        )
+        page2 = appointments.get_appointments(
+            status="confirmed", appointment_date=None, business_id=1, limit=10, offset=10
+        )
+        page3 = appointments.get_appointments(
+            status="confirmed", appointment_date=None, business_id=1, limit=10, offset=20
+        )
+        self.assertEqual(len(page1), 10)
+        self.assertEqual(len(page2), 6)
+        self.assertEqual(len(page3), 0)
+        # Verificar que no hay duplicados
+        ids = {a["id"] for a in page1 + page2 + page3}
+        self.assertEqual(len(ids), 16)
+
+    def test_get_appointments_no_pagination_default(self):
+        """Sin limit devuelve todos (compatibilidad hacia atrás)."""
+        all_apts = appointments.get_appointments(
+            status="confirmed", appointment_date=None, business_id=1
+        )
+        self.assertEqual(len(all_apts), 16)
+
+    def test_admin_pagination_first_page(self):
+        """Página 1 del admin muestra per_page elementos."""
+        response = self.client.get("/admin?page=1&per_page=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Página 1 de 2", response.text)
+        self.assertIn("Próximos turnos", response.text)
+
+    def test_admin_pagination_second_page(self):
+        """Página 2 del admin muestra los siguientes elementos."""
+        response = self.client.get("/admin?page=2&per_page=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Página 2 de 2", response.text)
+
+    def test_admin_pagination_invalid_page_clamps_to_first(self):
+        """Página inválida (<=0) redirige a primera página."""
+        response = self.client.get("/admin?page=0&per_page=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Página 1 de 2", response.text)
+
+    def test_admin_pagination_exceeds_total_clamped(self):
+        """Página > total_pages redirige a última página."""
+        response = self.client.get("/admin?page=99&per_page=10")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Página 2 de 2", response.text)
+
+
+class TestAdminAJAX(unittest.TestCase):
+    """Tests de respuestas JSON para AJAX en acciones admin."""
+
+    def setUp(self):
+        application.rate_limit_state.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_database_path = database.DATABASE_PATH
+        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+        database.init_database()
+
+        self.client = application.app.test_client()
+        self.original_hash = application.ADMIN_PASSWORD_HASH
+        self.original_password = application.ADMIN_PASSWORD
+        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD = None
+
+        login_page = self.client.get("/login")
+        self.csrf_token = re.search(
+            r'name="csrf_token" value="([^"]+)"', login_page.text
+        ).group(1)
+        login_response = self.client.post(
+            "/login",
+            data={"password": "correcta", "csrf_token": self.csrf_token},
+        )
+
+    def tearDown(self):
+        application.ADMIN_PASSWORD_HASH = self.original_hash
+        application.ADMIN_PASSWORD = self.original_password
+        database.DATABASE_PATH = self.original_database_path
+        self.temp_dir.cleanup()
+
+    def _create_turno(self, date_=None, time_="09:00"):
+        date_ = date_ or _next_open_day()
+        result = appointments.create_appointment(
+            "Ana Pérez", "3838439222", "Corte", date_, time_, 1
+        )
+        self.assertTrue(result["success"])
+        return result["appointment_id"]
+
+    def test_admin_status_change_returns_json(self):
+        """Cambio de estado con Accept: application/json devuelve JSON."""
+        appointment_id = self._create_turno()
+        # Obtener CSRF fresco de la página admin (evita problemas de token de login)
+        admin_page = self.client.get("/admin")
+        csrf_match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        if not csrf_match:
+            # Fallback: usar el CSRF del login
+            csrf = self.csrf_token
+        else:
+            csrf = csrf_match.group(1)
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/estado",
+            data={"csrf_token": csrf, "status": "completed"},
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("message", data)
+
+    def test_admin_status_change_html_still_redirects(self):
+        """Sin header Accept, cambio de estado redirige (compatibilidad)."""
+        appointment_id = self._create_turno()
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/estado",
+            data={"csrf_token": self.csrf_token, "status": "completed"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_admin_reschedule_returns_json(self):
+        """Reprogramación con Accept: application/json devuelve JSON."""
+        appointment_id = self._create_turno(time_="09:00")
+        new_date = _next_open_day()
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/reprogramar",
+            data={"csrf_token": self.csrf_token, "new_date": new_date, "new_time": "15:00"},
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+
+    def test_admin_manual_create_returns_json(self):
+        """Alta manual con Accept: application/json devuelve JSON."""
+        new_date = _next_open_day()
+        response = self.client.post(
+            "/admin/turnos/crear",
+            data={
+                "csrf_token": self.csrf_token,
+                "customer_name": "Test Cliente",
+                "phone": "3838439999",
+                "service_name": "Corte",
+                "appointment_date": new_date,
+                "appointment_time": "09:00",
+            },
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertIn("appointment_id", data)
 
 
 if __name__ == "__main__":

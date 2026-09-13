@@ -713,9 +713,16 @@ def create_appointment(
 # OBTENER TODOS LOS TURNOS CONFIRMADOS
 # ============================================================
 
-def get_appointments(status="confirmed", appointment_date=None, business_id=None):
+def get_appointments(status="confirmed", appointment_date=None, business_id=None, limit=None, offset=None):
     """
-    Devuelve todos los turnos confirmados.
+    Devuelve todos los turnos confirmados con soporte de paginación.
+
+    Args:
+        status: Estado a filtrar (None para todos)
+        appointment_date: Fecha a filtrar (None para todas)
+        business_id: ID del negocio (obligatorio)
+        limit: Máximo de resultados (None para sin límite)
+        offset: Desplazamiento para paginación (None para 0)
     """
 
     if business_id is None:
@@ -724,29 +731,23 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
 
     try:
 
-        if business_id is not None:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM appointments
-                        WHERE (? IS NULL OR status = ?)
-                            AND (? IS NULL OR appointment_date = ?)
-                            AND business_id = ?
-                        ORDER BY appointment_date, appointment_time
-                        """,
-                        (status, status, appointment_date, appointment_date, business_id),
-                ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM appointments
-                        WHERE (? IS NULL OR status = ?)
-                            AND (? IS NULL OR appointment_date = ?)
-                        ORDER BY appointment_date, appointment_time
-                        """,
-                        (status, status, appointment_date, appointment_date),
-                ).fetchall()
+        params = [status, status, appointment_date, appointment_date, business_id]
+        query = """
+            SELECT *
+            FROM appointments
+                    WHERE (? IS NULL OR status = ?)
+                        AND (? IS NULL OR appointment_date = ?)
+                        AND business_id = ?
+                    ORDER BY appointment_date, appointment_time
+                    """
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+            if offset is not None:
+                query += " OFFSET ?"
+                params.append(offset)
+
+        rows = connection.execute(query, params).fetchall()
 
         resource_by_id = {}
         if business_id is not None:

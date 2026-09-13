@@ -1483,11 +1483,11 @@ def _render_admin():
             "timezone": "UTC",
             "slot_duration": 60,
             "break_between_slots": 0,
-             "notifications_enabled": 0,
-             "notification_email": "",
-             "logo_url": "",
-             "primary_color": "",
-             "secondary_color": "",
+            "notifications_enabled": 0,
+            "notification_email": "",
+            "logo_url": "",
+            "primary_color": "",
+            "secondary_color": "",
         }
     services = get_all_services_scoped(business_id)
     onboarding = product.get_onboarding_state(business_id, settings, services)
@@ -1495,6 +1495,11 @@ def _render_admin():
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         status = "confirmed"
     appointment_date = request.args.get("fecha") or None
+    per_page = min(50, max(1, int(request.args.get("per_page", "25"))))
+    total_appointments_for_status = get_appointment_counts(business_id).get(status, 0)
+    total_pages = max(1, (total_appointments_for_status + per_page - 1) // per_page)
+    page = max(1, min(int(request.args.get("page", "1")), total_pages))
+    offset = (page - 1) * per_page
     actor_user_id = session.get("user_id")
     membership = get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
     is_owner = bool(membership and membership["role_name"] == "owner")
@@ -1504,9 +1509,16 @@ def _render_admin():
         and memberships.can_manage_memberships(actor_user_id, business_id)
     )
     weekly_schedule = get_all_weekly_schedules_scoped(business_id) if business_id else []
+    appointments_list = get_appointments(
+        status=status,
+        appointment_date=appointment_date,
+        business_id=business_id,
+        limit=per_page,
+        offset=offset,
+    )
     return render_template(
         "admin.html",
-        appointments=get_appointments(status=status, appointment_date=appointment_date, business_id=business_id),
+        appointments=appointments_list,
         counts=get_appointment_counts(business_id),
         selected_status=status,
         selected_date=appointment_date or "",
@@ -1530,6 +1542,14 @@ def _render_admin():
         can_manage_memberships=can_manage_memberships,
         is_owner=is_owner,
         smtp_configured=smtp_configured(),
+        pagination={
+            "page": page,
+            "per_page": per_page,
+            "total": total_appointments_for_status,
+            "total_pages": total_pages,
+            "has_prev": page > 1,
+            "has_next": page < total_pages,
+        },
     )
 
 
@@ -1777,11 +1797,15 @@ def admin_cancel_appointment(appointment_id, slug=None):
     if denied:
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
         return "Solicitud no válida", 400
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, "cancelled", business_id)
+    if _is_json_request():
+        return jsonify({"success": True, "message": "Turno cancelado"})
     return redirect(_admin_url(status="confirmed"))
 
 
@@ -1792,19 +1816,22 @@ def admin_update_appointment_status(appointment_id, slug=None):
     if denied:
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
         return "Solicitud no válida", 400
     status = request.form.get("status", "")
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Estado no válido"), 400
         return "Estado no válido", 400
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
     update_appointment_status_scoped(appointment_id, status, business_id)
-    # Etapa 10.1: al marcar como completado, acreditar puntos de fidelización
-    # (idempotente, no rompe el cambio de estado; "sticky award" en turnos ya
-    # completados no duplica).
     if status == "completed":
         loyalty.award_points_for_completed(business_id, appointment_id)
+    if _is_json_request():
+        return jsonify({"success": True, "message": f"Estado actualizado a {status}"})
     return redirect(_admin_url(status=status))
 
 
@@ -1815,6 +1842,8 @@ def admin_reschedule_appointment(appointment_id, slug=None):
     if denied:
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
         return "Solicitud no válida", 400
     new_date = request.form.get("new_date", "").strip()
     new_time = request.form.get("new_time", "").strip()
@@ -1832,6 +1861,11 @@ def admin_reschedule_appointment(appointment_id, slug=None):
         if not res["success"]:
             error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
 
+    if _is_json_request():
+        if error:
+            return _json_error("REPROGRAMAR_ERROR", error), 400
+        return jsonify({"success": True, "message": "Turno reprogramado"})
+
     return redirect(_admin_url(
         status="confirmed",
         error_message=error,
@@ -1845,6 +1879,8 @@ def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
     if denied:
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
         return "Solicitud no válida", 400
     new_date = request.form.get("new_date", "").strip()
     new_time = request.form.get("new_time", "").strip()
@@ -1874,6 +1910,11 @@ def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
         if not res["success"]:
             error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
 
+    if _is_json_request():
+        if error:
+            return _json_error("REPROGRAMAR_ERROR", error), 400
+        return jsonify({"success": True, "message": "Turno reprogramado"})
+
     return redirect(_admin_url(
         status="confirmed",
         error_message=error,
@@ -1887,6 +1928,8 @@ def admin_create_appointment_manual(slug=None):
     if denied:
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
+        if _is_json_request():
+            return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
         return "Solicitud no válida", 400
     business_id = get_current_business_id()
     if business_id is None:
@@ -1907,16 +1950,21 @@ def admin_create_appointment_manual(slug=None):
         except (TypeError, ValueError):
             resource_id = None
 
+    def _error(msg, code=400):
+        if _is_json_request():
+            return _json_error(code, msg), code
+        return redirect(_admin_url(status="confirmed", error_message=msg))
+
     if not customer_name:
-        return redirect(_admin_url(status="confirmed", error_message="El nombre del cliente es obligatorio."))
+        return _error("El nombre del cliente es obligatorio.")
     if not phone:
-        return redirect(_admin_url(status="confirmed", error_message="El teléfono del cliente es obligatorio."))
+        return _error("El teléfono del cliente es obligatorio.")
     if not service_name:
-        return redirect(_admin_url(status="confirmed", error_message="El servicio es obligatorio."))
+        return _error("El servicio es obligatorio.")
     if not appointment_date:
-        return redirect(_admin_url(status="confirmed", error_message="La fecha es obligatoria."))
+        return _error("La fecha es obligatoria.")
     if not appointment_time:
-        return redirect(_admin_url(status="confirmed", error_message="El horario es obligatorio."))
+        return _error("El horario es obligatorio.")
 
     duration = None
     service = None
@@ -1925,34 +1973,36 @@ def admin_create_appointment_manual(slug=None):
             service = s
             break
     if service is None:
-        return redirect(_admin_url(status="confirmed", error_message="El servicio seleccionado no existe."))
+        return _error("El servicio seleccionado no existe.")
     duration = service["duration"]
 
-    # Validar recurso si se indica.
     if resource_id is not None:
         resource = get_resource_scoped(resource_id, business_id)
         if resource is None:
-            return redirect(_admin_url(status="confirmed", error_message="El recurso seleccionado no existe o no pertenece a este negocio."))
+            return _error("El recurso seleccionado no existe o no pertenece a este negocio.")
         if not resource["active"]:
-            return redirect(_admin_url(status="confirmed", error_message="No podés reservar un recurso inactivo."))
+            return _error("No podés reservar un recurso inactivo.")
 
     res = create_appointment(
         customer_name=customer_name,
         phone=phone,
-        service_name=service_name,
+        service=service_name,
         appointment_date=appointment_date,
         appointment_time=appointment_time,
-        status="confirmed",
         business_id=business_id,
         resource_id=resource_id,
-        notes=notes or "",
     )
     if not res.get("success"):
         reason = res.get("reason") or "No se pudo crear la reserva."
-        return redirect(_admin_url(
-            status="confirmed",
-            error_message="No se pudo crear la reserva: " + _human_appointment_error(reason),
-        ))
+        return _error("No se pudo crear la reserva: " + _human_appointment_error(reason))
+
+    if _is_json_request():
+        return jsonify({"success": True, "message": f"Turno creado: {customer_name} - {appointment_date} {appointment_time}", "appointment_id": res.get("appointment_id")})
+
+    return redirect(_admin_url(
+        status="confirmed",
+        message=f"Turno creado: {customer_name} - {appointment_date} {appointment_time}",
+    ))
 
     return redirect(_admin_url(
         status="confirmed",

@@ -2057,6 +2057,65 @@ tr.needs-human td {
 }
 
 /* ============================================================
+   PAGINACIÓN
+   ============================================================ */
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px 24px;
+    border-top: 1px solid #EEF6FF;
+    background: #FAFCFF;
+}
+
+.pagination-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 16px;
+    border: 1px solid #C9DDF8;
+    border-radius: 10px;
+    background: #FFFFFF;
+    color: #1463FF;
+    font-weight: 600;
+    font-size: 13px;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.pagination-link:hover:not(.disabled) {
+    background: #EEF6FF;
+    border-color: #1463FF;
+    color: #0B1B3A;
+}
+
+.pagination-link.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: #9CA3AF;
+}
+
+.pagination-info {
+    color: #4A6590;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Toast notifications (inyectados por JS) */
+#toast-container {
+    pointer-events: none;
+}
+
+#toast-container > div {
+    pointer-events: auto;
+}
+
+/* ============================================================
    ACCESIBILIDAD: RESPETAR MOVIMIENTO REDUCIDO
    ============================================================ */
 
