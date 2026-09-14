@@ -190,32 +190,66 @@ function hideTyping() {
 
 async function withTyping(
     loadingText,
-    task
+    task,
+    timeout = 30000
 ) {
 
     showTyping(loadingText);
 
 
+    const controller =
+        new AbortController();
+
+
+    const timeoutId =
+        setTimeout(
+            () =>
+                controller.abort(),
+            timeout
+        );
+
+
     try {
 
-        return await task();
+        return await task(
+            controller.signal
+        );
 
     } catch (error) {
 
         console.error(error);
 
 
-        addMessage(
-            error.message ||
-            "No pude conectarme con el servidor.",
-            "bot",
-            "error"
-        );
+        if (
+            error.name === "AbortError"
+        ) {
+
+            addMessage(
+                "La petición tardó demasiado. "
+                "Por favor, intentá nuevamente.",
+                "bot",
+                "error"
+            );
+
+        } else {
+
+            addMessage(
+                error.message ||
+                "No pude conectarme con el servidor.",
+                "bot",
+                "error"
+            );
+        }
 
 
         return null;
 
     } finally {
+
+        clearTimeout(
+            timeoutId
+        );
+
 
         hideTyping();
 
@@ -229,56 +263,98 @@ async function withTyping(
 
 async function fetchJSON(
     url,
-    options = {}
+    options = {},
+    timeout = 30000
 ) {
 
-    const response =
-        await fetch(
-            url,
-            options
+    const controller =
+        new AbortController();
+
+
+    const timeoutId =
+        setTimeout(
+            () =>
+                controller.abort(),
+            timeout
         );
-
-
-    if (!response.ok) {
-
-        let serverMessage = "";
-
-
-        try {
-
-            const errorData =
-                await response.json();
-
-
-            serverMessage =
-                errorData.error ||
-                errorData.message ||
-                "";
-
-        } catch {
-
-            // El servidor pudo devolver HTML,
-            // texto plano o una respuesta vacía.
-
-        }
-
-
-        throw new Error(
-            serverMessage ||
-            `Error HTTP ${response.status}`
-        );
-    }
 
 
     try {
 
-        return await response.json();
+        const response =
+            await fetch(
+                url,
+                {
+                    ...options,
+                    signal:
+                        controller.signal
+                }
+            );
 
-    } catch {
 
-        throw new Error(
-            "El servidor devolvió una respuesta no válida."
+        if (!response.ok) {
+
+            let serverMessage = "";
+
+
+            try {
+
+                const errorData =
+                    await response.json();
+
+
+                serverMessage =
+                    errorData.error ||
+                    errorData.message ||
+                    "";
+
+            } catch {
+
+                // El servidor pudo devolver HTML,
+                // texto plano o una respuesta vacía.
+
+            }
+
+
+            throw new Error(
+                serverMessage ||
+                `Error HTTP ${response.status}`
+            );
+        }
+
+
+        try {
+
+            return await response.json();
+
+        } catch {
+
+            throw new Error(
+                "El servidor devolvió una respuesta no válida."
+            );
+        }
+
+    } catch (error) {
+
+        if (
+            error.name === "AbortError"
+        ) {
+
+            throw new Error(
+                "La petición tardó demasiado. "
+                "Por favor, intentá nuevamente."
+            );
+        }
+
+
+        throw error;
+
+    } finally {
+
+        clearTimeout(
+            timeoutId
         );
+
     }
 }
 
@@ -1306,10 +1382,13 @@ async function showServices() {
     const data =
         await withTyping(
             "Consultando servicios...",
-            () =>
+            (signal) =>
                 fetchJSON(
-                    API.servicios
-                )
+                    API.servicios,
+                    { signal },
+                    15000
+                ),
+            15000
         );
 
 
@@ -1535,10 +1614,13 @@ async function checkAvailability(
     const data =
         await withTyping(
             "Consultando horarios...",
-            () =>
+            (signal) =>
                 fetchJSON(
-                    `${API.disponibilidad}/${date}`
-                )
+                    `${API.disponibilidad}/${date}`,
+                    { signal },
+                    15000
+                ),
+            15000
         );
 
 
@@ -2187,7 +2269,9 @@ emailInput.required =
 
         const data =
             await fetchJSON(
-                API.servicios
+                API.servicios,
+                {},
+                15000
             );
 
 
@@ -2290,7 +2374,9 @@ async function loadTimes(
 
     const data =
         await fetchJSON(
-            `${API.disponibilidad}/${date}`
+            `${API.disponibilidad}/${date}`,
+            {},
+            15000
         );
 
     if (!data.success) {
@@ -2597,7 +2683,7 @@ async function loadTimes(
             const data =
                 await withTyping(
                     "Confirmando tu turno...",
-                    () =>
+                    (signal) =>
                         fetchJSON(
                             API.reservar,
                             {
@@ -2624,8 +2710,11 @@ async function loadTimes(
                                         hora
 
                                     })
-                            }
-                        )
+                            },
+                            signal,
+                            30000
+                        ),
+                    30000
                 );
 
 
@@ -3048,10 +3137,13 @@ async function loadCustomerAppointments(
     const data =
         await withTyping(
             "Buscando tus turnos...",
-            () =>
+            (signal) =>
                 fetchJSON(
-                    `${API.turnos}?nombre=${encodeURIComponent(name)}&telefono=${encodeURIComponent(phone)}`
-                )
+                    `${API.turnos}?nombre=${encodeURIComponent(name)}&telefono=${encodeURIComponent(phone)}`,
+                    { signal },
+                    15000
+                ),
+            15000
         );
 
 
@@ -3550,7 +3642,7 @@ async function cancelAppointment(
     const data =
         await withTyping(
             "Cancelando tu turno...",
-            () =>
+            (signal) =>
                 fetchJSON(
                     API.cancelar,
                     {
@@ -3568,8 +3660,11 @@ async function cancelAppointment(
 
                                 telefono: phone
                             })
-                    }
-                )
+                    },
+                    signal,
+                    15000
+                ),
+            15000
         );
 
 
@@ -3752,10 +3847,13 @@ async function showRescheduleAvailability(
     const data =
         await withTyping(
             "Consultando horarios...",
-            () =>
+            (signal) =>
                 fetchJSON(
-                    `${API.disponibilidad}/${newDate}`
-                )
+                    `${API.disponibilidad}/${newDate}`,
+                    { signal },
+                    15000
+                ),
+            15000
         );
 
 
@@ -3909,7 +4007,7 @@ async function rescheduleAppointment(
     const data =
         await withTyping(
             "Reprogramando tu turno...",
-            () =>
+            (signal) =>
                 fetchJSON(
                     API.reprogramar,
                     {
@@ -3935,8 +4033,11 @@ async function rescheduleAppointment(
                                 telefono: phone
 
                             })
-                    }
-                )
+                    },
+                    signal,
+                    15000
+                ),
+            15000
         );
 
 
@@ -4120,7 +4221,7 @@ async function sendMessage(
     const data =
         await withTyping(
             "Pensando...",
-            () =>
+            (signal) =>
                 fetchJSON(
                     API.chat,
                     {
@@ -4143,8 +4244,11 @@ async function sendMessage(
                                 session_id:
                                     currentPublicToken || undefined
                             })
-                    }
-                )
+                    },
+                    signal,
+                    30000
+                ),
+            30000
         );
 
 
@@ -4438,7 +4542,8 @@ async function restoreConversation() {
                 {
                     method: "GET",
                     cache: "no-store"
-                }
+                },
+                15000
             );
 
 

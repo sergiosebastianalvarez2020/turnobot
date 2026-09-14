@@ -1155,7 +1155,10 @@
                     url += '?' + params.join('&');
                 }
 
-                fetch(url)
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+
+                fetch(url, { signal: controller.signal })
                     .then(function(response) {
                         return response.json();
                     })
@@ -1178,11 +1181,18 @@
                             timeFallback.hidden = true;
                         }
                     })
-                    .catch(function() {
-                        timeSelect.innerHTML = '<option value="">Error al cargar horarios</option>';
+                    .catch(function(error) {
+                        if (error.name === 'AbortError') {
+                            timeSelect.innerHTML = '<option value="">La consulta tardó demasiado. Intentá nuevamente.</option>';
+                        } else {
+                            timeSelect.innerHTML = '<option value="">Error al cargar horarios</option>';
+                        }
                         timeSelect.disabled = true;
                         submitBtn.disabled = true;
                         timeFallback.hidden = false;
+                    })
+                    .finally(function() {
+                        clearTimeout(timeoutId);
                     });
             }
 
@@ -1288,13 +1298,17 @@
                         submitBtn.textContent = 'Procesando...';
                     }
 
+                    var controller = new AbortController();
+                    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+
                     fetch(action, {
                         method: 'POST',
                         body: formData,
                         headers: {
                             'Accept': 'application/json',
                             'X-Requested-With': 'XMLHttpRequest'
-                        }
+                        },
+                        signal: controller.signal
                     })
                     .then(function(response) {
                         return response.json();
@@ -1311,10 +1325,15 @@
                             showToast(data.error || 'Error en la operación', true);
                         }
                     })
-                    .catch(function() {
-                        showToast('Error de conexión', true);
+                    .catch(function(error) {
+                        if (error.name === 'AbortError') {
+                            showToast('La operación tardó demasiado. Intentá nuevamente.', true);
+                        } else {
+                            showToast('Error de conexión', true);
+                        }
                     })
                     .finally(function() {
+                        clearTimeout(timeoutId);
                         if (submitBtn) {
                             submitBtn.disabled = false;
                             submitBtn.textContent = originalText;
