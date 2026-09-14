@@ -47,6 +47,7 @@ const NOTIFICATIONS_ENABLED = Boolean(BUSINESS_CONFIG.notifications_enabled);
 // ============================================================
 
 const API = {
+    api: "/api",
     servicios: "/api/servicios",
     disponibilidad: "/api/disponibilidad",
     turnos: "/api/turnos",
@@ -63,7 +64,11 @@ const API = {
 
 const MAX_HISTORY_MESSAGES = 12;
 
+const PUBLIC_TOKEN_KEY = "turnobot_public_token";
+
 let conversation = [];
+
+let currentPublicToken = null;
 
 function addConversationMessage(role, content) {
 
@@ -4133,7 +4138,10 @@ async function sendMessage(
                                     message,
 
                                 conversation:
-                                    history
+                                    history,
+
+                                session_id:
+                                    currentPublicToken || undefined
                             })
                     }
                 )
@@ -4154,6 +4162,27 @@ async function sendMessage(
 
 
         return;
+    }
+
+
+    if (data.public_token) {
+
+        currentPublicToken = data.public_token;
+
+        try {
+
+            localStorage.setItem(
+                PUBLIC_TOKEN_KEY,
+                currentPublicToken
+            );
+
+        } catch (error) {
+
+            console.error(
+                "No se pudo guardar el token de sesión:",
+                error
+            );
+        }
     }
 
 
@@ -4372,7 +4401,124 @@ messageInput.addEventListener(
 
 
 // ============================================================
+// RECONSTRUCCIÓN DE CONVERSACIÓN
+// ============================================================
+
+async function restoreConversation() {
+
+    let publicToken = null;
+
+    try {
+
+        publicToken =
+            localStorage.getItem(
+                PUBLIC_TOKEN_KEY
+            );
+
+    } catch (error) {
+
+        console.error(
+            "No se pudo leer el token de sesión:",
+            error
+        );
+    }
+
+    if (!publicToken) {
+
+        return;
+    }
+
+    currentPublicToken = publicToken;
+
+    try {
+
+        const data =
+            await fetchJSON(
+                `${API.api}/conversations/${encodeURIComponent(publicToken)}/messages`,
+                {
+                    method: "GET",
+                    cache: "no-store"
+                }
+            );
+
+
+        if (
+            !data ||
+            !data.success ||
+            !Array.isArray(data.messages)
+        ) {
+
+            addMessage(
+                "No pude recuperar la conversación anterior. Podés seguir escribiendo igual.",
+                "bot",
+                "error"
+            );
+
+
+            return;
+        }
+
+        const seen =
+            new Set();
+
+        data.messages.forEach(
+            msg => {
+
+                if (
+                    seen.has(msg.content)
+                ) {
+
+                    return;
+                }
+
+
+                seen.add(
+                    msg.content
+                );
+
+
+                addMessage(
+                    msg.content,
+                    msg.role === "user"
+                        ? "user"
+                        : "bot"
+                );
+
+
+                addConversationMessage(
+                    msg.role,
+                    msg.content
+                );
+            }
+        );
+
+    } catch (error) {
+
+        console.error(
+            "No se pudo recuperar la conversación:",
+            error
+        );
+
+
+        addMessage(
+            "No pude recuperar la conversación anterior. Podés seguir escribiendo igual.",
+            "bot",
+            "error"
+        );
+    }
+}
+
+
+// ============================================================
 // INICIO
 // ============================================================
 
-messageInput.focus();
+async function init() {
+
+    await restoreConversation();
+
+    messageInput.focus();
+}
+
+
+init();

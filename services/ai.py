@@ -32,6 +32,7 @@ from database.database import (
 from services.knowledge import search_knowledge_scoped
 from services.conversations import (
     get_or_create_conversation_session_scoped,
+    get_or_create_public_conversation_session_scoped,
     add_conversation_message_scoped,
     track_question_scoped,
     request_human_handoff_scoped,
@@ -518,7 +519,7 @@ def get_services_prompt(business_id=None):
     else:
         services = get_active_services()
     if not services:
-        return "No hay servicios habilitados en este momento."
+        return "No hay servicios habilitados en este momento.", session_id, public_token
 
     return "\n".join(
         f"- {service['name']}: ${service['price']:,.0f}".replace(",", ".") + " "
@@ -533,7 +534,7 @@ def get_resources_prompt(business_id=None):
         raise ValueError("business_id es obligatorio")
     resources = get_resources_scoped(business_id, only_active=True)
     if not resources:
-        return "No hay recursos reservables en este momento."
+        return "No hay recursos reservables en este momento.", session_id, public_token
 
     return "\n".join(
         f"- {resource['name']} (ID: {resource['id']})"
@@ -1781,7 +1782,7 @@ def ask_ai(
         pass
 
     if business_id is None:
-        return "Disculpá, no se pudo identificar el negocio solicitado."
+        return "Disculpá, no se pudo identificar el negocio solicitado.", None, None
 
     if conversation is None:
 
@@ -1794,6 +1795,7 @@ def ask_ai(
 
     session = None
     session_id = None
+    public_token = None
     human_intent_detected = False
     if customer_phone:
         session = get_or_create_conversation_session_scoped(
@@ -1801,6 +1803,19 @@ def ask_ai(
         )
         if session:
             session_id = session["id"]
+            # Guardar mensaje del usuario
+            add_conversation_message_scoped(session_id, business_id, "user", message)
+            # Registrar pregunta para analytics
+            track_question_scoped(business_id, message)
+            # Detectar intención de hablar con humano
+            if _detect_human_intent(message):
+                human_intent_detected = True
+                request_human_handoff_scoped(session_id, business_id)
+    else:
+        session = get_or_create_public_conversation_session_scoped(business_id)
+        if session:
+            session_id = session["id"]
+            public_token = session.get("public_token")
             # Guardar mensaje del usuario
             add_conversation_message_scoped(session_id, business_id, "user", message)
             # Registrar pregunta para analytics
@@ -1962,7 +1977,7 @@ días de la semana y fechas relativas.
             "Gemini falló tras %d intento(s): category=%s error_type=%s",
             attempt, category, error_type,
         )
-        return _gemini_error_message(category)
+        return _gemini_error_message(category), session_id, public_token
 
     # ========================================================
     # CICLO DE HERRAMIENTAS
@@ -1992,7 +2007,9 @@ días de la semana y fechas relativas.
             return (
                 "Disculpá, estoy teniendo dificultades "
                 "para resolver tu consulta. "
-                "Por favor, intentá nuevamente."
+                "Por favor, intentá nuevamente.",
+                session_id,
+                public_token
             )
 
 
@@ -2044,7 +2061,7 @@ días de la semana y fechas relativas.
                     if _detect_needs_human(safe_text):
                         request_human_handoff_scoped(session_id, business_id)
 
-                return safe_text
+                return safe_text, session_id, public_token
 
             except Exception:
 
@@ -2054,7 +2071,9 @@ días de la semana y fechas relativas.
 
                 return (
                     "Disculpá, no pude generar "
-                    "una respuesta."
+                    "una respuesta.",
+                    session_id,
+                    public_token
                 )
 
 
@@ -2125,7 +2144,7 @@ días de la semana y fechas relativas.
                 and result.get("success") is True
                 and not result.get("turnos")
             ):
-                return format_customer_appointments([])
+                return format_customer_appointments([]), session_id, public_token
 
 
             # =================================================
@@ -2146,16 +2165,12 @@ días de la semana y fechas relativas.
 
 
                 return format_reservation_confirmation(
-
                     nombre=arguments["nombre"],
-
                     servicio=arguments["servicio"],
-
                     fecha=arguments["fecha"],
-
                     hora=arguments["hora"],
                     resource_nombre=result.get("resource_nombre"),
-                )
+                ), session_id, public_token
 
 
             # =================================================
@@ -2170,7 +2185,7 @@ días de la semana y fechas relativas.
                 return format_reservation_error(
                     arguments,
                     result,
-                )
+                ), session_id, public_token
 
 
             # =================================================
@@ -2189,7 +2204,7 @@ días de la semana y fechas relativas.
                 )
 
 
-                return format_cancellation_confirmation()
+                return format_cancellation_confirmation(), session_id, public_token
 
 
             if (
@@ -2203,10 +2218,12 @@ días de la semana y fechas relativas.
 
                 msg = result.get("message")
                 if msg:
-                    return f"Disculpá, {msg}"
+                    return f"Disculpá, {msg}", session_id, public_token
                 return (
                     "Disculpá, no se pudo cancelar el turno. "
-                    "Verificá los datos e intentá nuevamente."
+                    "Verificá los datos e intentá nuevamente.",
+                    session_id,
+                    public_token
                 )
 
 
@@ -2227,11 +2244,9 @@ días de la semana y fechas relativas.
 
 
                 return format_reschedule_confirmation(
-
                     fecha=result["nueva_fecha"],
-
                     hora=result["nueva_hora"],
-                )
+                ), session_id, public_token
 
 
             if (
@@ -2245,10 +2260,12 @@ días de la semana y fechas relativas.
 
                 msg = result.get("message")
                 if msg:
-                    return f"Disculpá, {msg}"
+                    return f"Disculpá, {msg}", session_id, public_token
                 return (
                     "Disculpá, no se pudo reprogramar el turno. "
-                    "Verificá los datos e intentá nuevamente."
+                    "Verificá los datos e intentá nuevamente.",
+                    session_id,
+                    public_token
                 )
 
 
@@ -2271,7 +2288,9 @@ días de la semana y fechas relativas.
                 )
                 return (
                     "Disculpá, no se pudo confirmar la operación en este momento. "
-                    "Por favor, verificá los datos e intentá nuevamente."
+                    "Por favor, verificá los datos e intentá nuevamente.",
+                    session_id,
+                    public_token
                 )
 
             function_response_parts.append(
@@ -2318,7 +2337,7 @@ días de la semana y fechas relativas.
                 "Gemini falló durante tool-calling loop tras %d intento(s): category=%s error_type=%s",
                 attempt, category, error_type,
             )
-            return _gemini_error_message(category)
+            return _gemini_error_message(category), session_id, public_token
 
 
 def _detect_needs_human(text):

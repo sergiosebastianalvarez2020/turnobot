@@ -42,6 +42,8 @@ from services.conversations import (
     list_conversation_sessions_scoped,
     count_conversation_sessions_scoped,
     get_conversation_messages_scoped,
+    get_or_create_public_conversation_session_scoped,
+    get_conversation_messages_by_public_token_scoped,
     request_human_handoff_scoped,
     resolve_human_handoff_scoped,
     update_session_status_scoped,
@@ -2503,7 +2505,7 @@ def chat():
         customer_email = data.get("customer_email", "").strip() if isinstance(data.get("customer_email"), str) else ""
 
 
-        response = ask_ai(
+        response, session_id, public_token = ask_ai(
             message,
             conversation,
             business_id=get_current_business_id(),
@@ -2513,10 +2515,18 @@ def chat():
         )
 
 
-        return jsonify({
+        payload = {
             "success": True,
             "response": response
-        })
+        }
+
+        if session_id:
+            payload["session_id"] = session_id
+
+        if public_token:
+            payload["public_token"] = public_token
+
+        return jsonify(payload)
 
 
     except Exception as error:
@@ -2527,6 +2537,28 @@ def chat():
             "success": False,
             "error": "No se pudo procesar la consulta."
         }), 500
+
+
+@app.route("/api/conversations/<public_token>/messages", methods=["GET"])
+def public_conversation_messages(public_token):
+    business_id = get_current_business_id()
+    if business_id is None:
+        return jsonify({
+            "success": False,
+            "error": "No hay un negocio activo para esta solicitud."
+        }), 404
+
+    messages = get_conversation_messages_by_public_token_scoped(public_token, business_id)
+    if messages is None:
+        return jsonify({
+            "success": False,
+            "error": "Conversación no encontrada."
+        }), 404
+
+    return jsonify({
+        "success": True,
+        "messages": messages
+    })
 
 
 # ============================================================

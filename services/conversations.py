@@ -9,6 +9,7 @@ Proporciona helpers para:
 
 import hashlib
 import re
+import uuid
 from database.database import get_connection
 
 
@@ -96,7 +97,8 @@ def get_conversation_session_by_id_scoped(session_id, business_id):
         row = connection.execute(
             """
             SELECT id, business_id, customer_phone, customer_name, customer_email,
-                   status, needs_human, human_requested_at, resolved_at, created_at, updated_at
+                   status, needs_human, human_requested_at, resolved_at, created_at, updated_at,
+                   public_token
             FROM conversation_sessions
             WHERE id = ? AND business_id = ?
             """,
@@ -389,6 +391,77 @@ def get_opportunities_scoped(business_id, limit=20):
             LIMIT ?
             """,
             (business_id, limit),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
+def get_or_create_public_conversation_session_scoped(business_id):
+    """Crea o recupera una sesión pública anónima para un negocio.
+
+    Genera un public_token UUID impredecible que se devuelve al frontend
+    para reconstruir el historial sin exponer IDs secuenciales.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT id, business_id, customer_phone, customer_name, customer_email,
+                   status, needs_human, human_requested_at, resolved_at, created_at, updated_at,
+                   public_token
+            FROM conversation_sessions
+            WHERE business_id = ? AND public_token IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (business_id,),
+        ).fetchone()
+
+        if row and row["public_token"]:
+            return dict(row)
+
+        anon_phone = f"anon_{uuid.uuid4().hex}"
+        cursor = connection.execute(
+            """
+            INSERT INTO conversation_sessions
+                (business_id, customer_phone, customer_name, customer_email, status, needs_human, public_token)
+            VALUES (?, ?, ?, ?, 'active', 0, ?)
+            """,
+            (business_id, anon_phone, None, None, uuid.uuid4().hex),
+        )
+        connection.commit()
+        session_id = cursor.lastrowid
+        return get_conversation_session_by_id_scoped(session_id, business_id)
+    finally:
+        connection.close()
+
+
+def get_conversation_messages_by_public_token_scoped(public_token, business_id):
+    """Obtiene los mensajes de una sesión por public_token, validando el negocio.
+
+    Devuelve None si la sesión no existe o no pertenece al negocio.
+    """
+    connection = get_connection()
+    try:
+        session = connection.execute(
+            """
+            SELECT id FROM conversation_sessions
+            WHERE public_token = ? AND business_id = ?
+            """,
+            (public_token, business_id),
+        ).fetchone()
+        if not session:
+            return None
+
+        rows = connection.execute(
+            """
+            SELECT id, session_id, role, content, needs_human, created_at
+            FROM conversation_messages
+            WHERE session_id = ?
+            ORDER BY created_at
+            """,
+            (session["id"],),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
     finally:

@@ -10,6 +10,8 @@ from services.conversations import (
     list_conversation_sessions_scoped,
     count_conversation_sessions_scoped,
     get_conversation_messages_scoped,
+    get_or_create_public_conversation_session_scoped,
+    get_conversation_messages_by_public_token_scoped,
     request_human_handoff_scoped,
     resolve_human_handoff_scoped,
     update_session_status_scoped,
@@ -240,6 +242,75 @@ class TestConversations(unittest.TestCase):
         needs = get_needs_human_sessions_scoped(1)
         self.assertEqual(len(needs), 1)
         self.assertEqual(needs[0]["customer_phone"], "+5491123456789")
+
+    def test_public_session_creation(self):
+        """Primera conversación crea sesión pública con public_token."""
+        session = get_or_create_public_conversation_session_scoped(1)
+        self.assertIsNotNone(session)
+        self.assertIsNotNone(session.get("public_token"))
+        self.assertEqual(session["business_id"], 1)
+        self.assertTrue(session["customer_phone"].startswith("anon_"))
+
+    def test_public_session_reuse(self):
+        """Segunda petición con mismo negocio reusa última sesión pública."""
+        session1 = get_or_create_public_conversation_session_scoped(1)
+        session2 = get_or_create_public_conversation_session_scoped(1)
+        self.assertEqual(session1["id"], session2["id"])
+        self.assertEqual(session1["public_token"], session2["public_token"])
+
+    def test_public_session_isolation_by_business(self):
+        """Sesiones públicas aisladas por business_id."""
+        connection = database.get_connection()
+        try:
+            connection.execute(
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        session1 = get_or_create_public_conversation_session_scoped(1)
+        session2 = get_or_create_public_conversation_session_scoped(2)
+        self.assertNotEqual(session1["id"], session2["id"])
+        self.assertNotEqual(session1["public_token"], session2["public_token"])
+
+    def test_get_messages_by_public_token(self):
+        """Recuperar mensajes por public_token."""
+        session = get_or_create_public_conversation_session_scoped(1)
+        session_id = session["id"]
+        public_token = session["public_token"]
+
+        add_conversation_message_scoped(session_id, 1, "user", "Hola")
+        add_conversation_message_scoped(session_id, 1, "assistant", "¡Hola! ¿En qué puedo ayudarte?")
+
+        messages = get_conversation_messages_by_public_token_scoped(public_token, 1)
+        self.assertIsNotNone(messages)
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertEqual(messages[0]["content"], "Hola")
+        self.assertEqual(messages[1]["role"], "assistant")
+
+    def test_get_messages_by_public_token_wrong_business(self):
+        """No se puede acceder a sesión de otro negocio por public_token."""
+        connection = database.get_connection()
+        try:
+            connection.execute(
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        session = get_or_create_public_conversation_session_scoped(1)
+        public_token = session["public_token"]
+
+        messages = get_conversation_messages_by_public_token_scoped(public_token, 2)
+        self.assertIsNone(messages)
+
+    def test_get_messages_by_invalid_public_token(self):
+        """Sesión inexistente devuelve None."""
+        messages = get_conversation_messages_by_public_token_scoped("token_inexistente", 1)
+        self.assertIsNone(messages)
 
 
 if __name__ == "__main__":

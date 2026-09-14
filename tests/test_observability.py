@@ -513,8 +513,8 @@ class TestHistoryLimit(unittest.TestCase):
              mock.patch("services.ai.search_knowledge_scoped", return_value=[]), \
              mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None):
             long_conv = [{"role": "user", "content": "x" * 5000} for _ in range(20)]
-            result = ai.ask_ai("hola", conversation=long_conv, business_id=1)
-            self.assertIsInstance(result, str)
+            result, _, _ = ai.ask_ai("hola", conversation=long_conv, business_id=1)
+            self.assertIsInstance(result[0], str)
 
 
 class TestToolResultControl(unittest.TestCase):
@@ -527,7 +527,8 @@ class TestToolResultControl(unittest.TestCase):
             mock.patch.object(ai, "get_business_identity", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}),
             mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC", "notifications_enabled": 0}),
             mock.patch("services.ai.search_knowledge_scoped", return_value=[]),
-            mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None),
+            mock.patch("services.conversations.get_or_create_conversation_session_scoped", return_value=None),
+            mock.patch("services.conversations.get_or_create_public_conversation_session_scoped", return_value=None),
         ]
         if tool_result is not None:
             patches.append(mock.patch.object(ai, "execute_tool", return_value=tool_result))
@@ -543,7 +544,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reservar", business_id=1)
+            result, _, _ = ai.ask_ai("reservar", business_id=1)
             self.assertNotIn("reservado correctamente", result)
             self.assertIn("Disculpá", result)
         finally:
@@ -560,7 +561,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("cancelar", business_id=1)
+            result, _, _ = ai.ask_ai("cancelar", business_id=1)
             self.assertNotIn("cancelado correctamente", result)
         finally:
             for p in patches:
@@ -576,7 +577,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reprogramar", business_id=1)
+            result, _, _ = ai.ask_ai("reprogramar", business_id=1)
             self.assertNotIn("reprogramado correctamente", result)
             self.assertIn("Disculpá", result)
         finally:
@@ -593,7 +594,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reservar", business_id=1)
+            result, _, _ = ai.ask_ai("reservar", business_id=1)
             self.assertIn("reservado correctamente", result)
         finally:
             for p in patches:
@@ -606,7 +607,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reservar", business_id=1)
+            result, _, _ = ai.ask_ai("reservar", business_id=1)
             self.assertNotIn("reservado correctamente", result)
             self.assertNotIn("reservado", result)
             self.assertIn("no se pudo confirmar la operación", result)
@@ -622,7 +623,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("cancelar", business_id=1)
+            result, _, _ = ai.ask_ai("cancelar", business_id=1)
             self.assertNotIn("cancelado correctamente", result)
             self.assertNotIn("cancelado", result)
             self.assertIn("no se pudo confirmar la operación", result)
@@ -638,7 +639,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reprogramar", business_id=1)
+            result, _, _ = ai.ask_ai("reprogramar", business_id=1)
             self.assertNotIn("reprogramado correctamente", result)
             self.assertNotIn("reprogramado", result)
             self.assertIn("no se pudo confirmar la operación", result)
@@ -659,7 +660,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reservar", business_id=1)
+            result, _, _ = ai.ask_ai("reservar", business_id=1)
             self.assertNotIn("reservado correctamente", result)
             self.assertIn("no se pudo confirmar la operación", result)
             self.assertEqual(mock_client.call_count, 2)
@@ -674,7 +675,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("hola", business_id=1)
+            result, _, _ = ai.ask_ai("hola", business_id=1)
             self.assertEqual(result, "Claro, ¿qué horarios tenés disponibles para mañana?")
             self.assertEqual(mock_client.call_count, 1)
         finally:
@@ -688,7 +689,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reservar", business_id=1)
+            result, _, _ = ai.ask_ai("reservar", business_id=1)
             self.assertNotIn("reservado", result)
             self.assertIn("no se pudo confirmar la operación", result)
             self.assertEqual(mock_client.call_count, 1)
@@ -703,7 +704,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("cancelar", business_id=1)
+            result, _, _ = ai.ask_ai("cancelar", business_id=1)
             self.assertIn("cancelado correctamente", result)
         finally:
             for p in patches:
@@ -719,7 +720,7 @@ class TestToolResultControl(unittest.TestCase):
         for p in patches:
             p.start()
         try:
-            result = ai.ask_ai("reprogramar", business_id=1)
+            result, _, _ = ai.ask_ai("reprogramar", business_id=1)
             self.assertIn("reprogramado correctamente", result)
         finally:
             for p in patches:
