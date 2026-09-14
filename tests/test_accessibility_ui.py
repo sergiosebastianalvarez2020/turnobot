@@ -219,6 +219,21 @@ class AccessibilityUITest(unittest.TestCase):
         aria_hidden_count = nav_section.group(0).count('aria-hidden="true"')
         self.assertGreaterEqual(aria_hidden_count, 4)
 
+    def test_style_css_has_success_bubble(self):
+        css_path = Path(__file__).resolve().parent.parent / "static" / "style.css"
+        css = css_path.read_text(encoding="utf-8")
+        self.assertIn(".is-success", css)
+
+    def test_style_css_has_error_bubble(self):
+        css_path = Path(__file__).resolve().parent.parent / "static" / "style.css"
+        css = css_path.read_text(encoding="utf-8")
+        self.assertIn(".is-error", css)
+
+    def test_style_css_has_chat_empty_state(self):
+        css_path = Path(__file__).resolve().parent.parent / "static" / "style.css"
+        css = css_path.read_text(encoding="utf-8")
+        self.assertIn(".chat-empty-state", css)
+
 
 if __name__ == "__main__":
     unittest.main()

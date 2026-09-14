@@ -87,7 +87,7 @@ function recordLocalResponse(content) {
 // MENSAJES
 // ============================================================
 
-function addMessage(text, type = "bot") {
+function addMessage(text, type = "bot", status) {
 
     const message = document.createElement("div");
 
@@ -99,6 +99,16 @@ function addMessage(text, type = "bot") {
     bubble.className = "bubble";
 
     bubble.textContent = String(text ?? "");
+
+    if (status === "success") {
+
+        bubble.classList.add("is-success");
+
+    } else if (status === "error") {
+
+        bubble.classList.add("is-error");
+
+    }
 
 
     message.appendChild(bubble);
@@ -193,7 +203,8 @@ async function withTyping(
         addMessage(
             error.message ||
             "No pude conectarme con el servidor.",
-            "bot"
+            "bot",
+            "error"
         );
 
 
@@ -1309,7 +1320,8 @@ async function showServices() {
         addMessage(
             data.error ||
             "No pude consultar los servicios.",
-            "bot"
+            "bot",
+            "error"
         );
 
         return;
@@ -1352,6 +1364,95 @@ async function showServices() {
 
 
     container.appendChild(title);
+
+
+    if (
+        data.servicios.length === 0
+    ) {
+
+        const emptyBubble =
+            document.createElement("div");
+
+
+        emptyBubble.className =
+            "bubble chat-empty-state";
+
+
+        const emptyIcon =
+            document.createElement("span");
+
+
+        emptyIcon.className =
+            "chat-empty-icon";
+
+
+        emptyIcon.textContent =
+            "📋";
+
+
+        emptyIcon.setAttribute(
+            "aria-hidden",
+            "true"
+        );
+
+
+        const emptyTitle =
+            document.createElement("h3");
+
+
+        emptyTitle.textContent =
+            "No hay servicios disponibles";
+
+
+        const emptyText =
+            document.createElement("p");
+
+
+        emptyText.textContent =
+            "Pronto vamos a tener servicios para mostrarte.";
+
+
+        emptyBubble.appendChild(
+            emptyIcon
+        );
+
+
+        emptyBubble.appendChild(
+            emptyTitle
+        );
+
+
+        emptyBubble.appendChild(
+            emptyText
+        );
+
+
+        container.appendChild(
+            emptyBubble
+        );
+
+
+        message.appendChild(
+            container
+        );
+
+
+        chat.appendChild(
+            message
+        );
+
+
+        scrollChat();
+
+
+        recordLocalResponse(
+            "Se consultaron los servicios pero no hay servicios disponibles."
+        );
+
+
+        return;
+
+    }
 
 
     data.servicios.forEach(
@@ -1448,7 +1549,8 @@ async function checkAvailability(
         addMessage(
             data.error ||
             "No pude consultar la disponibilidad.",
-            "bot"
+            "bot",
+            "error"
         );
 
         return;
@@ -2318,7 +2420,8 @@ async function loadTimes(
     `El horario de las ${preferredTime} hs no está disponible. ` +
     `Atendemos a partir de las 09:00 hs. ` +
     `Podés elegir uno de los horarios disponibles en el formulario.`,
-    "bot"
+    "bot",
+    "error"
 );
         }
     }
@@ -2350,7 +2453,8 @@ async function loadTimes(
                 addMessage(
                     error.message ||
                     "No pude consultar la disponibilidad.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
             }
@@ -2394,7 +2498,8 @@ async function loadTimes(
 
                 addMessage(
                     "Por favor, ingresá tu nombre y apellido.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
                 nameInput.focus();
@@ -2411,7 +2516,8 @@ async function loadTimes(
 
                 addMessage(
                     "Por favor, ingresá tu nombre y apellido.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
                 nameInput.focus();
@@ -2423,7 +2529,8 @@ async function loadTimes(
 
                 addMessage(
                     "Necesito tu número de teléfono para confirmar el turno.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
                 phoneInput.focus();
@@ -2436,7 +2543,8 @@ async function loadTimes(
 
                 addMessage(
                     "Necesito tu email para confirmar el turno y enviarte la confirmación.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
                 emailInput.focus();
@@ -2546,7 +2654,8 @@ async function loadTimes(
                 addMessage(
                     data.error ||
                     "Ese horario ya fue ocupado. Elegí otro horario.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
 
@@ -2572,7 +2681,8 @@ async function loadTimes(
                     addMessage(
                         error.message ||
                         "No pude actualizar los horarios disponibles.",
-                        "bot"
+                        "bot",
+                        "error"
                     );
                 }
 
@@ -2602,7 +2712,8 @@ async function loadTimes(
                 addMessage(
                     data.error ||
                     "No se pudo realizar la reserva.",
-                    "bot"
+                    "bot",
+                    "error"
                 );
 
 
@@ -2640,7 +2751,8 @@ async function loadTimes(
 
                 `¡Te esperamos en ${BUSINESS_NAME}!`,
 
-                "bot"
+                "bot",
+                "success"
             );
         }
     );
@@ -2733,7 +2845,8 @@ async function loadTimes(
         addMessage(
             error.message ||
             "No pude preparar el formulario de reserva.",
-            "bot"
+            "bot",
+            "error"
         );
     }
 }
@@ -2948,7 +3061,8 @@ async function loadCustomerAppointments(
         addMessage(
             data.error ||
             "No pude consultar tus turnos.",
-            "bot"
+            "bot",
+            "error"
         );
 
 
@@ -2964,9 +3078,86 @@ async function loadCustomerAppointments(
         appointments.length === 0
     ) {
 
-        addMessage(
-            "⚠️ No encontramos turnos con esos datos. Verificá que el nombre y el teléfono estén escritos correctamente e intentá nuevamente.",
-            "bot"
+        const emptyMessage =
+            document.createElement("div");
+
+
+        emptyMessage.className =
+            "message bot";
+
+
+        const emptyBubble =
+            document.createElement("div");
+
+
+        emptyBubble.className =
+            "bubble chat-empty-state";
+
+
+        const emptyIcon =
+            document.createElement("span");
+
+
+        emptyIcon.className =
+            "chat-empty-icon";
+
+
+        emptyIcon.textContent =
+            "📅";
+
+
+        emptyIcon.setAttribute(
+            "aria-hidden",
+            "true"
+        );
+
+
+        const emptyTitle =
+            document.createElement("h3");
+
+
+        emptyTitle.textContent =
+            "No tenés turnos registrados";
+
+
+        const emptyText =
+            document.createElement("p");
+
+
+        emptyText.textContent =
+            "Cuando reserves un turno, aparecerá aquí.";
+
+
+        emptyBubble.appendChild(
+            emptyIcon
+        );
+
+
+        emptyBubble.appendChild(
+            emptyTitle
+        );
+
+
+        emptyBubble.appendChild(
+            emptyText
+        );
+
+
+        emptyMessage.appendChild(
+            emptyBubble
+        );
+
+
+        chat.appendChild(
+            emptyMessage
+        );
+
+
+        scrollChat();
+
+
+        recordLocalResponse(
+            "Se consultaron los turnos pero no hay turnos registrados para estos datos."
         );
 
 

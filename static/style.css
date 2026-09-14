@@ -1200,6 +1200,51 @@ body::after {
 }
 
 /* ============================================================
+   ESTADOS DE MENSAJES EN EL CHAT
+   ============================================================ */
+
+.bubble.is-success {
+    background: var(--success-bg);
+    color: var(--success);
+    border-color: var(--success-border);
+}
+
+.bubble.is-error {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: var(--danger-border);
+}
+
+/* ============================================================
+   ESTADO VACÍO EN EL CHAT
+   ============================================================ */
+
+.chat-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-secondary);
+}
+
+.chat-empty-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: .6;
+    display: block;
+}
+
+.chat-empty-state h3 {
+    color: var(--primary-deep);
+    font-weight: 600;
+    margin-bottom: 6px;
+    font-size: 16px;
+}
+
+.chat-empty-state p {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+/* ============================================================
    ACCESIBILIDAD: RESPETAR MOVIMIENTO REDUCIDO
    ============================================================ */
 
