@@ -599,6 +599,132 @@ class TestToolResultControl(unittest.TestCase):
             for p in patches:
                 p.stop()
 
+    def test_reserva_texto_plano_sin_tool_se_neutraliza(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Tu turno quedó reservado correctamente.")])
+        patches = self._common_patches(mock_client)
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("reservar", business_id=1)
+            self.assertNotIn("reservado correctamente", result)
+            self.assertNotIn("reservado", result)
+            self.assertIn("no se pudo confirmar la operación", result)
+            self.assertEqual(mock_client.call_count, 1)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_cancelacion_texto_plano_sin_tool_se_neutraliza(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Listo. Tu turno fue cancelado correctamente.")])
+        patches = self._common_patches(mock_client)
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("cancelar", business_id=1)
+            self.assertNotIn("cancelado correctamente", result)
+            self.assertNotIn("cancelado", result)
+            self.assertIn("no se pudo confirmar la operación", result)
+            self.assertEqual(mock_client.call_count, 1)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_reprogramacion_texto_plano_sin_tool_se_neutraliza(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Listo. Tu turno fue reprogramado correctamente.")])
+        patches = self._common_patches(mock_client)
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("reprogramar", business_id=1)
+            self.assertNotIn("reprogramado correctamente", result)
+            self.assertNotIn("reprogramado", result)
+            self.assertIn("no se pudo confirmar la operación", result)
+            self.assertEqual(mock_client.call_count, 1)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_confirmacion_falsa_despues_de_consultar_disponibilidad(self):
+        ai.client = None
+        first = _MockResponse(function_calls=[_MockFunctionCall("consultar_disponibilidad", {"fecha": "2026-09-20"})])
+        second = _MockResponse(text="Tu turno quedó reservado correctamente.")
+        mock_client = _MockGenAIClient(responses=[first, second])
+        patches = self._common_patches(
+            mock_client,
+            tool_result={"success": True, "horarios_disponibles": ["10:00"]},
+        )
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("reservar", business_id=1)
+            self.assertNotIn("reservado correctamente", result)
+            self.assertIn("no se pudo confirmar la operación", result)
+            self.assertEqual(mock_client.call_count, 2)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_texto_normal_sin_confirmacion_permanece_intacto(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Claro, ¿qué horarios tenés disponibles para mañana?")])
+        patches = self._common_patches(mock_client)
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("hola", business_id=1)
+            self.assertEqual(result, "Claro, ¿qué horarios tenés disponibles para mañana?")
+            self.assertEqual(mock_client.call_count, 1)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_mutacion_sin_success_no_alimenta_gemini(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reservar_turno", {"nombre": "Ana", "telefono": "1234567890", "servicio": "Corte", "fecha": "2026-09-20", "hora": "10:00"})])])
+        patches = self._common_patches(mock_client, tool_result={"error": "sin clave success"})
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("reservar", business_id=1)
+            self.assertNotIn("reservado", result)
+            self.assertIn("no se pudo confirmar la operación", result)
+            self.assertEqual(mock_client.call_count, 1)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_cancelar_exitosa_sí_confirma(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("cancelar_turno", {"appointment_id": 1, "telefono": "123"})])])
+        patches = self._common_patches(mock_client, tool_result={"success": True})
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("cancelar", business_id=1)
+            self.assertIn("cancelado correctamente", result)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_reprogramar_exitosa_sí_confirma(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reprogramar_turno", {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-09-20", "nueva_hora": "10:00"})])])
+        patches = self._common_patches(
+            mock_client,
+            tool_result={"success": True, "nueva_fecha": "2026-09-20", "nueva_hora": "10:00"},
+        )
+        for p in patches:
+            p.start()
+        try:
+            result = ai.ask_ai("reprogramar", business_id=1)
+            self.assertIn("reprogramado correctamente", result)
+        finally:
+            for p in patches:
+                p.stop()
+
 
 class TestErrorFormatStandardization(unittest.TestCase):
     """Verifica que las respuestas de error usan el formato {success, error, code}."""

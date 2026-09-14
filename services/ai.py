@@ -87,6 +87,8 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 0.1
 RETRY_BACKOFF_MAX = 1.0
 
+_MUTATING_TOOLS = frozenset({"reservar_turno", "cancelar_turno", "reprogramar_turno"})
+
 
 def get_business_identity(business_id=None):
     if business_id is None:
@@ -291,6 +293,48 @@ def _log_gemini_call(request_id=None, business_id=None, latency_ms=0,
         candidate_tokens if candidate_tokens is not None else "-",
         total_tokens if total_tokens is not None else "-",
     )
+
+
+_MUTATION_CONFIRMATION_PATTERNS = {
+    "reservar_turno": re.compile(
+        r"qued[óo] reservad[oa]|fue reservad[oa]|reservad[oa] correctamente|se reserv[óo]",
+        re.IGNORECASE,
+    ),
+    "cancelar_turno": re.compile(
+        r"qued[óo] cancelad[oa]|fue cancelad[oa]|cancelad[oa] correctamente|se cancel[óo]",
+        re.IGNORECASE,
+    ),
+    "reprogramar_turno": re.compile(
+        r"qued[óo] reprogramad[oa]|fue reprogramad[oa]|reprogramad[oa] correctamente|se reprogram[óo]",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _detect_unsafe_mutation_confirmation(text):
+    if not text:
+        return None
+    for tool_name, pattern in _MUTATION_CONFIRMATION_PATTERNS.items():
+        if pattern.search(text):
+            return tool_name
+    return None
+
+
+def _safe_text_response(response_text, confirmed_mutations):
+    if response_text is None:
+        return response_text
+    asserted = _detect_unsafe_mutation_confirmation(response_text)
+    if asserted is not None and asserted not in confirmed_mutations:
+        logger.warning(
+            "Respuesta de Gemini afirmó confirmación de %s sin que la herramienta "
+            "lo confirmara; se retorna mensaje seguro.",
+            asserted,
+        )
+        return (
+            "Disculpá, no se pudo confirmar la operación en este momento. "
+            "Por favor, verificá los datos e intentá nuevamente."
+        )
+    return response_text
 
 
 # ============================================================
@@ -1924,6 +1968,8 @@ días de la semana y fechas relativas.
     # CICLO DE HERRAMIENTAS
     # ========================================================
 
+    confirmed_mutations = set()
+
     iteration = 0
 
     while True:
@@ -1982,6 +2028,7 @@ días de la semana y fechas relativas.
             try:
 
                 response_text = response.text
+                safe_text = _safe_text_response(response_text, confirmed_mutations)
 
                 logger.info(
                     "ask_ai_complete request_id=%s business_id=%s tool_iterations=%d",
@@ -1992,12 +2039,12 @@ días de la semana y fechas relativas.
 
                 # Guardar respuesta del asistente
                 if session_id:
-                    add_conversation_message_scoped(session_id, business_id, "assistant", response_text)
+                    add_conversation_message_scoped(session_id, business_id, "assistant", safe_text)
                     # Detectar si la respuesta indica necesidad de humano
-                    if _detect_needs_human(response_text):
+                    if _detect_needs_human(safe_text):
                         request_human_handoff_scoped(session_id, business_id)
 
-                return response_text
+                return safe_text
 
             except Exception:
 
@@ -2090,6 +2137,8 @@ días de la semana y fechas relativas.
                 and result.get("success") is True
             ):
 
+                confirmed_mutations.add("reservar_turno")
+
                 logger.info(
                     "RESERVA CONFIRMADA. "
                     "No se realiza una segunda llamada a Gemini."
@@ -2133,6 +2182,8 @@ días de la semana y fechas relativas.
                 and result.get("success") is True
             ):
 
+                confirmed_mutations.add("cancelar_turno")
+
                 logger.info(
                     "CANCELACIÓN CONFIRMADA."
                 )
@@ -2167,6 +2218,8 @@ días de la semana y fechas relativas.
                 tool_name == "reprogramar_turno"
                 and result.get("success") is True
             ):
+
+                confirmed_mutations.add("reprogramar_turno")
 
                 logger.info(
                     "REPROGRAMACIÓN CONFIRMADA."
@@ -2205,6 +2258,21 @@ días de la semana y fechas relativas.
             # En este punto dejamos que Gemini utilice
             # los resultados para continuar la conversación.
             # =================================================
+
+            if (
+                tool_name in _MUTATING_TOOLS
+                and not isinstance(result.get("success"), bool)
+            ):
+                logger.error(
+                    "Herramienta mutadora %s devolvió un resultado sin "
+                    "'success' booleano; no se confirma la operación ni se "
+                    "alimenta el resultado a Gemini.",
+                    tool_name,
+                )
+                return (
+                    "Disculpá, no se pudo confirmar la operación en este momento. "
+                    "Por favor, verificá los datos e intentá nuevamente."
+                )
 
             function_response_parts.append(
 
