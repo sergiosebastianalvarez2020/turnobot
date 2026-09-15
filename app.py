@@ -87,6 +87,7 @@ from services.appointments import (
     get_appointment_by_token,
     get_appointments,
     get_appointment_counts,
+    normalize_phone,
 )
 from database.database import (
     get_user_by_email_scoped,
@@ -469,6 +470,7 @@ def build_public_frontend_config(settings=None):
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CONTENT_LENGTH = 2_000
 CHAT_REQUEST_LIMIT = 20
+CHAT_PHONE_REQUEST_LIMIT = 20
 API_REQUEST_LIMIT = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
 
@@ -650,6 +652,15 @@ def _rate_limit_key(endpoint, client_ip, business_id=None, user_id=None):
 
 def is_chat_request_allowed(client_ip, business_id=None):
     return _is_request_allowed(_rate_limit_key("chat", client_ip, business_id), CHAT_REQUEST_LIMIT)
+
+
+def is_chat_phone_request_allowed(customer_phone, business_id=None):
+    phone = normalize_phone(customer_phone) if customer_phone else ""
+    if not phone:
+        return True
+    scope = f"phone:{phone}:business:{business_id}"
+    key = f"chat:{scope}"
+    return _is_request_allowed(key, CHAT_PHONE_REQUEST_LIMIT)
 
 
 def is_api_request_allowed(client_ip, endpoint="api", business_id=None, user_id=None):
@@ -2499,10 +2510,17 @@ def chat():
                 "error": "El mensaje es demasiado largo."
             }), 400
 
-        # Datos opcionales del cliente para persistencia de conversación
-        customer_phone = data.get("customer_phone", "").strip() if isinstance(data.get("customer_phone"), str) else ""
+        customer_phone_raw = data.get("customer_phone", "")
+        customer_phone = normalize_phone(customer_phone_raw) if isinstance(customer_phone_raw, str) else ""
         customer_name = data.get("customer_name", "").strip() if isinstance(data.get("customer_name"), str) else ""
         customer_email = data.get("customer_email", "").strip() if isinstance(data.get("customer_email"), str) else ""
+
+        if customer_phone and not is_chat_phone_request_allowed(customer_phone, get_current_business_id()):
+            return jsonify({
+                "success": False,
+                "code": "RATE_LIMITED",
+                "error": "Esperá un momento antes de enviar otro mensaje."
+            }), 429
 
 
         response, session_id, public_token = ask_ai(
