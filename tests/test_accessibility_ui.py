@@ -234,6 +234,12 @@ class AccessibilityUITest(unittest.TestCase):
         css = css_path.read_text(encoding="utf-8")
         self.assertIn(".chat-empty-state", css)
 
+    def test_public_chat_has_skip_link(self):
+        index_path = Path(__file__).resolve().parent.parent / "templates" / "index.html"
+        html = index_path.read_text(encoding="utf-8")
+        self.assertIn("Saltar al contenido", html)
+        self.assertIn('href="#chat"', html)
+
 
 if __name__ == "__main__":
     unittest.main()
