@@ -1,4 +1,6 @@
 import unittest
+import sqlite3
+from unittest import mock
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -52,6 +54,123 @@ class RateLimitingTests(unittest.TestCase):
         self.assertFalse(application.rate_limit_state)
         application.is_chat_request_allowed("1.2.3.4", 1)
         self.assertIn(application._rate_limit_key("chat", "1.2.3.4", 1), application.rate_limit_state)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ForeignKeyEnforcementTests(unittest.TestCase):
+    """Tests que verifican que SQLite rechaza referencias inválidas
+    cuando PRAGMA foreign_keys = ON (configuración de la app)."""
+
+    def setUp(self):
+        import database.database as database
+        import tempfile
+        from pathlib import Path
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_database_path = database.DATABASE_PATH
+        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+        database.init_database()
+
+    def tearDown(self):
+        import database.database as database
+        database.DATABASE_PATH = self.original_database_path
+        self.temp_dir.cleanup()
+
+    def test_foreign_key_rejects_invalid_business_id(self):
+        """INSERT con business_id inexistente debe fallar por FK."""
+        import database.database as database
+
+        conn = database.get_connection()
+        try:
+            # Intentar insertar appointment con business_id inexistente (99999)
+            conn.execute(
+                """
+                INSERT INTO appointments
+                (customer_name, phone, service, appointment_date,
+                 appointment_time, appointment_end, duration, business_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("Test", "12345678", "Corte", "2025-01-01", "10:00", "11:00", 60, 99999, "confirmed"),
+            )
+            conn.commit()
+            self.fail("Debió fallar por foreign key constraint")
+        except sqlite3.IntegrityError:
+            # Esperado: FK constraint falla
+            pass
+        finally:
+            conn.close()
+
+    def test_foreign_key_rejects_invalid_resource_id(self):
+        """INSERT con resource_id inexistente debe fallar por FK."""
+        import sqlite3
+        import database.database as database
+
+        # Primero crear un negocio y servicio válidos
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Test', 1000, 30, 1)"
+            )
+            conn.commit()
+            service_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        finally:
+            conn.close()
+
+        conn = database.get_connection()
+        try:
+            # Intentar insertar appointment con resource_id inexistente
+            conn.execute(
+                """
+                INSERT INTO appointments
+                (customer_name, phone, service, appointment_date,
+                 appointment_time, appointment_end, duration, business_id, resource_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("Test", "12345678", "Test", "2025-01-01", "10:00", "10:30", 30, 1, 99999, "confirmed"),
+            )
+            conn.commit()
+            self.fail("Debió fallar por foreign key constraint")
+        except sqlite3.IntegrityError:
+            # Esperado: FK constraint falla
+            pass
+        finally:
+            conn.close()
+
+    def test_foreign_key_cascade_delete_business(self):
+        """Eliminar negocio debe fallar si tiene citas (restrict)."""
+        import sqlite3
+        import database.database as database
+
+        conn = database.get_connection()
+        try:
+            # Crear negocio y cita
+            conn.execute("INSERT INTO businesses (name, slug) VALUES ('Test', 'test')")
+            conn.commit()
+            biz_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+            conn.execute(
+                """
+                INSERT INTO appointments
+                (customer_name, phone, service, appointment_date,
+                 appointment_time, appointment_end, duration, business_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("Test", "12345678", "Corte", "2025-01-01", "10:00", "11:00", 60, biz_id, "confirmed"),
+            )
+            conn.commit()
+
+            # Intentar borrar negocio - debe fallar por FK restrict
+            conn.execute("DELETE FROM businesses WHERE id = ?", (biz_id,))
+            conn.commit()
+            self.fail("Debió fallar por foreign key constraint (RESTRICT)")
+        except sqlite3.IntegrityError:
+            # Esperado: FK constraint falla
+            pass
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

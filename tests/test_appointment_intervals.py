@@ -235,6 +235,55 @@ class TestConcurrency(BaseIntervalTest):
         self.assertEqual(successes.count(True), 1)
         self.assertEqual(len(results), 2)
 
+    def test_dos_reprogramaciones_solapadas_simultaneas_solo_una_exitosa(self):
+        """Dos hilos intentan reprogramar turnos al mismo slot simultáneamente."""
+        barrier = threading.Barrier(2)
+        results = []
+
+        # Crear dos turnos iniciales en horarios distintos
+        result_a = self._book("S30", "09:00")
+        appointment_id_a = result_a["appointment_id"]
+        result_b = self._book("S30", "10:00")
+        appointment_id_b = result_b["appointment_id"]
+
+        # Ambos intentan moverse a 10:30
+        target_time = "10:30"
+
+        def reschedule(appointment_id):
+            barrier.wait()
+            # Usar el método de reprogramación del cliente (con teléfono y nombre)
+            result = appointments.reschedule_appointment(
+                appointment_id=appointment_id,
+                new_date=self.valid_date,
+                new_time="10:30",
+                phone="123456789",
+                business_id=1,
+                customer_name="Cliente",
+            )
+            results.append(result)
+
+        threads = [
+            threading.Thread(target=reschedule, args=(appointment_id_a,)),
+            threading.Thread(target=reschedule, args=(appointment_id_b,)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        successes = [r["success"] for r in results]
+        # Exactamente uno debe tener éxito
+        self.assertEqual(successes.count(True), 1)
+        self.assertEqual(len(results), 2)
+
+        # Verificar estado final en BD: solo un turno a las 10:30
+        rows = self._query(
+            "SELECT id, appointment_time FROM appointments WHERE appointment_date = ? AND status = 'confirmed'",
+            (self.valid_date,),
+        )
+        at_1030 = [r for r in rows if r["appointment_time"] == "10:30"]
+        self.assertEqual(len(at_1030), 1, "Solo debe haber un turno a las 10:30")
+
 
 class TestInvalidDuration(BaseIntervalTest):
 
