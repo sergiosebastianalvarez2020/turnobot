@@ -149,7 +149,15 @@ class TestCancelacionTelefonoCorrecto(unittest.TestCase):
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertTrue(appointments.cancel_appointment(appointment_id, "3838439222", 1, customer_name="Ana Pérez"))
+        self.assertTrue(
+            appointments.cancel_appointment(
+                appointment_id,
+                "3838439222",
+                1,
+                result["management_token"],
+                customer_name="Ana Pérez",
+            )
+        )
 
 
 class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
@@ -176,7 +184,15 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertFalse(appointments.cancel_appointment(appointment_id, "9999999999", 1))
+        self.assertFalse(
+            appointments.cancel_appointment(
+                appointment_id,
+                "3838439222",
+                1,
+                "token_incorrecto",
+                customer_name="Ana Pérez",
+            )
+        )
 
 
 class TestReprogramacionHorarioOcupado(unittest.TestCase):
@@ -215,7 +231,13 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
         )
         appointment_id = result2["appointment_id"]
         result = appointments.reschedule_appointment(
-            appointment_id, self.valid_date, "09:00", "3838439333", 1, customer_name="Juan López"
+            appointment_id,
+            self.valid_date,
+            "09:00",
+            "3838439333",
+            1,
+            result2["management_token"],
+            customer_name="Juan López",
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "occupied")

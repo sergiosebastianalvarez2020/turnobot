@@ -249,22 +249,27 @@ class TestConcurrency(BaseIntervalTest):
         # Ambos intentan moverse a 10:30
         target_time = "10:30"
 
-        def reschedule(appointment_id):
+        def reschedule(appointment_id, management_token):
             barrier.wait()
-            # Usar el método de reprogramación del cliente (con teléfono y nombre)
+            # Usar el método de reprogramación del cliente (con el management_token del turno)
             result = appointments.reschedule_appointment(
                 appointment_id=appointment_id,
                 new_date=self.valid_date,
                 new_time="10:30",
                 phone="123456789",
                 business_id=1,
+                management_token=management_token,
                 customer_name="Cliente",
             )
             results.append(result)
 
         threads = [
-            threading.Thread(target=reschedule, args=(appointment_id_a,)),
-            threading.Thread(target=reschedule, args=(appointment_id_b,)),
+            threading.Thread(
+                target=reschedule, args=(appointment_id_a, result_a["management_token"])
+            ),
+            threading.Thread(
+                target=reschedule, args=(appointment_id_b, result_b["management_token"])
+            ),
         ]
         for t in threads:
             t.start()

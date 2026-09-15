@@ -3689,7 +3689,10 @@ def _cancel_public_appointment_response(business_id):
         if not telefono:
             return jsonify({"success": False, "error": "El teléfono es obligatorio."}), 400
 
-        if not management_token and not customer_name:
+        if not management_token:
+            return jsonify({"success": False, "error": "El token de gestión es obligatorio para cancelar un turno."}), 400
+
+        if not customer_name:
             return jsonify({"success": False, "error": "El nombre del cliente es obligatorio."}), 400
 
 
@@ -3814,7 +3817,10 @@ def _get_public_reschedule_response(business_id):
         if not telefono:
             return jsonify({"success": False, "error": "El teléfono es obligatorio."}), 400
 
-        if not management_token and not customer_name:
+        if not management_token:
+            return jsonify({"success": False, "error": "El token de gestión es obligatorio para reprogramar un turno."}), 400
+
+        if not customer_name:
             return jsonify({"success": False, "error": "El nombre del cliente es obligatorio."}), 400
 
 

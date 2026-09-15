@@ -1187,12 +1187,19 @@ def execute_tool(name, arguments, business_id=None):
                 "appointment_id"
             ]
 
+            # El management_token es obligatorio para cancelar
+            management_token = arguments.get("management_token")
+            if not management_token:
+                return {
+                    "success": False,
+                    "message": "El token de gestión es obligatorio para cancelar un turno.",
+                }
 
             resultado = cancel_appointment(
                 appointment_id,
                 arguments["telefono"],
                 business_id,
-                arguments.get("management_token"),
+                management_token,
                 customer_name=arguments.get("nombre"),
             )
 
@@ -1253,6 +1260,13 @@ def execute_tool(name, arguments, business_id=None):
                 "nueva_hora"
             ]
 
+            # El management_token es obligatorio para reprogramar
+            management_token = arguments.get("management_token")
+            if not management_token:
+                return {
+                    "success": False,
+                    "message": "El token de gestión es obligatorio para reprogramar un turno.",
+                }
 
             resultado = reschedule_appointment(
 

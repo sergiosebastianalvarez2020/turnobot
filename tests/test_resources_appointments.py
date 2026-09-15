@@ -156,11 +156,12 @@ class TestResourceLifecycle(BaseResourceBookingTest):
     def test_cancelacion_no_altera_resource_id(self):
         result = self._create(resource_id=self.court1, time="09:00")
         self.assertTrue(result["success"])
-        # La cancelación exige segundo factor: nombre + teléfono del titular.
+        # La cancelación exige el management_token del turno.
         cancelado = cancel_appointment(
             result["appointment_id"],
             "111111111",
             business_id=1,
+            management_token=result["management_token"],
             customer_name="Cliente Test",
         )
         self.assertTrue(cancelado)
