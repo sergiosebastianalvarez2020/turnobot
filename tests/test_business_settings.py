@@ -18,7 +18,7 @@ class TestBusinessSettings(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_devuelve_configuracion_del_negocio(self):
-        settings = database.get_business_settings()
+        settings = database.get_business_settings(1)
 
         self.assertEqual(settings["business_name"], "El Corte")
         self.assertEqual(settings["business_type"], "Barbería")

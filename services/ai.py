@@ -91,13 +91,10 @@ RETRY_BACKOFF_MAX = 1.0
 _MUTATING_TOOLS = frozenset({"reservar_turno", "cancelar_turno", "reprogramar_turno"})
 
 
-def get_business_identity(business_id=None):
+def get_business_identity(business_id):
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    if business_id is not None:
-        settings = get_business_settings_scoped(business_id)
-    else:
-        settings = get_business_settings()
+    settings = get_business_settings_scoped(business_id)
     return settings or {
         "business_name": "Mi negocio",
         "business_type": "Negocio",
@@ -510,16 +507,13 @@ IMPORTANTE
 """
 
 
-def get_services_prompt(business_id=None):
+def get_services_prompt(business_id):
     """Genera la lista actual de servicios desde la base de datos."""
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    if business_id is not None:
-        services = get_active_services_scoped(business_id)
-    else:
-        services = get_active_services()
+    services = get_active_services_scoped(business_id)
     if not services:
-        return "No hay servicios habilitados en este momento.", session_id, public_token
+        return "No hay servicios habilitados en este momento."
 
     return "\n".join(
         f"- {service['name']}: ${service['price']:,.0f}".replace(",", ".") + " "
@@ -542,7 +536,7 @@ def get_resources_prompt(business_id=None):
     )
 
 
-def get_business_hours_prompt(business_id=None):
+def get_business_hours_prompt(business_id):
     """Genera los horarios semanales actuales desde la base de datos."""
     if business_id is None:
         raise ValueError("business_id es obligatorio")
@@ -552,10 +546,7 @@ def get_business_hours_prompt(business_id=None):
     ]
     lines = []
     for day, name in enumerate(day_names):
-        if business_id is not None:
-            schedule = get_weekly_schedule_scoped(day, business_id)
-        else:
-            schedule = get_weekly_schedule(day)
+        schedule = get_weekly_schedule_scoped(day, business_id)
         if not schedule or not schedule["is_open"]:
             lines.append(f"- {name}: cerrado")
             continue
@@ -1034,10 +1025,7 @@ def execute_tool(name, arguments, business_id=None):
 
         try:
 
-            if business_id is not None:
-                active_services_a = get_active_services_scoped(business_id)
-            else:
-                active_services_a = get_active_services()
+            active_services_a = get_active_services_scoped(business_id)
 
             if arguments["servicio"] not in {
                 row["name"] for row in active_services_a
@@ -1830,10 +1818,7 @@ def ask_ai(
     # FECHA ACTUAL
     # ========================================================
 
-    if business_id is not None:
-        settings = get_business_settings_scoped(business_id)
-    else:
-        settings = get_business_settings()
+    settings = get_business_settings_scoped(business_id)
     business_name = settings["business_name"] if settings else "Mi negocio"
     business_type = settings["business_type"] if settings else "Negocio"
     business_description = settings["business_description"] if settings else ""

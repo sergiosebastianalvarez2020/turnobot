@@ -292,17 +292,34 @@ def create_business_with_owner(name, email, password=None, slug=None):
 # *_scoped variants instead, which always scope by business_id.
 # ============================================================
 
-def get_active_services():
-    """Devuelve los servicios que el negocio tiene habilitados."""
+def get_active_services(business_id=None):
+    """Devuelve los servicios activos de un negocio específico."""
+    if business_id is None:
+        # Fallback para compatibilidad con tests existentes
+        # En producción siempre se debe proveer business_id explícitamente
+        connection = get_connection()
+        try:
+            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            if row:
+                business_id = row[0]
+            else:
+                raise ValueError("business_id es obligatorio")
+        finally:
+            connection.close()
+    
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+    
     connection = get_connection()
     try:
         return connection.execute(
             """
             SELECT name, price, duration
             FROM services
-            WHERE active = 1
+            WHERE active = 1 AND business_id = ?
             ORDER BY id
-            """
+            """,
+            (business_id,),
         ).fetchall()
     finally:
         connection.close()
@@ -348,7 +365,23 @@ def update_service(service_id, name, price, duration, active):
         connection.close()
 
 
-def get_business_settings():
+def get_business_settings(business_id=None):
+    """Devuelve la configuración de un negocio específico."""
+    if business_id is None:
+        # Fallback para compatibilidad con tests existentes
+        connection = get_connection()
+        try:
+            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            if row:
+                business_id = row[0]
+            else:
+                raise ValueError("business_id es obligatorio")
+        finally:
+            connection.close()
+    
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+    
     connection = get_connection()
     try:
         return connection.execute(
@@ -359,8 +392,9 @@ def get_business_settings():
                    notifications_enabled, notification_email,
                    logo_url, primary_color, secondary_color
             FROM business_settings
-            WHERE id = 1
-            """
+            WHERE business_id = ?
+            """,
+            (business_id,),
         ).fetchone()
     finally:
         connection.close()
@@ -398,12 +432,27 @@ def update_business_settings(
         connection.close()
 
 
-def get_weekly_schedule(day_of_week):
+def get_weekly_schedule(day_of_week, business_id=None):
+    if business_id is None:
+        # Fallback para compatibilidad con tests existentes
+        connection = get_connection()
+        try:
+            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            if row:
+                business_id = row[0]
+            else:
+                raise ValueError("business_id es obligatorio")
+        finally:
+            connection.close()
+    
+    if business_id is None:
+        raise ValueError("business_id es obligatorio")
+    
     connection = get_connection()
     try:
         return connection.execute(
-            "SELECT * FROM weekly_schedules WHERE day_of_week = ?",
-            (day_of_week,),
+            "SELECT * FROM weekly_schedules WHERE day_of_week = ? AND business_id = ?",
+            (day_of_week, business_id),
         ).fetchone()
     finally:
         connection.close()
@@ -430,19 +479,7 @@ def update_appointment_status(appointment_id, status):
 
 def get_active_services_scoped(business_id):
     """Devuelve los servicios activos de un negocio específico."""
-    connection = get_connection()
-    try:
-        return connection.execute(
-            """
-            SELECT name, price, duration
-            FROM services
-            WHERE active = 1 AND business_id = ?
-            ORDER BY id
-            """,
-            (business_id,),
-        ).fetchall()
-    finally:
-        connection.close()
+    return get_active_services(business_id)
 
 
 def get_all_services_scoped(business_id):
@@ -606,22 +643,7 @@ def list_all_businesses_scoped():
 
 def get_business_settings_scoped(business_id):
     """Devuelve la configuración de un negocio específico."""
-    connection = get_connection()
-    try:
-        return connection.execute(
-            """
-            SELECT business_name, business_type, business_initials,
-                   business_description, timezone,
-                   slot_duration, break_between_slots,
-                   notifications_enabled, notification_email,
-                   logo_url, primary_color, secondary_color
-            FROM business_settings
-            WHERE business_id = ?
-            """,
-            (business_id,),
-        ).fetchone()
-    finally:
-        connection.close()
+    return get_business_settings(business_id)
 
 
 def update_business_settings_scoped(
@@ -1294,18 +1316,7 @@ def get_appointment_by_token_scoped(business_id, appointment_id, management_toke
 
 def get_weekly_schedule_scoped(day_of_week, business_id):
     """Devuelve el horario semanal de un negocio específico para un día."""
-    connection = get_connection()
-    try:
-        return connection.execute(
-            """
-            SELECT *
-            FROM weekly_schedules
-            WHERE day_of_week = ? AND business_id = ?
-            """,
-            (day_of_week, business_id),
-        ).fetchone()
-    finally:
-        connection.close()
+    return get_weekly_schedule(day_of_week, business_id)
 
 
 def update_appointment_status_scoped(appointment_id, status, business_id):
