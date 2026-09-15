@@ -38,6 +38,21 @@ class RateLimitingTests(unittest.TestCase):
             application._rate_limit_key("api:turnos", "1.2.3.4", 1, 11),
         )
 
+    def test_rate_limit_state_is_in_process_only(self):
+        """El rate limiting usa memoria del proceso actual.
+
+        Nota: en despliegues multi-worker o multi-proceso, cada worker
+        mantendría su propio rate_limit_state, por lo que los límites
+        podrían aplicarse de forma independiente por worker. Para soportar
+        múltiples workers, en el futuro se requiere almacenamiento compartido
+        como Redis; actualmente no se agrega porque el despliegue oficial
+        de TurnoBot usa un solo proceso Waitress.
+        """
+        application.rate_limit_state.clear()
+        self.assertFalse(application.rate_limit_state)
+        application.is_chat_request_allowed("1.2.3.4", 1)
+        self.assertIn(application._rate_limit_key("chat", "1.2.3.4", 1), application.rate_limit_state)
+
 
 if __name__ == "__main__":
     unittest.main()
