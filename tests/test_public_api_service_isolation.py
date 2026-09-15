@@ -3,13 +3,16 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import app as application
 import database.database as database
 
+ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
+
 
 def next_open_day():
-    date = datetime.now().date() + timedelta(days=1)
+    date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
     while date.weekday() == 6:
         date += timedelta(days=1)
     return date.isoformat()
@@ -838,7 +841,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
                 appointment_id,
                 "111111111",
                 customer_name="Cliente A",
-                new_date=(datetime.now() - timedelta(days=1)).date().isoformat(),
+                new_date=(datetime.now(ZONA_HORARIA) - timedelta(days=1)).date().isoformat(),
             ),
         )
 
@@ -847,7 +850,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
     def test_api_reprogramar_dia_cerrado_conserva_razon(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
-        sunday = datetime.now().date()
+        sunday = datetime.now(ZONA_HORARIA).date()
         while sunday.weekday() != 6:
             sunday += timedelta(days=1)
 

@@ -3,11 +3,14 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import database.database as database
 from services import appointments
 
 FROZEN_NOW = datetime(2027, 1, 24, 10, 0)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
+
+ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 class _FrozenDatetime(datetime):
@@ -30,7 +33,7 @@ class TestReservaDisponible(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -57,7 +60,7 @@ class TestReservaOcupada(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -85,7 +88,7 @@ class TestDomingoCerrado(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_reserva_en_domingo(self):
-        sunday = datetime.now().date()
+        sunday = datetime.now(ZONA_HORARIA).date()
         while sunday.weekday() != 6:
             sunday += timedelta(days=1)
         result = appointments.create_appointment(
@@ -114,7 +117,7 @@ class TestFechaInvalida(unittest.TestCase):
         self.assertEqual(result["reason"], "invalid_date")
 
     def test_reserva_con_fecha_pasada(self):
-        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
+        yesterday = (datetime.now(ZONA_HORARIA).date() - timedelta(days=1)).isoformat()
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", yesterday, "09:00", 1
         )
@@ -136,7 +139,7 @@ class TestCancelacionTelefonoCorrecto(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -163,7 +166,7 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -198,7 +201,7 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -232,7 +235,7 @@ class TestDobleReservaSimultanea(unittest.TestCase):
 
     @staticmethod
     def _next_open_day():
-        date = datetime.now().date() + timedelta(days=1)
+        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
