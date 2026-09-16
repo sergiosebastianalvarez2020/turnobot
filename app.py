@@ -258,6 +258,7 @@ for handler in logging.getLogger().handlers:
     if USE_JSON_LOGS:
         handler.setFormatter(StructuredFormatter())
 file_handler.addFilter(RequestContextFilter())
+logging.getLogger().addHandler(file_handler)
 
 logger = logging.getLogger("el_corte.web")
 
@@ -923,14 +924,17 @@ def business_index(slug):
 
 @app.route("/health", methods=["GET"])
 def health():
+    connection = None
     try:
         connection = get_connection()
         connection.execute("SELECT 1").fetchone()
-        connection.close()
         return jsonify({"status": "ok", "database": "ok"})
     except Exception:
         logger.exception("Health check failed")
         return jsonify({"status": "error", "database": "error"}), 503
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 # ============================================================

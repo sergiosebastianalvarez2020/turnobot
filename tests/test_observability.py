@@ -927,6 +927,59 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
         self.assertIn("ID de solicitud:", body)
 
 
+class TestLogFileAndHealth(unittest.TestCase):
+    """Verifica el sink de log en archivo y el comportamiento del health check."""
+
+    def test_rotating_file_handler_adjuntado_al_logger_raiz(self):
+        from logging.handlers import RotatingFileHandler
+        root = logging.getLogger()
+        self.assertTrue(
+            any(
+                isinstance(handler, RotatingFileHandler)
+                for handler in root.handlers
+            ),
+            "El RotatingFileHandler de logs/app.log debe estar adjuntado al logger raíz",
+        )
+
+    def test_health_ok_con_database_operativa(self):
+        client = application.app.test_client()
+        resp = client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), {"status": "ok", "database": "ok"})
+
+    def test_health_503_sin_database_y_sin_exponer_el_error(self):
+        import sqlite3
+        import database.database as database_mod
+        real_get_connection = database_mod.get_connection
+
+        class GuardedConnection:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+            def execute(self, sql, params=()):
+                if isinstance(sql, str) and sql.strip().upper() == "SELECT 1":
+                    raise sqlite3.OperationalError("database is locked")
+                return self._conn.execute(sql, params)
+
+        def guarded_get_connection(*args, **kwargs):
+            return GuardedConnection(real_get_connection(*args, **kwargs))
+
+        client = application.app.test_client()
+        with mock.patch.object(
+            application, "get_connection", side_effect=guarded_get_connection
+        ):
+            resp = client.get("/health")
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.get_json(), {"status": "error", "database": "error"})
+        body = resp.get_data(as_text=True)
+        self.assertNotIn("database is locked", body)
+        self.assertNotIn("Traceback", body)
+
+
 class TestGeminiTechnicalRobustness(unittest.TestCase):
     """Verifica max_output_tokens y unicidad de constantes."""
 
