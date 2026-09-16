@@ -12,10 +12,12 @@ Cubre (según ETAPA10_DISENO_FIDELIZACION.md sección 12 y decisión de identida
 """
 
 import re
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from datetime import datetime, timedelta
+from unittest import mock
 
 from werkzeug.security import generate_password_hash
 
@@ -171,6 +173,42 @@ class TestLoyaltyAcreditacion(LoyaltyBase):
         self.assertTrue(res["success"])
         self.assertEqual(res["reason"], "awarded")
         self.assertEqual(self._account(1, "3815000001")["points_balance"], 2)
+
+    def test_error_real_en_ledger_no_se_enmascara_como_idempotente(self):
+        database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=2)
+        apt = self._create_turno()
+        database.update_appointment_status_scoped(apt, "completed", 1)
+
+        real = database.get_connection()
+
+        class LedgerConFalloDeBase:
+            """Conexión real salvo en el INSERT del ledger, donde la BD falla
+            (OperationalError, ej. base bloqueada/corrupta) — NO duplicado UNIQUE."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def execute(self, sql, params=()):
+                if sql.strip().upper().startswith("INSERT INTO POINTS_LEDGER"):
+                    raise sqlite3.OperationalError("database is locked")
+                return self._inner.execute(sql, params if params is not None else ())
+
+            def commit(self):
+                self._inner.commit()
+
+            def rollback(self):
+                self._inner.rollback()
+
+            def close(self):
+                self._inner.close()
+
+        with mock.patch.object(loyalty, "get_connection", return_value=LedgerConFalloDeBase(real)):
+            res = loyalty.award_points_for_completed(1, apt)
+        real.close()
+
+        self.assertFalse(res["success"])
+        self.assertEqual(res["reason"], "error")
+        self.assertIsNone(self._account(1, "3815000001"))
 
     def test_confirmed_no_genera(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=2)

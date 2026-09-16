@@ -12,6 +12,7 @@ Sigue el patrón de services/memberships.py (devuelve dicts success/reason).
 """
 
 import logging
+import sqlite3
 from datetime import date
 
 from services.appointments import normalize_phone
@@ -109,7 +110,7 @@ def award_points_for_completed(business_id, appointment_id):
                        VALUES (?, ?, ?, 'earn', 'turno completado', ?, ?)""",
                     (business_id, account["id"], points, appointment_id, points),
                 )
-            except Exception:
+            except sqlite3.IntegrityError:
                 connection.execute("ROLLBACK")
                 return {"success": True, "reason": "already_awarded"}
 
