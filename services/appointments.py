@@ -25,7 +25,7 @@ from database.database import (
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
 
-def _validate_resource(resource_id, business_id):
+def _validate_resource(resource_id, business_id, connection=None):
     """Valida que `resource_id` pertenezca al negocio indicado.
 
     Devuelve (resource_id_validado | None, reason | None).
@@ -43,7 +43,7 @@ def _validate_resource(resource_id, business_id):
             return None, "invalid_resource"
     except (ValueError, TypeError):
         return None, "invalid_resource"
-    resource = get_resource_scoped(resource_id_int, business_id)
+    resource = get_resource_scoped(resource_id_int, business_id, connection=connection)
     if resource is None or not resource["active"]:
         return None, "invalid_resource"
     return resource_id_int, None
@@ -61,12 +61,12 @@ def _to_hhmm(minutes):
     return "{:02d}:{:02d}".format(minutes // 60, minutes % 60)
 
 
-def _fits_closing(date, time, end_minutes, business_id):
+def _fits_closing(date, time, end_minutes, business_id, connection=None):
     """Devuelve True si un turno que comienza en `time` y termina en
     `end_minutes` cabe dentro del cierre del bloque (mañana/tarde) que lo
     contiene. Permite terminar exactamente al cierre."""
     appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
+    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
     if not schedule or not schedule["is_open"]:
         return False
     start_minutes = _to_minutes(time)
@@ -83,8 +83,8 @@ def _fits_closing(date, time, end_minutes, business_id):
     return False
 
 
-def get_business_timezone(business_id):
-    settings = get_business_settings_scoped(business_id)
+def get_business_timezone(business_id, connection=None):
+    settings = get_business_settings_scoped(business_id, connection=connection)
     configured_timezone = settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
     try:
         ZoneInfo(configured_timezone)
@@ -169,7 +169,7 @@ def validate_email(email):
 # HORARIOS DISPONIBLES
 # ============================================================
 
-def get_available_slots(date, business_id, service=None, duration=None):
+def get_available_slots(date, business_id, service=None, duration=None, connection=None):
     """Construye la grilla de horarios a partir de la configuración del negocio.
 
     slot_duration es la GRANULARIDAD de la grilla (paso entre comienzos),
@@ -182,15 +182,15 @@ def get_available_slots(date, business_id, service=None, duration=None):
     slot_duration + break_between_slots.
     """
     appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
-    settings = get_business_settings_scoped(business_id)
+    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
+    settings = get_business_settings_scoped(business_id, connection=connection)
 
     if not schedule or not schedule["is_open"]:
         return []
 
     slot_duration = settings["slot_duration"] if settings and settings["slot_duration"] else 60
     break_between_slots = settings["break_between_slots"] if settings and settings["break_between_slots"] else 0
-    services = get_active_services_scoped(business_id)
+    services = get_active_services_scoped(business_id, connection=connection)
     if duration is not None and duration <= 0:
         return []
     if duration is not None:
@@ -224,7 +224,7 @@ def get_available_slots(date, business_id, service=None, duration=None):
 # VALIDAR FECHA
 # ============================================================
 
-def validate_appointment_date(date, business_id):
+def validate_appointment_date(date, business_id, connection=None):
     """
     Valida que la fecha del turno:
 
@@ -265,7 +265,7 @@ def validate_appointment_date(date, business_id):
         }
 
 
-    today = datetime.now(ZoneInfo(get_business_timezone(business_id))).date()
+    today = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection))).date()
 
 
     # --------------------------------------------------------
@@ -280,7 +280,7 @@ def validate_appointment_date(date, business_id):
         }
 
 
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id)
+    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
 
     if not schedule or not schedule["is_open"]:
 
@@ -296,7 +296,7 @@ def validate_appointment_date(date, business_id):
     }
 
 
-def validate_appointment_time(date, time, business_id=None):
+def validate_appointment_time(date, time, business_id=None, connection=None):
     """Valida HH:MM y evita reservar una hora pasada del día actual."""
     try:
         parsed_time = datetime.strptime(time, "%H:%M").time()
@@ -304,7 +304,7 @@ def validate_appointment_time(date, time, business_id=None):
     except (ValueError, TypeError):
         return False, "invalid_time"
 
-    now = datetime.now(ZoneInfo(get_business_timezone(business_id)))
+    now = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection)))
     if appointment_date == now.date() and parsed_time <= now.time().replace(second=0, microsecond=0):
         return False, "past_time"
     return True, None
@@ -330,28 +330,25 @@ def get_available_times(date, business_id=None, service=None, resource_id=None):
     devuelve una lista vacía.
     """
 
-    validation = validate_appointment_date(date, business_id)
-
-
-    if not validation["valid"]:
-
-        return []
-
-
     connection = get_connection()
 
     try:
+        validation = validate_appointment_date(date, business_id, connection=connection)
+
+        if not validation["valid"]:
+
+            return []
         service_duration = None
         if service is not None:
             selected = next(
-                (row for row in get_active_services_scoped(business_id) if row["name"] == service),
+                (row for row in get_active_services_scoped(business_id, connection=connection) if row["name"] == service),
                 None,
             )
             if selected is None or selected["duration"] <= 0:
                 return []
             service_duration = selected["duration"]
 
-        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id)
+        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id, connection=connection)
         if resource_id is not None and resource_id_validated is None:
             return []
 
@@ -388,7 +385,7 @@ def get_available_times(date, business_id=None, service=None, resource_id=None):
 
         return [
             time
-            for time in get_available_slots(date, business_id, service)
+            for time in get_available_slots(date, business_id, service, connection=connection)
             if not any(
                 _to_minutes(time) < end_minute
                 and (service_duration is None or _to_minutes(time) + service_duration > start_minute)
@@ -484,90 +481,91 @@ def create_appointment(
         }
     customer_email = (email or "").strip()
 
-    active_services = get_active_services_scoped(business_id)
-    service_row = next(
-        (row for row in active_services if row["name"] == service),
-        None,
-    )
-    if service_row is None:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_service",
-        }
-
-    duration = service_row["duration"]
-    if duration is None or duration <= 0:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_duration",
-        }
-
-    # --------------------------------------------------------
-    # VALIDAR RECURSO (si se provee)
-    #
-    # El resource_id recibido del cliente se comprueba SIEMPRE contra el
-    # business_id actual en la tabla resources. Un recurso de otro negocio
-    # es rechazado con invalid_resource.
-    # --------------------------------------------------------
-
-    resource_id_validated, resource_reason = _validate_resource(resource_id, business_id)
-    if resource_reason is not None:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": resource_reason,
-        }
-
-    # --------------------------------------------------------
-    # VALIDAR FECHA
-    # --------------------------------------------------------
-
-    validation = validate_appointment_date(
-        appointment_date,
-        business_id,
-    )
-
-    if not validation["valid"]:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": validation["reason"],
-        }
-
-    # --------------------------------------------------------
-    # VALIDAR HORARIO (formato y hora pasada)
-    # --------------------------------------------------------
-
-    valid_time, time_reason = validate_appointment_time(appointment_date, appointment_time, business_id)
-    if not valid_time:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": time_reason,
-        }
-
-    start_minutes = _to_minutes(appointment_time)
-    end_minutes = start_minutes + duration
-    if end_minutes <= start_minutes:
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_duration",
-        }
-    appointment_end = _to_hhmm(end_minutes)
-
-    if appointment_time not in get_available_slots(appointment_date, business_id, service):
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_time",
-        }
-
     connection = get_connection()
 
     try:
+
+        active_services = get_active_services_scoped(business_id, connection=connection)
+        service_row = next(
+            (row for row in active_services if row["name"] == service),
+            None,
+        )
+        if service_row is None:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": "invalid_service",
+            }
+
+        duration = service_row["duration"]
+        if duration is None or duration <= 0:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": "invalid_duration",
+            }
+
+        # --------------------------------------------------------
+        # VALIDAR RECURSO (si se provee)
+        #
+        # El resource_id recibido del cliente se comprueba SIEMPRE contra el
+        # business_id actual en la tabla resources. Un recurso de otro negocio
+        # es rechazado con invalid_resource.
+        # --------------------------------------------------------
+
+        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id, connection=connection)
+        if resource_reason is not None:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": resource_reason,
+            }
+
+        # --------------------------------------------------------
+        # VALIDAR FECHA
+        # --------------------------------------------------------
+
+        validation = validate_appointment_date(
+            appointment_date,
+            business_id,
+            connection=connection,
+        )
+
+        if not validation["valid"]:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": validation["reason"],
+            }
+
+        # --------------------------------------------------------
+        # VALIDAR HORARIO (formato y hora pasada)
+        # --------------------------------------------------------
+
+        valid_time, time_reason = validate_appointment_time(appointment_date, appointment_time, business_id, connection=connection)
+        if not valid_time:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": time_reason,
+            }
+
+        start_minutes = _to_minutes(appointment_time)
+        end_minutes = start_minutes + duration
+        if end_minutes <= start_minutes:
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": "invalid_duration",
+            }
+        appointment_end = _to_hhmm(end_minutes)
+
+        if appointment_time not in get_available_slots(appointment_date, business_id, service, connection=connection):
+            return {
+                "success": False,
+                "appointment_id": None,
+                "reason": "invalid_time",
+            }
 
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
@@ -581,7 +579,7 @@ def create_appointment(
             # del bloque (mañana/tarde) en el que comienza.
             # ------------------------------------------------
 
-            if not _fits_closing(appointment_date, appointment_time, end_minutes, business_id):
+            if not _fits_closing(appointment_date, appointment_time, end_minutes, business_id, connection=connection):
                 connection.execute("ROLLBACK")
                 return {
                     "success": False,
@@ -1148,6 +1146,7 @@ def reschedule_appointment(
             validation = validate_appointment_date(
                 new_date,
                 business_id,
+                connection=connection,
             )
 
             if not validation["valid"]:
@@ -1161,7 +1160,7 @@ def reschedule_appointment(
             # VALIDAR NUEVO HORARIO
             # ------------------------------------------------
 
-            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration):
+            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration, connection=connection):
                 connection.execute("ROLLBACK")
                 return {
                     "success": False,
@@ -1172,7 +1171,7 @@ def reschedule_appointment(
             # VALIDAR HORARIO DE CIERRE
             # ------------------------------------------------
 
-            if not _fits_closing(new_date, new_time, end_minutes, business_id):
+            if not _fits_closing(new_date, new_time, end_minutes, business_id, connection=connection):
                 connection.execute("ROLLBACK")
                 return {
                     "success": False,
@@ -1331,21 +1330,21 @@ def reschedule_appointment_admin(
             end_minutes = start_minutes + historical_duration
             new_end = _to_hhmm(end_minutes)
 
-            validation = validate_appointment_date(new_date, business_id)
+            validation = validate_appointment_date(new_date, business_id, connection=connection)
             if not validation["valid"]:
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": validation["reason"]}
 
-            time_valid, time_reason = validate_appointment_time(new_date, new_time, business_id)
+            time_valid, time_reason = validate_appointment_time(new_date, new_time, business_id, connection=connection)
             if not time_valid:
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": time_reason}
 
-            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration):
+            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration, connection=connection):
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
 
-            if not _fits_closing(new_date, new_time, end_minutes, business_id):
+            if not _fits_closing(new_date, new_time, end_minutes, business_id, connection=connection):
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
 

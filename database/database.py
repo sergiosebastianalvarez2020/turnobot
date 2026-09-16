@@ -292,25 +292,27 @@ def create_business_with_owner(name, email, password=None, slug=None):
 # *_scoped variants instead, which always scope by business_id.
 # ============================================================
 
-def get_active_services(business_id=None):
+def get_active_services(business_id=None, connection=None):
     """Devuelve los servicios activos de un negocio específico."""
     if business_id is None:
         # Fallback para compatibilidad con tests existentes
         # En producción siempre se debe proveer business_id explícitamente
-        connection = get_connection()
+        fallback_connection = get_connection()
         try:
-            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            row = fallback_connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
             if row:
                 business_id = row[0]
             else:
                 raise ValueError("business_id es obligatorio")
         finally:
-            connection.close()
+            fallback_connection.close()
     
     if business_id is None:
         raise ValueError("business_id es obligatorio")
     
-    connection = get_connection()
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
     try:
         return connection.execute(
             """
@@ -322,7 +324,8 @@ def get_active_services(business_id=None):
             (business_id,),
         ).fetchall()
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def get_all_services():
@@ -365,24 +368,26 @@ def update_service(service_id, name, price, duration, active):
         connection.close()
 
 
-def get_business_settings(business_id=None):
+def get_business_settings(business_id=None, connection=None):
     """Devuelve la configuración de un negocio específico."""
     if business_id is None:
         # Fallback para compatibilidad con tests existentes
-        connection = get_connection()
+        fallback_connection = get_connection()
         try:
-            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            row = fallback_connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
             if row:
                 business_id = row[0]
             else:
                 raise ValueError("business_id es obligatorio")
         finally:
-            connection.close()
+            fallback_connection.close()
     
     if business_id is None:
         raise ValueError("business_id es obligatorio")
     
-    connection = get_connection()
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
     try:
         return connection.execute(
             """
@@ -397,7 +402,8 @@ def get_business_settings(business_id=None):
             (business_id,),
         ).fetchone()
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def update_business_settings(
@@ -432,30 +438,33 @@ def update_business_settings(
         connection.close()
 
 
-def get_weekly_schedule(day_of_week, business_id=None):
+def get_weekly_schedule(day_of_week, business_id=None, connection=None):
     if business_id is None:
         # Fallback para compatibilidad con tests existentes
-        connection = get_connection()
+        fallback_connection = get_connection()
         try:
-            row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+            row = fallback_connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
             if row:
                 business_id = row[0]
             else:
                 raise ValueError("business_id es obligatorio")
         finally:
-            connection.close()
+            fallback_connection.close()
     
     if business_id is None:
         raise ValueError("business_id es obligatorio")
     
-    connection = get_connection()
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
     try:
         return connection.execute(
             "SELECT * FROM weekly_schedules WHERE day_of_week = ? AND business_id = ?",
             (day_of_week, business_id),
         ).fetchone()
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def update_appointment_status(appointment_id, status):
@@ -477,9 +486,9 @@ def update_appointment_status(appointment_id, status):
 # SERVICIOS — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
 
-def get_active_services_scoped(business_id):
+def get_active_services_scoped(business_id, connection=None):
     """Devuelve los servicios activos de un negocio específico."""
-    return get_active_services(business_id)
+    return get_active_services(business_id, connection=connection)
 
 
 def get_all_services_scoped(business_id):
@@ -555,12 +564,14 @@ def get_resources_scoped(business_id, only_active=False):
         connection.close()
 
 
-def get_resource_scoped(resource_id, business_id):
+def get_resource_scoped(resource_id, business_id, connection=None):
     """Obtiene un recurso por id SOLO si pertenece al negocio indicado.
 
     Devuelve None si no existe o si pertenece a otro negocio.
     """
-    connection = get_connection()
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
     try:
         return connection.execute(
             """
@@ -571,7 +582,8 @@ def get_resource_scoped(resource_id, business_id):
             (resource_id, business_id),
         ).fetchone()
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def create_resource_scoped(business_id, name, active=True):
@@ -641,9 +653,9 @@ def list_all_businesses_scoped():
         connection.close()
 
 
-def get_business_settings_scoped(business_id):
+def get_business_settings_scoped(business_id, connection=None):
     """Devuelve la configuración de un negocio específico."""
-    return get_business_settings(business_id)
+    return get_business_settings(business_id, connection=connection)
 
 
 def update_business_settings_scoped(
@@ -1337,9 +1349,9 @@ def get_appointment_scoped(business_id, appointment_id):
         connection.close()
 
 
-def get_weekly_schedule_scoped(day_of_week, business_id):
+def get_weekly_schedule_scoped(day_of_week, business_id, connection=None):
     """Devuelve el horario semanal de un negocio específico para un día."""
-    return get_weekly_schedule(day_of_week, business_id)
+    return get_weekly_schedule(day_of_week, business_id, connection=connection)
 
 
 def update_appointment_status_scoped(appointment_id, status, business_id):
