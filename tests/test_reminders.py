@@ -4,11 +4,14 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import database.database as database
 from services import appointments
 from services import notifications
 import scripts.send_reminders as reminder_runner
+
+ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 class FakeSMTP:
@@ -45,10 +48,12 @@ class BaseReminderTest(unittest.TestCase):
         # "Hoy" fijo: un día futuro que no es domingo. El turno se crea para el
         # día siguiente (nunca domingo). Parcheamos _local_today para que el
         # runner calcule "mañana" = fecha_del_turno.
-        self.fixed_today = datetime.now().date() + timedelta(days=3)
+        self.fixed_today = datetime.now(ZONA_HORARIA).date() + timedelta(days=3)
         while self.fixed_today.weekday() == 6:
             self.fixed_today += timedelta(days=1)
         self.appointment_date = self.fixed_today + timedelta(days=1)
+        while self.appointment_date.weekday() == 6:
+            self.appointment_date += timedelta(days=1)
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_database_path
