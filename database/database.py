@@ -1314,6 +1314,29 @@ def get_appointment_by_token_scoped(business_id, appointment_id, management_toke
         connection.close()
 
 
+def get_appointment_scoped(business_id, appointment_id):
+    """Devuelve un turno (con estado) si pertenece al negocio indicado, o None.
+
+    Sirve para validar efectos secundarios (p.ej. reenvíos de notificaciones)
+    contra el estado real del turno sin cruzar el límite del tenant.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT id, customer_name, phone, customer_email, service,
+                   appointment_date, appointment_time, appointment_end,
+                   duration, status, business_id
+            FROM appointments
+            WHERE id = ? AND business_id = ?
+            """,
+            (appointment_id, business_id),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
 def get_weekly_schedule_scoped(day_of_week, business_id):
     """Devuelve el horario semanal de un negocio específico para un día."""
     return get_weekly_schedule(day_of_week, business_id)

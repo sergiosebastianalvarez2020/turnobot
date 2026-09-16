@@ -4,6 +4,11 @@ Sin colas de tareas: consulta `notification_log` y re-despacha las filas
 `failed` reutilizando el mismo servicio (que las actualiza a `sent` si el
 envío prospera, o conserva `failed` con el error sanitizado en caso contrario).
 
+Consistencia con el estado del turno: una fila `failed` SOLO se re-despacha si
+el turno sigue existiendo y está `confirmed` en su negocio. Si el turno fue
+cancelado, borrado u otro negocio, se omite (no se envían confirmaciones/
+recordatorios de turnos que ya no están vigentes).
+
 Modos:
     python scripts/retry_failed_notifications.py            # todas
     python scripts/retry_failed_notifications.py 42         # solo negocio 42
@@ -27,6 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from database.database import (
+    get_appointment_scoped,
     get_business_settings_scoped,
     list_failed_notifications_scoped,
 )
@@ -47,11 +53,18 @@ logger = logging.getLogger("retry_failed_notifications")
 
 
 def _resend(row):
-    """Re-despacha una fila `failed` según su tipo (scoped por negocio)."""
+    """Re-despacha una fila `failed` según su tipo (scoped por negocio).
+
+    El destinatario se toma del propio `notification_log` (nunca se re-apunta a
+    otra dirección) y el resto del contexto se reconstruye desde el turno real.
+    """
     business_id = row["business_id"]
-    appointment = get_confirmation_context(business_id, row)
+    appointment = get_appointment_scoped(business_id, row["appointment_id"])
     if appointment is None:
         return False, "appointment_not_found"
+    if appointment["status"] != "confirmed":
+        return False, "appointment_not_confirmed"
+    appointment["customer_email"] = row["destination"]
 
     if row["type"] == CONFIRMATION:
         return send_appointment_notification(
@@ -64,18 +77,6 @@ def _resend(row):
     if row["type"] == BUSINESS_CONFIRMATION:
         return send_business_confirmation_email(business_id, appointment, force=True)
     return False, "unknown_type"
-
-
-def get_confirmation_context(business_id, row):
-    """Mínimo contexto del turno para reenviar la notificación.
-
-    El email al cliente usa datos del turno (destino ya en el log, business_id
-    ya scoped). El aviso al negocio solo requiere appointment_id + negocio.
-    """
-    return {
-        "id": row["appointment_id"],
-        "customer_email": row["destination"],
-    }
 
 
 def _run_once(business_id=None, limit=100):
