@@ -480,6 +480,26 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["reason"], "invalid_time")
 
+    def test_api_reservar_nombre_corto_devuelve_error_de_validacion(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", name="A"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_name")
+        self.assertEqual(self._query("SELECT COUNT(*) FROM appointments")[0][0], 0)
+
+    def test_api_reservar_telefono_corto_devuelve_error_de_validacion(self):
+        response = self.client.post(
+            "/b/business-a/api/reservar",
+            json=self._reservation_payload("Corte", phone="123"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_phone")
+        self.assertEqual(self._query("SELECT COUNT(*) FROM appointments")[0][0], 0)
+
     def test_api_cancelar_business_a_cancela_su_turno(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
 
@@ -832,6 +852,22 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["reason"], "not_found")
+
+    def test_api_reprogramar_appointment_id_invalido_no_confirma_exito(self):
+        appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+
+        response = self.client.post(
+            "/b/business-a/api/reprogramar",
+            json=self._reschedule_payload("abc", "111111111", customer_name="Cliente A", management_token=self._token(appointment_id)),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["reason"], "invalid_appointment_id")
+        self.assertFalse(response.get_json()["success"])
+        self.assertEqual(
+            self._query("SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,))[0]["appointment_time"],
+            "09:00",
+        )
 
     def test_api_reprogramar_slug_inexistente_no_modifica_turno(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)

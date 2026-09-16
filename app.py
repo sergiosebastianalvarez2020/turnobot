@@ -3055,6 +3055,34 @@ def _create_public_appointment_response(business_id):
 
 
         # ----------------------------------------------------
+        # NOMBRE INVÁLIDO
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "invalid_name":
+
+            return jsonify({
+                "success": False,
+                "code": "invalid_name",
+                "reason": "invalid_name",
+                "error": "El nombre y apellido deben tener al menos 2 caracteres."
+            }), 400
+
+
+        # ----------------------------------------------------
+        # TELÉFONO INVÁLIDO
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "invalid_phone":
+
+            return jsonify({
+                "success": False,
+                "code": "invalid_phone",
+                "reason": "invalid_phone",
+                "error": "El teléfono debe tener al menos 7 dígitos."
+            }), 400
+
+
+        # ----------------------------------------------------
         # RESERVA CORRECTA
         # ----------------------------------------------------
 
@@ -3876,6 +3904,20 @@ def _get_public_reschedule_response(business_id):
 
                 "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente."
             })
+
+
+        # ----------------------------------------------------
+        # ID DE TURNO INVÁLIDO
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "invalid_appointment_id":
+
+            return jsonify({
+                "success": False,
+                "code": "invalid_appointment_id",
+                "reason": "invalid_appointment_id",
+                "error": "El ID del turno no es válido.",
+            }), 400
 
 
         # ----------------------------------------------------
