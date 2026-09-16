@@ -54,12 +54,13 @@ Al crear un turno, la API devuelve un `management_token` aleatorio. Debe
 conservarse y enviarse en el cuerpo POST para cancelar o reprogramar junto con
 `appointment_id`. Solo se almacena su hash SHA-256.
 
-Si el cliente NO presenta el `management_token`, para cancelar o reprogramar se
-exige que coincidan EXACTAMENTE el nombre (`nombre`) y el teléfono (`telefono`)
-del turno. El `appointment_id` por sí solo — incluso enumerando IDs — no
-autoriza ninguna operación sobre turnos ajenos: sin token válido o sin el par
-nombre+teléfono correcto, el turno no se modifica. Un tercero que conozca solo
-el ID no puede cancelar ni reprogramar el turno de otra persona.
+Para cancelar o reprogramar, el `management_token` es OBLIGATORIO y el único
+factor de gestión: sin él, el turno no se modifica (el par nombre+teléfono ya
+no autoriza). Se compara el hash SHA-256 del token contra
+`management_token_hash` del turno, scoped por negocio y solo si el turno está
+confirmado. El `appointment_id` por sí solo — incluso enumerando IDs — no
+autoriza ninguna operación sobre turnos ajenos: un tercero que conozca solo el
+ID no puede cancelar ni reprogramar el turno de otra persona.
 
 `/api/turnos`, la API pública y el asistente de IA exponen únicamente columnas
 públicas del turno; `management_token_hash` nunca sale en las respuestas.
@@ -70,7 +71,7 @@ Los formularios de login, logout y todas las operaciones administrativas POST
 requieren el campo oculto `csrf_token`, asociado a la sesión Flask. Las APIs
 JSON públicas (`/chat`, reservas, cancelación y reprogramación) no requieren
 CSRF porque no usan la sesión administrativa como autenticación; cancelación y
-reprogramación exigen `management_token` o el par nombre+teléfono correcto. El
+reprogramación exigen `management_token` (obligatorio). El
 `management_token` es independiente del token CSRF y no debe confundirse con él.
 
 ## Provisioning

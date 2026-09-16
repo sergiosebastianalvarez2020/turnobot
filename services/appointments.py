@@ -1051,15 +1051,16 @@ def reschedule_appointment(
     """
     Cambia la fecha y hora de un turno confirmado.
 
-    Autorización (cualquiera de las dos):
-    - `management_token` válido para el turno (enlace seguro), O
-    - teléfono Y nombre del cliente que coincidan con el turno.
+    Autorización OBLIGATORIA:
+    - `management_token` válido para el turno (enlace seguro).
 
-    Al igual que cancelación, conocer solo el `appointment_id` enumerable NO
-    alcanza: siempre se exige además un token o nombre + teléfono del titular.
+    El turno debe existir, estar `confirmed` y pertenecer a `business_id`, y
+    el hash SHA-256 del token debe coincidir con el almacenado. Conocer solo el
+    `appointment_id` (incremental y enumerable) NO alcanza y tampoco se
+    autoriza por teléfono + nombre: el token es el único factor de gestión.
 
     Valida además: datetime, fecha no pasada, no domingo, horario de atención,
-    cupo y cierre.
+    cupo (slot disponible) y cierre.
 
     Usa BEGIN IMMEDIATE para transacción atómica.
     Hace ROLLBACK si algo falla.
