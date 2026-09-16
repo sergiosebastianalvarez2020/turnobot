@@ -259,9 +259,13 @@ def save_reward(business_id, reward_id, name, description, points_cost, active=T
             cur = connection.execute("INSERT INTO rewards (business_id,name,description,points_cost,active) VALUES (?,?,?,?,?)", (business_id, name, (description or "").strip() or None, points_cost, int(bool(active))))
         connection.commit()
         return {"success": cur.rowcount == 1, "reason": None if cur.rowcount == 1 else "not_found"}
-    except Exception:
+    except sqlite3.IntegrityError:
         connection.rollback()
         return {"success": False, "reason": "duplicate_name"}
+    except Exception:
+        connection.rollback()
+        logger.exception("Error real de BD en save_reward para business %s", business_id)
+        return {"success": False, "reason": "error"}
     finally:
         connection.close()
 

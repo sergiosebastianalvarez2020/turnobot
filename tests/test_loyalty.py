@@ -454,5 +454,41 @@ class TestLoyaltyAdminPanelHTTP(LoyaltyBase):
         self.assertIn(b"Fidelizaci\xc3\xb3n", response.data)
 
 
+class TestLoyaltySaveRewardErrors(LoyaltyBase):
+    """Bloque O.1: save_reward() no debe enmascarar fallos reales de BD."""
+
+    def test_error_real_de_bd_no_devuelve_duplicate_name(self):
+        class FakeConnection:
+            def __init__(self):
+                self.rollback_called = False
+
+            def execute(self, *args, **kwargs):
+                raise sqlite3.OperationalError("database is locked")
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                self.rollback_called = True
+
+            def close(self):
+                return None
+
+        fake = FakeConnection()
+        with mock.patch.object(loyalty, "get_connection", return_value=fake):
+            result = loyalty.save_reward(1, None, "Café", "", 80)
+
+        self.assertFalse(result["success"])
+        self.assertNotEqual(result["reason"], "duplicate_name")
+        self.assertEqual(result["reason"], "error")
+        self.assertTrue(fake.rollback_called)
+
+    def test_duplicado_real_devuelve_duplicate_name(self):
+        self.assertTrue(loyalty.save_reward(1, None, "Café", "", 80)["success"])
+        result = loyalty.save_reward(1, None, "Café", "", 80)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["reason"], "duplicate_name")
+
+
 if __name__ == "__main__":
     unittest.main()
