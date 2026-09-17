@@ -31,7 +31,16 @@ class _FrozenDatetime(datetime):
         return FROZEN_NOW
 
 
+def _next_open_weekday_with_afternoon():
+    """Devuelve el próximo día laborable (lun-vie) que tiene horario de tarde."""
+    date = datetime.now().date() + timedelta(days=1)
+    while date.weekday() >= 5:  # 5=sábado, 6=domingo
+        date += timedelta(days=1)
+    return date.isoformat()
+
+
 def _next_open_day():
+    """Alias para compatibilidad: próximo día no domingo."""
     date = datetime.now().date() + timedelta(days=1)
     while date.weekday() == 6:
         date += timedelta(days=1)
@@ -423,9 +432,12 @@ class TestAdminPagination(unittest.TestCase):
             data={"password": "correcta", "csrf_token": self.csrf_token},
         )
 
-        # Crear 16 turnos (8 por día en 2 días hábiles consecutivos, solo horas en punto)
-        date_ = _next_open_day()
+        # Crear 16 turnos (8 por día en 2 días hábiles consecutivos con horario de tarde, solo horas en punto)
+        date_ = _next_open_weekday_with_afternoon()
         date2 = (datetime.fromisoformat(date_) + timedelta(days=1)).date().isoformat()
+        # Si date2 cae en sábado, saltar al lunes
+        if datetime.fromisoformat(date2).weekday() >= 5:
+            date2 = (datetime.fromisoformat(date2) + timedelta(days=(7 - datetime.fromisoformat(date2).weekday()))).date().isoformat()
         # Horarios válidos según schedule por defecto con slot_duration=60 (horas en punto)
         valid_times = [
             "09:00", "10:00", "11:00", "12:00",
