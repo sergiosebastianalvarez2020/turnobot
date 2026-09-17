@@ -7,6 +7,7 @@ from logging.handlers import RotatingFileHandler
 import hashlib
 import secrets
 import math
+import threading
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from collections import defaultdict, deque
 from functools import wraps
@@ -285,6 +286,7 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
 )
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024
 
 # X-Forwarded-* is trusted only when an explicitly configured reverse proxy is
 # in front of the application.  With the default of zero, request.remote_addr
@@ -474,8 +476,10 @@ CHAT_REQUEST_LIMIT = 20
 CHAT_PHONE_REQUEST_LIMIT = 20
 API_REQUEST_LIMIT = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_KEYS = 10_000
 
 rate_limit_state = defaultdict(deque)
+_RATE_LIMIT_LOCK = threading.Lock()
 
 
 @app.after_request
@@ -518,6 +522,7 @@ _ERROR_MESSAGES = {
     404: "Recurso no encontrado.",
     405: "Método no permitido.",
     429: "Demasiadas solicitudes. Intentá nuevamente en unos momentos.",
+    413: "Solicitud demasiado grande.",
     500: "Error interno del servidor.",
 }
 
@@ -591,6 +596,21 @@ def handle_429(error):
     return _html_error(429, message)
 
 
+@app.errorhandler(413)
+def handle_413(error):
+    message = _ERROR_MESSAGES[413]
+    if _is_json_request():
+        return _json_error("PAYLOAD_TOO_LARGE", message), 413
+    return _html_error(413, message)
+
+
+@app.before_request
+def _reject_oversized_requests():
+    max_length = app.config.get("MAX_CONTENT_LENGTH")
+    if max_length and (request.content_length or 0) > max_length:
+        abort(413)
+
+
 @app.errorhandler(500)
 def handle_500(error):
     logger.exception("Error 500: %s", getattr(error, "description", str(error)))
@@ -625,14 +645,50 @@ app.jinja_env.globals["csrf_token"] = csrf_token
 
 
 def _is_request_allowed(key, limit):
-    now = monotonic()
-    requests = rate_limit_state[key]
-    while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
-        requests.popleft()
-    if len(requests) >= limit:
-        return False
-    requests.append(now)
-    return True
+    if len(rate_limit_state) > RATE_LIMIT_MAX_KEYS:
+        _prune_rate_limit_state()
+    with _RATE_LIMIT_LOCK:
+        now = monotonic()
+        requests = rate_limit_state[key]
+        while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
+            requests.popleft()
+        if len(requests) >= limit:
+            return False
+        requests.append(now)
+        return True
+
+
+def _prune_rate_limit_state(now=None, max_keys=RATE_LIMIT_MAX_KEYS):
+    """Elimina claves inactivas y acota el estado de rate limiting.
+
+    - Descarta los timestamps más antiguos que la ventana de 60s.
+    - Elimina las claves que quedaron vacías.
+    - Si el estado supera max_keys, expulsa por FIFO (timestamp más antiguo)
+      hasta quedar acotado.
+    Se ejecuta bajo _RATE_LIMIT_LOCK; se toman snapshots para no modificar el
+    diccionario mientras se itera.
+    """
+    with _RATE_LIMIT_LOCK:
+        if now is None:
+            now = monotonic()
+        for key in list(rate_limit_state.keys()):
+            requests = rate_limit_state.get(key)
+            if requests is None:
+                continue
+            while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
+                requests.popleft()
+            if not requests:
+                del rate_limit_state[key]
+        if len(rate_limit_state) > max_keys:
+            oldest_by_key = []
+            for key, requests in rate_limit_state.items():
+                if requests:
+                    oldest_by_key.append((requests[0], key))
+            oldest_by_key.sort()
+            to_drop = len(rate_limit_state) - max_keys
+            for _, key in oldest_by_key[:to_drop]:
+                if key in rate_limit_state:
+                    del rate_limit_state[key]
 
 
 def get_client_ip():
