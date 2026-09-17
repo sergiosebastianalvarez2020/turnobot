@@ -1,0 +1,10 @@
+[Unit]
+Description=TurnoBot - Verificacion semanal del backup (domingos 04:30 UTC)
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+Persistent=true
+Unit=turnobot-backup-verify.service
+
+[Install]
+WantedBy=timers.target
