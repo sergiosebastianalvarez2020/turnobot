@@ -1,0 +1,10 @@
+[Unit]
+Description=TurnoBot - Recordatorios diarios (13:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00
+Persistent=true
+Unit=turnobot-reminders.service
+
+[Install]
+WantedBy=timers.target

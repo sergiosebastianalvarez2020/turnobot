@@ -1,0 +1,10 @@
+[Unit]
+Description=TurnoBot - Backup diario (03:30 UTC)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=turnobot-backup.service
+
+[Install]
+WantedBy=timers.target

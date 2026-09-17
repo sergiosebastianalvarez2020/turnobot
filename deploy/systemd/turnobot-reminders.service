@@ -1,0 +1,14 @@
+[Unit]
+Description=TurnoBot - Recordatorios de turnos por email
+After=network.target
+
+[Service]
+Type=oneshot
+User=opc
+Group=opc
+WorkingDirectory=/home/opc/proyecto/turnobot
+EnvironmentFile=/etc/turnobot.env
+Environment=PYTHONPATH=/home/opc/proyecto/turnobot
+ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/send_reminders.py
+NoNewPrivileges=true
+PrivateTmp=true

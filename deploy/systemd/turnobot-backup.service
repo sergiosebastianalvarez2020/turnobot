@@ -1,0 +1,14 @@
+[Unit]
+Description=TurnoBot - Backup de base de datos SQLite
+After=network.target
+
+[Service]
+Type=oneshot
+User=opc
+Group=opc
+WorkingDirectory=/home/opc/proyecto/turnobot
+EnvironmentFile=/etc/turnobot.env
+Environment=PYTHONPATH=/home/opc/proyecto/turnobot
+ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/backup_database.py
+NoNewPrivileges=true
+PrivateTmp=true
