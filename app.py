@@ -20,6 +20,8 @@ from werkzeug.exceptions import HTTPException
 from dotenv import load_dotenv
 from flask import Flask, abort, g, render_template, request, jsonify, session, redirect, url_for, has_request_context
 
+from extensions import _is_request_allowed, _prune_rate_limit_state, rate_limit_state, _RATE_LIMIT_LOCK, RATE_LIMIT_MAX_KEYS, RATE_LIMIT_WINDOW_SECONDS, csrf_token, valid_csrf_token
+
 from services.ai import ask_ai
 from services.notifications import (
     send_confirmation_email,
@@ -475,11 +477,6 @@ MAX_HISTORY_CONTENT_LENGTH = 2_000
 CHAT_REQUEST_LIMIT = 20
 CHAT_PHONE_REQUEST_LIMIT = 20
 API_REQUEST_LIMIT = 60
-RATE_LIMIT_WINDOW_SECONDS = 60
-RATE_LIMIT_MAX_KEYS = 10_000
-
-rate_limit_state = defaultdict(deque)
-_RATE_LIMIT_LOCK = threading.Lock()
 
 
 @app.after_request
@@ -631,64 +628,7 @@ def handle_unhandled_exception(error):
     return _html_error(500, message)
 
 
-def csrf_token():
-    if "csrf_token" not in session:
-        session["csrf_token"] = secrets.token_urlsafe(32)
-    return session["csrf_token"]
-
-
-def valid_csrf_token(value):
-    return bool(value) and secrets.compare_digest(value, session.get("csrf_token", ""))
-
-
 app.jinja_env.globals["csrf_token"] = csrf_token
-
-
-def _is_request_allowed(key, limit):
-    if len(rate_limit_state) > RATE_LIMIT_MAX_KEYS:
-        _prune_rate_limit_state()
-    with _RATE_LIMIT_LOCK:
-        now = monotonic()
-        requests = rate_limit_state[key]
-        while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
-            requests.popleft()
-        if len(requests) >= limit:
-            return False
-        requests.append(now)
-        return True
-
-
-def _prune_rate_limit_state(now=None, max_keys=RATE_LIMIT_MAX_KEYS):
-    """Elimina claves inactivas y acota el estado de rate limiting.
-
-    - Descarta los timestamps más antiguos que la ventana de 60s.
-    - Elimina las claves que quedaron vacías.
-    - Si el estado supera max_keys, expulsa por FIFO (timestamp más antiguo)
-      hasta quedar acotado.
-    Se ejecuta bajo _RATE_LIMIT_LOCK; se toman snapshots para no modificar el
-    diccionario mientras se itera.
-    """
-    with _RATE_LIMIT_LOCK:
-        if now is None:
-            now = monotonic()
-        for key in list(rate_limit_state.keys()):
-            requests = rate_limit_state.get(key)
-            if requests is None:
-                continue
-            while requests and now - requests[0] > RATE_LIMIT_WINDOW_SECONDS:
-                requests.popleft()
-            if not requests:
-                del rate_limit_state[key]
-        if len(rate_limit_state) > max_keys:
-            oldest_by_key = []
-            for key, requests in rate_limit_state.items():
-                if requests:
-                    oldest_by_key.append((requests[0], key))
-            oldest_by_key.sort()
-            to_drop = len(rate_limit_state) - max_keys
-            for _, key in oldest_by_key[:to_drop]:
-                if key in rate_limit_state:
-                    del rate_limit_state[key]
 
 
 def get_client_ip():
@@ -945,52 +885,8 @@ def get_active_services():
 # ============================================================
 # PÁGINA PRINCIPAL
 # ============================================================
-
-@app.route("/")
-def index():
-    business_id = get_current_business_id()
-    settings = (
-        get_business_settings_scoped(business_id)
-        if business_id is not None
-        else get_business_settings()
-    )
-    return render_template(
-        "index.html",
-        public_frontend_config=build_public_frontend_config(settings),
-    )
-
-
-@app.route("/b/<slug>")
-def business_index(slug):
-    business = g.current_business
-    if business is None or business.get("slug") != slug:
-        abort(404)
-
-    business_id = get_current_business_id()
-    settings = (
-        get_business_settings_scoped(business_id)
-        if business_id is not None
-        else get_business_settings()
-    )
-    return render_template(
-        "index.html",
-        public_frontend_config=build_public_frontend_config(settings),
-    )
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    connection = None
-    try:
-        connection = get_connection()
-        connection.execute("SELECT 1").fetchone()
-        return jsonify({"status": "ok", "database": "ok"})
-    except Exception:
-        logger.exception("Health check failed")
-        return jsonify({"status": "error", "database": "error"}), 503
-    finally:
-        if connection is not None:
-            connection.close()
+# Las rutas / y /b/<slug> están definidas en routes/public.py
+# y registradas vía register_blueprints() al final de este archivo.
 
 
 # ============================================================
@@ -4100,6 +3996,15 @@ def business_api_reprogramar(slug):
         abort(404)
 
     return _get_public_reschedule_response(business_id)
+
+
+# ============================================================
+# REGISTRO DE BLUEPRINTS
+# ============================================================
+
+from routes import register_blueprints
+
+register_blueprints(app)
 
 
 # ============================================================
