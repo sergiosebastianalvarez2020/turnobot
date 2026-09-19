@@ -670,60 +670,55 @@ def is_login_request_allowed(client_ip):
     return _is_request_allowed(_rate_limit_key("login", client_ip), 10)
 
 
-def _hash_session_token(token):
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+# ============================================================
+# AUTH HELPERS — migrados a routes/auth.py (BLOQUE 1)
+# ============================================================
+# login_required, membership_required, _is_authenticated, _login_url,
+# _hash_session_token, _now_iso, _establish_session, _authenticate_login,
+# login, login_slug, logout, logout_slug
+#
+# Se re-importan desde routes/auth.py para preservar compatibilidad con
+# tests y código existente que accede vía app.login_required, etc.
+from routes.auth import (
+    login_required,
+    _is_authenticated,
+    _login_url,
+    _hash_session_token,
+    _now_iso,
+    _establish_session,
+    _authenticate_login,
+)
 
 
-def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _login_url():
-    business_id = get_current_business_id()
-    if business_id == 1:
-        return url_for("login")
-    return url_for("login_slug", slug=g.current_business["slug"])
-
-
-def _is_authenticated():
-    """Valida una sesión activa (usuario y sesión persistente válida para el negocio actual)."""
+def _require_admin_membership():
+    """
+    Comprueba autenticación + membresía administrativa (owner/admin) para el
+    negocio resuelto por el slug. Retorna None si es válido, o una respuesta
+    redirigida de login si no.
+    """
+    from routes.auth import _is_authenticated as _is_auth
+    if not _is_auth():
+        session.clear()
+        return redirect(_login_url())
     user_id = session.get("user_id")
-    token = session.get("session_token")
-    if not user_id or not token:
-        return False
-
-    user = get_user_by_id_scoped(user_id)
-    if not user or not user["active"]:
-        return False
-
-    # La sesión persistente también está restringida al negocio actual:
-    # se crea tras autenticar contra business_users, y se revoca en logout.
-    if not is_session_valid_scoped(user_id, _hash_session_token(token), _now_iso()):
-        return False
-
-    return True
-
-
-def login_required(f):
-    """Requiere una sesión activa (sin restringir el negocio objetivo)."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not _is_authenticated():
-            session.clear()
-            return redirect(_login_url())
-        return f(*args, **kwargs)
-    return decorated
+    business_id = get_current_business_id()
+    membership = get_membership_scoped(user_id, business_id) if business_id else None
+    if not membership or membership["role_name"] not in {"owner", "admin"}:
+        session.clear()
+        return redirect(_login_url())
+    return None
 
 
 def membership_required(*role_names):
     """Requiere que el usuario autenticado tenga una membresía con rol(es)
     permitido(s) en el negocio resuelto por el slug de la URL (nunca del cliente)."""
+    from routes.auth import _is_authenticated as _is_auth
     allowed = set(role_names)
 
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
-            if not _is_authenticated():
+            if not _is_auth():
                 session.clear()
                 return redirect(_login_url())
 
@@ -737,24 +732,6 @@ def membership_required(*role_names):
             return f(*args, **kwargs)
         return decorated
     return decorator
-
-
-def _require_admin_membership():
-    """
-    Comprueba autenticación + membresía administrativa (owner/admin) para el
-    negocio resuelto por el slug. Retorna None si es válido, o una respuesta
-    redirigida de login si no.
-    """
-    if not _is_authenticated():
-        session.clear()
-        return redirect(_login_url())
-    user_id = session.get("user_id")
-    business_id = get_current_business_id()
-    membership = get_membership_scoped(user_id, business_id) if business_id else None
-    if not membership or membership["role_name"] not in {"owner", "admin"}:
-        session.clear()
-        return redirect(_login_url())
-    return None
 
 
 # ============================================================
@@ -888,152 +865,12 @@ def get_active_services():
 # Las rutas / y /b/<slug> están definidas en routes/public.py
 # y registradas vía register_blueprints() al final de este archivo.
 
-
 # ============================================================
-# LOGIN / LOGOUT ADMIN
+# LOGIN / LOGOUT / SESSION — migrados a routes/auth.py (BLOQUE 1)
 # ============================================================
-
-def _establish_session(user_id):
-    """Crea una sesión persistente tras un login exitoso.
-
-    Limpia selectivamente la sesión de NEGOCIO (user_id/session_token) pero
-    PRESERVA la sesión de PLATAFORMA (superadmin) y el token CSRF. Esto permite
-    que la sesión de negocio y la de superadmin coexistan dentro de la misma
-    cookie cuando un mismo agente las utiliza de forma alternada.
-    """
-    old_csrf = session.get("csrf_token")
-    platform_user_id = session.get("platform_user_id")
-    platform_token = session.get("platform_session_token")
-    session.pop("user_id", None)
-    session.pop("session_token", None)
-    session["user_id"] = user_id
-    token = secrets.token_urlsafe(48)
-    session["session_token"] = token
-    session.permanent = True
-    lifetime = app.config["PERMANENT_SESSION_LIFETIME"]
-    expires_at = (
-        datetime.datetime.now(datetime.timezone.utc) + lifetime
-    ).strftime("%Y-%m-%d %H:%M:%S")
-    create_session_scoped(user_id, _hash_session_token(token), expires_at)
-    # mantenemos el mismo token CSRF para no invalidar formularios ya abiertos
-    session["csrf_token"] = old_csrf or csrf_token()
-    # restauramos la sesión de plataforma si existía (coexistencia de contextos)
-    if platform_user_id is not None:
-        session["platform_user_id"] = platform_user_id
-    if platform_token is not None:
-        session["platform_session_token"] = platform_token
-
-
-def _authenticate_login(business, email, password):
-    """
-    Autentica email+password contra users/business_users para el negocio dado.
-    Retorna (user_id, None) o (None, mensaje_error).
-    """
-    if not is_login_request_allowed(get_client_ip()):
-        return None, "Demasiados intentos. Esperá unos minutos."
-
-    if business is None:
-        return None, "Negocio no encontrado."
-
-    email = (email or "").strip().lower()
-    user = get_user_by_email_scoped(email) if email else None
-
-    if user is not None:
-        if not user["active"]:
-            return None, "Credenciales inválidas."
-        membership = get_membership_scoped(user["id"], business["id"])
-        if not membership or membership["role_name"] == "customer":
-            return None, "No tenés acceso administrativo a este negocio."
-        if not password or not check_password_hash(user["password_hash"], password):
-            return None, "Credenciales inválidas."
-        return user["id"], None
-
-    # --- Bootstrap de migración (negocio 1 solamente) -------------------------
-    # Convierte la credencial administrativa histórica (module/env
-    # ADMIN_PASSWORD_HASH) en el owner del negocio 1 dentro del modelo
-    # users/business_users. MECANISMO DE MIGRACIÓN: una vez migrado, la
-    # autenticación normal usa users/business_users/sessions.
-    if business["id"] == 1 and ADMIN_PASSWORD_HASH:
-        if password and check_password_hash(ADMIN_PASSWORD_HASH, password):
-            user_id = migrate_owner_from_module_hash(
-                1, email or "admin@turnobot.local", ADMIN_PASSWORD_HASH
-            )
-            if user_id is not None:
-                return user_id, None
-    return None, "Credenciales inválidas."
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        if not valid_csrf_token(request.form.get("csrf_token")):
-            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
-        user_id, error = _authenticate_login(
-            g.current_business,
-            request.form.get("email", ""),
-            request.form.get("password", ""),
-        )
-        if user_id is None:
-            return render_template("login.html", error=True, error_message=error), (
-                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
-            )
-        _establish_session(user_id)
-        return redirect(url_for("admin"))
-
-    if session.get("user_id"):
-        return redirect(url_for("admin"))
-    return render_template("login.html", error=False)
-
-
-@app.route("/b/<slug>/login", methods=["GET", "POST"])
-def login_slug(slug):
-    business = g.current_business
-    if business is None or business.get("slug") != slug:
-        abort(404)
-
-    if request.method == "POST":
-        if not valid_csrf_token(request.form.get("csrf_token")):
-            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
-        user_id, error = _authenticate_login(
-            business,
-            request.form.get("email", ""),
-            request.form.get("password", ""),
-        )
-        if user_id is None:
-            return render_template("login.html", error=True, error_message=error), (
-                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
-            )
-        _establish_session(user_id)
-        return redirect(url_for("admin_slug", slug=business["slug"]))
-
-    if session.get("user_id"):
-        return redirect(url_for("admin_slug", slug=business["slug"]))
-    return render_template("login.html", error=False)
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    if not valid_csrf_token(request.form.get("csrf_token")):
-        return "Solicitud no válida", 400
-    user_id = session.get("user_id")
-    if user_id:
-        revoke_all_sessions_scoped(user_id)
-    _clear_business_session()
-    return redirect(url_for("login"))
-
-
-@app.route("/b/<slug>/logout", methods=["POST"])
-def logout_slug(slug):
-    business = g.current_business
-    if business is None or business.get("slug") != slug:
-        abort(404)
-    if not valid_csrf_token(request.form.get("csrf_token")):
-        return "Solicitud no válida", 400
-    user_id = session.get("user_id")
-    if user_id:
-        revoke_all_sessions_scoped(user_id)
-    _clear_business_session()
-    return redirect(url_for("login_slug", slug=business["slug"]))
+# Las rutas login, login_slug, logout, logout_slug están definidas en
+# routes/auth.py y registradas vía register_blueprints() al final de este
+# archivo. Los helpers de sesión están importados desde routes.auth arriba.
 
 
 # ============================================================
