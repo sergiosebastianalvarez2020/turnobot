@@ -4,9 +4,48 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 import database.database as database
 from services import appointments, notifications, platform
+
+BUSINESS_ID = 1
+
+
+def _next_open_slot(business_id=BUSINESS_ID):
+    """Devuelve (fecha, hora) de un turno válido de forma determinista.
+
+    NO depende del día de ejecución: recorre los próximos días en la zona
+    horaria del negocio y se detiene en el primero que esté abierto según su
+    `weekly_schedules`, eligiendo el primer slot realmente disponible.
+
+    Esto evita el fallo intermitente de la suite cuando `now() + 1 día` caía
+    en un día cerrado (por ejemplo domingo), donde `create_appointment`
+    devuelve `closed_day` y la prueba de concurrencia terminaba con 0 envíos.
+    """
+    settings = database.get_business_settings_scoped(business_id)
+    timezone = (settings["timezone"] if settings and settings["timezone"]
+                else appointments.DEFAULT_TIMEZONE)
+    try:
+        current_date = datetime.now(ZoneInfo(timezone)).date()
+    except Exception:  # pragma: no cover - tzdata ausente
+        current_date = datetime.now().date()
+
+    for offset in range(1, 15):
+        candidate = (current_date + timedelta(days=offset)).isoformat()
+        schedule = database.get_weekly_schedule_scoped(
+            datetime.strptime(candidate, "%Y-%m-%d").weekday(), business_id
+        )
+        if not schedule or not schedule["is_open"]:
+            continue
+        slots = appointments.get_available_slots(candidate, business_id, service="Corte")
+        if slots:
+            return candidate, slots[0]
+
+    raise AssertionError(
+        "No se encontró ningún día abierto con horarios disponibles en los "
+        "próximos 14 días: revisá weekly_schedules del negocio de prueba."
+    )
 
 
 class AtomicSecurityTests(unittest.TestCase):
@@ -65,8 +104,13 @@ class AtomicSecurityTests(unittest.TestCase):
         self.assertIsNotNone(rows[1]["used_at"])
 
     def test_email_claim_allows_one_worker_and_retry_after_failure(self):
-        date = (datetime.now().date() + timedelta(days=1)).isoformat()
-        appointment = appointments.create_appointment("Ana", "3815000000", "Corte", date, "09:00", 1, email="ana@example.com")
+        date, time = _next_open_slot()
+        appointment = appointments.create_appointment("Ana", "3815000000", "Corte", date, time, BUSINESS_ID, email="ana@example.com")
+        self.assertTrue(
+            appointment["success"],
+            f"El turno de prueba no se pudo crear ({appointment.get('reason')}): "
+            f"fecha={date} hora={time}",
+        )
         apt = dict(appointment)
         apt["id"] = appointment["appointment_id"]
         calls = []
@@ -78,9 +122,9 @@ class AtomicSecurityTests(unittest.TestCase):
 
         results = []
         with mock.patch.dict("os.environ", {"SMTP_HOST": "smtp.test"}), mock.patch.object(notifications, "_send_email", side_effect=fake_send):
-            threads = [threading.Thread(target=lambda: results.append(notifications.send_confirmation_email(1, apt, force=True))) for _ in range(2)]
+            threads = [threading.Thread(target=lambda: results.append(notifications.send_confirmation_email(BUSINESS_ID, apt, force=True))) for _ in range(2)]
             for thread in threads: thread.start()
             for thread in threads: thread.join()
         self.assertEqual(sum(result[0] for result in results), 1)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(database.get_notification_state_scoped(1, apt["id"], notifications.CONFIRMATION, "email")["status"], "sent")
+        self.assertEqual(database.get_notification_state_scoped(BUSINESS_ID, apt["id"], notifications.CONFIRMATION, "email")["status"], "sent")
