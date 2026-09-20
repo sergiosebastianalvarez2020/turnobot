@@ -136,42 +136,5 @@ ADMIN_PASSWORD = app.ADMIN_PASSWORD
 TRUSTED_PROXY_COUNT = app.TRUSTED_PROXY_COUNT
 
 
-# Helpers no cubiertos por el paquete application (mantenidos por compat)
-def _clear_business_session():
-    """Invalidate ONLY the business (tenant) session, preserving the platform one."""
-    from flask import session
-
-    session.pop("user_id", None)
-    session.pop("session_token", None)
-
-
-def get_active_services():
-    """
-    Obtiene los servicios activos del negocio actual.
-    Si business_id no está disponible, retorna vacío (fallback seguro).
-    """
-    from database.database import get_active_services_scoped
-
-    business_id = get_current_business_id()
-    if not business_id:
-        return {}
-
-    try:
-        rows = get_active_services_scoped(business_id)
-        if not rows:
-            return {}
-
-        services = {}
-        for row in rows:
-            services[row["name"]] = {
-                "price": row["price"],
-                "duration": row["duration"],
-            }
-        return services
-    except Exception:
-        logger.exception("Error obteniendo servicios activos")
-        return {}
-
-
 if __name__ == "__main__":
     app.run(debug=False, host="127.0.0.1", port=5000)

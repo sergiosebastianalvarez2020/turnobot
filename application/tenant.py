@@ -10,10 +10,13 @@ from time import monotonic
 from flask import abort, g, request
 
 from database.database import (
+    get_active_services_scoped,
     get_business_settings,
     get_business_settings_scoped,
     get_connection,
 )
+
+from application.logging_config import logger
 
 
 def resolve_business(slug=None):
@@ -38,6 +41,32 @@ def get_current_business_id():
     """Devuelve el negocio asociado al request actual, si existe."""
     business = getattr(g, "current_business", None)
     return business["id"] if business else None
+
+
+def get_active_services():
+    """
+    Obtiene los servicios activos del negocio actual.
+    Si business_id no está disponible, retorna vacío (fallback seguro).
+    """
+    business_id = get_current_business_id()
+    if not business_id:
+        return {}
+
+    try:
+        rows = get_active_services_scoped(business_id)
+        if not rows:
+            return {}
+
+        services = {}
+        for row in rows:
+            services[row["name"]] = {
+                "price": row["price"],
+                "duration": row["duration"],
+            }
+        return services
+    except Exception:
+        logger.exception("Error obteniendo servicios activos")
+        return {}
 
 
 def load_current_business():
