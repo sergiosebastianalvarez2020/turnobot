@@ -113,7 +113,8 @@ def public_invitation(slug, token):
 
 def admin_usuarios_invitar_enlace(slug=None):
     """El owner invita a un staff/admin por email (invitación con link)."""
-    from app import _admin_usuarios_gate, get_current_business_id, _usuarios_url
+    from routes.admin import _admin_usuarios_gate, _usuarios_url
+    from routes.auth import get_current_business_id
 
     denied = _admin_usuarios_gate()
     if denied:
