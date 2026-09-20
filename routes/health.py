@@ -1,15 +1,14 @@
 """
-Blueprint para endpoint de healthcheck.
+View function para el endpoint de healthcheck.
+
+Se registra via app.add_url_rule() en routes/register_health.py con
+endpoint="health" (no se utiliza Blueprint).
 """
 
-from flask import Blueprint, jsonify
+from flask import jsonify
 import logging
 
-health_bp = Blueprint("health", __name__)
-logger = logging.getLogger(__name__)
 
-
-@health_bp.route("/health", methods=["GET"], endpoint="health")
 def health():
     """Endpoint de healthcheck para monitoreo.
 
