@@ -34,9 +34,15 @@ class SecurityOperationsTests(unittest.TestCase):
             conn.execute(
                 "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Corte', 1000, 30, 1)"
             )
-            conn.execute(
-                "INSERT OR REPLACE INTO weekly_schedules (business_id, day_of_week, is_open, morning_start, morning_end) VALUES (1, 0, 1, '09:00', '18:00')"
-            )
+            # Insertar horarios abiertos para TODOS los dias para evitar
+            # que la prueba dependa del dia de la semana en que se ejecuta.
+            for day in range(7):
+                conn.execute(
+                    "INSERT OR REPLACE INTO weekly_schedules "
+                    "(business_id, day_of_week, is_open, morning_start, morning_end) "
+                    "VALUES (1, ?, 1, '09:00', '18:00')",
+                    (day,),
+                )
             conn.commit()
         finally:
             conn.close()
