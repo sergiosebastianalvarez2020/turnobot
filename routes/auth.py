@@ -21,7 +21,6 @@ La migración es estructural: la lógica de negocio permanece idéntica;
 únicamente cambia el ownership del código (app.py -> routes/auth.py).
 """
 
-import hashlib
 import datetime
 import secrets
 import os
@@ -38,6 +37,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash
 
+from application.session_crypto import _hash_session_token, _now_iso
 from extensions import csrf_token, valid_csrf_token
 from database.database import (
     get_user_by_email_scoped,
@@ -61,14 +61,6 @@ def _get_admin_password():
     hot-reload en tests que mutan application.ADMIN_PASSWORD."""
     from app import ADMIN_PASSWORD
     return ADMIN_PASSWORD
-
-
-def _hash_session_token(token):
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def get_current_business_id():
