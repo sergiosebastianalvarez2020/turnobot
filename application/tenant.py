@@ -2,8 +2,15 @@
 
 resolve_business, get_current_business_id, load_current_business y los
 context processors de negocio extraídos de app.py, manteniendo lógica idéntica.
+
+Sin dependencia top-level de la fachada `app.py` (Bloque 7A): create_app() puede
+importarse y ejecutarse standalone. Para preservar la compatibilidad histórica,
+_load_seam() resuelve los símbolos que la fachada `app` re-exporta y que los
+tests parchean (app.resolve_business, app.get_business_settings_scoped); si la
+fachada no está importada (uso standalone), cae a las implementaciones locales.
 """
 
+import sys
 import uuid
 from time import monotonic
 
@@ -17,6 +24,23 @@ from database.database import (
 )
 
 from application.logging_config import logger
+
+
+def _load_seam(name):
+    """Resuelve un símbolo del seam de compatibilidad con la fachada `app`.
+
+    Devuelve el atributo de la fachada si el módulo `app` ya está importado
+    (preservando monkeypatches históricos sobre `app.<name>`, incluido el
+    fallback defensivo de sys.modules para el import circular durante la carga
+    de app.py). Si no lo está, devuelve la implementación local del módulo.
+
+    No importa `app`: en un proceso standalone, `app` nunca está en
+    sys.modules y el acceso no provoca su carga.
+    """
+    facade = sys.modules.get("app")
+    if facade is None:
+        return globals()[name]
+    return getattr(facade, name)
 
 
 def resolve_business(slug=None):
@@ -71,8 +95,6 @@ def get_active_services():
 
 def load_current_business():
     """Carga el contexto request-scoped en función del slug de la URL o del fallback por defecto."""
-    from app import resolve_business as _resolve_business
-
     view_args = request.view_args or {}
     slug = view_args.get("slug")
 
@@ -93,7 +115,7 @@ def load_current_business():
             g.current_business = None
             g.business_id = None
             return abort(404)
-        g.current_business = _resolve_business(slug)
+        g.current_business = _load_seam("resolve_business")(slug)
         if g.current_business is None:
             if hasattr(g, "current_business"):
                 delattr(g, "current_business")
@@ -102,7 +124,7 @@ def load_current_business():
         g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
         return None
 
-    g.current_business = _resolve_business()
+    g.current_business = _load_seam("resolve_business")()
     if g.current_business:
         g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
     else:
@@ -133,13 +155,11 @@ def inject_admin_prefix():
 
 
 def inject_business_settings():
-    from app import get_business_settings, get_business_settings_scoped
-
     business_id = get_current_business_id()
     settings = (
-        get_business_settings_scoped(business_id)
+        _load_seam("get_business_settings_scoped")(business_id)
         if business_id is not None
-        else get_business_settings()
+        else _load_seam("get_business_settings")()
     )
     return {
         "business_settings": settings,

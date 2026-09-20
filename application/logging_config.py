@@ -3,8 +3,8 @@
 Clases Formatter/Filter y configure_logging() extraídos de app.py (Bloque 5B).
 
 USE_JSON_LOGS se mantiene como atributo de módulo; StructuredFormatter lo lee
-dinámicamente desde app (re-export) para preservar compatibilidad con los
-monkeypatches existentes (patch.object(application, "USE_JSON_LOGS", True)).
+directamente de este módulo (los tests que verifican la salida JSON deben
+parchear application.logging_config.USE_JSON_LOGS).
 """
 
 import datetime
@@ -116,9 +116,9 @@ class StructuredFormatter(logging.Formatter):
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
 
-        from app import USE_JSON_LOGS as use_json_logs
-
-        if use_json_logs:
+        # USE_JSON_LOGS se lee desde este módulo (sin lazy import de la fachada
+        # `app`), de modo que application.create_app() sea standalone-safe.
+        if USE_JSON_LOGS:
             return json.dumps(log_data)
 
         context_part = f"[{req_id}] [b:{biz_id}] [{method} {endpoint}]"

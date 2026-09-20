@@ -3,10 +3,10 @@
 create_app() es la factory que construye la instancia Flask: configuración,
 contexto tenant, seguridad HTTP, error handlers y registro de blueprints.
 
-IMPORTANTE: este módulo NO importa routes en el top-level para evitar ciclos
-(routes/auth_public.py tiene 'from app import ...' en el top-level). Las rutas
-se importan dentro de create_app(), cuando la fachada `app` ya tiene todos los
-nombres enlazados.
+create_app() es standalone-safe (Bloque 7A): puede importarse y ejecutarse en un
+proceso limpio, sin que el módulo de fachada `app` haya sido importado antes.
+Por eso este módulo NO importa routes en el top-level (evita ciclos y mantiene
+el import de la factory barato): las rutas se importan dentro de create_app().
 """
 
 import os
