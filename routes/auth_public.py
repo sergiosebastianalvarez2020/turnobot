@@ -28,13 +28,12 @@ from database.database import (
     get_business_settings_scoped,
 )
 
-from app import (
-    _is_request_allowed,
-    _rate_limit_key,
-    get_client_ip,
+from application.rate_limit import (
     FORGOT_REQUEST_LIMIT,
     REGISTRO_REQUEST_LIMIT,
 )
+from application.requests import _rate_limit_key, get_client_ip
+from extensions import _is_request_allowed
 
 
 def forgot_password():

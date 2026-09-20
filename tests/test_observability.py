@@ -832,7 +832,7 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
         rec.status_code = 200
         rec.latency_ms = 45.2
 
-        with mock.patch.object(application, "USE_JSON_LOGS", True):
+        with mock.patch("application.logging_config.USE_JSON_LOGS", True):
             formatted = formatter.format(rec)
             data = json.loads(formatted)
             self.assertEqual(data["level"], "WARNING")
