@@ -28,6 +28,7 @@ import os
 from functools import wraps
 from flask import (
     abort,
+    current_app,
     g,
     redirect,
     render_template,
@@ -38,6 +39,8 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 from application.session_crypto import _hash_session_token, _now_iso
+from application.rate_limit import is_login_request_allowed
+from application.requests import get_client_ip
 from extensions import csrf_token, valid_csrf_token
 from database.database import (
     get_user_by_email_scoped,
@@ -97,8 +100,7 @@ def _establish_session(user_id):
     token = secrets.token_urlsafe(48)
     session["session_token"] = token
     session.permanent = True
-    from app import app
-    lifetime = app.config["PERMANENT_SESSION_LIFETIME"]
+    lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
     expires_at = (
         datetime.datetime.now(datetime.timezone.utc) + lifetime
     ).strftime("%Y-%m-%d %H:%M:%S")
@@ -115,7 +117,6 @@ def _authenticate_login(business, email, password):
     Autentica email+password contra users/business_users para el negocio dado.
     Retorna (user_id, None) o (None, mensaje_error).
     """
-    from app import is_login_request_allowed
     from services.memberships import get_membership_scoped, ROLE_CUSTOMER
 
     if not is_login_request_allowed(_get_client_ip()):
@@ -150,8 +151,7 @@ def _authenticate_login(business, email, password):
 
 
 def _get_client_ip():
-    from app import get_client_ip as _gci
-    return _gci()
+    return get_client_ip()
 
 
 def _is_authenticated():
@@ -184,7 +184,6 @@ def login_required(f):
 
 
 def login():
-    from app import app
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
             return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
@@ -206,7 +205,6 @@ def login():
 
 
 def login_slug(slug):
-    from app import app
     business = g.current_business
     if business is None or business.get("slug") != slug:
         abort(404)
@@ -232,7 +230,6 @@ def login_slug(slug):
 
 
 def logout():
-    from app import app
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
     user_id = session.get("user_id")
@@ -243,7 +240,6 @@ def logout():
 
 
 def logout_slug(slug):
-    from app import app
     business = g.current_business
     if business is None or business.get("slug") != slug:
         abort(404)

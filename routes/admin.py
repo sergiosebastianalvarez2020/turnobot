@@ -24,6 +24,9 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash
 
+from application.requests import _human_reschedule_error
+from application.security import _is_json_request, _json_error
+
 from extensions import valid_csrf_token
 from services.notifications import smtp_configured
 from services import memberships, loyalty, product
@@ -516,7 +519,6 @@ def admin_cancel_appointment(appointment_id, slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    from app import _is_json_request, _json_error
     if not valid_csrf_token(request.form.get("csrf_token")):
         if _is_json_request():
             return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
@@ -534,7 +536,6 @@ def admin_update_appointment_status(appointment_id, slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    from app import _is_json_request, _json_error
     if not valid_csrf_token(request.form.get("csrf_token")):
         if _is_json_request():
             return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
@@ -559,7 +560,6 @@ def admin_reschedule_appointment(appointment_id, slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    from app import _is_json_request, _json_error, _human_reschedule_error
     if not valid_csrf_token(request.form.get("csrf_token")):
         if _is_json_request():
             return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
@@ -595,7 +595,6 @@ def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    from app import _is_json_request, _json_error, _human_reschedule_error
     if not valid_csrf_token(request.form.get("csrf_token")):
         if _is_json_request():
             return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
@@ -643,7 +642,6 @@ def admin_create_appointment_manual(slug=None):
     denied = _require_admin_membership()
     if denied:
         return denied
-    from app import _is_json_request, _json_error
     if not valid_csrf_token(request.form.get("csrf_token")):
         if _is_json_request():
             return _json_error("BAD_REQUEST", "Solicitud no válida"), 400
