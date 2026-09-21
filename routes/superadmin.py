@@ -27,6 +27,14 @@ from flask import (
     url_for,
 )
 
+from application.platform import (
+    _clear_platform_session,
+    _is_platform_authenticated,
+    _platform_current_user,
+    _platform_session_expires_at,
+)
+from application.requests import get_client_ip
+
 from extensions import valid_csrf_token
 from services import platform as platform_service
 from services.notifications import (
@@ -42,14 +50,12 @@ from database.database import (
 
 def _superadmin_gate():
     """Gate de autenticación SUPERADMIN: redirige a login si no hay sesión de plataforma."""
-    from app import _is_platform_authenticated
     if not _is_platform_authenticated():
         return redirect("/superadmin/login")
     return None
 
 
 def superadmin_login():
-    from app import _platform_session_expires_at, _platform_current_user, get_client_ip
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
             return render_template("superadmin_login.html", error=True, error_message="Solicitud no válida"), 400
@@ -73,7 +79,6 @@ def superadmin_login():
 
 
 def superadmin_logout():
-    from app import _platform_current_user, _clear_platform_session, get_client_ip
     user, token = _platform_current_user()
     if user is None:
         return redirect("/superadmin/login")
@@ -86,7 +91,6 @@ def superadmin_logout():
 
 
 def superadmin_panel():
-    from app import _platform_current_user
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -106,7 +110,6 @@ def superadmin_panel():
 
 
 def superadmin_audit():
-    from app import _platform_current_user
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -121,7 +124,6 @@ def superadmin_audit():
 
 
 def superadmin_negocios_crear():
-    from app import _platform_current_user, get_client_ip
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -146,7 +148,6 @@ def superadmin_negocios_crear():
 
 
 def superadmin_negocios_detalle(business_id):
-    from app import _platform_current_user
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -175,7 +176,7 @@ def superadmin_negocios_detalle(business_id):
 
 
 def superadmin_negocios_aprobar(business_id):
-    from app import _platform_current_user, get_client_ip, send_approved_invitation_email
+    from app import send_approved_invitation_email
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -202,7 +203,6 @@ def superadmin_negocios_aprobar(business_id):
 
 
 def superadmin_negocios_desactivar(business_id):
-    from app import _platform_current_user, get_client_ip
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -217,7 +217,6 @@ def superadmin_negocios_desactivar(business_id):
 
 
 def superadmin_negocios_activar(business_id):
-    from app import _platform_current_user, get_client_ip
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -232,7 +231,7 @@ def superadmin_negocios_activar(business_id):
 
 
 def superadmin_negocios_reinviar(business_id):
-    from app import _platform_current_user, get_client_ip, send_approved_invitation_email
+    from app import send_approved_invitation_email
     denied = _superadmin_gate()
     if denied:
         return denied
