@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ public_frontend_config.business.name }} - Reservar turno</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        :root {
+            --primary: {{ public_frontend_config.branding.primary_color }};
+            --primary-deep: {{ public_frontend_config.branding.secondary_color }};
+        }
+
+        .wizard-container {
+            max-width: 640px;
+            margin: 24px auto;
+            padding: 0 16px;
+        }
+
+        .wizard-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--blue-border);
+        }
+
+        .wizard-back {
+            background: var(--surface);
+            border: 1px solid var(--blue-border);
+            border-radius: 12px;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .wizard-back:hover {
+            border-color: var(--primary);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .wizard-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--primary-deep);
+            flex: 1;
+        }
+
+        .wizard-progress {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 24px;
+        }
+
+        .progress-dot {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--blue-border);
+            overflow: hidden;
+        }
+
+        .progress-dot.active {
+            background: var(--primary);
+        }
+
+        .wizard-step {
+            display: none;
+        }
+
+        .wizard-step.active {
+            display: block;
+        }
+
+        .step-content {
+            background: var(--surface);
+            border: 1px solid var(--blue-border);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .step-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--primary-deep);
+            margin-bottom: 4px;
+        }
+
+        .step-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .service-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .service-option {
+            border: 2px solid var(--blue-border);
+            border-radius: 12px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: transparent;
+            text-align: left;
+        }
+
+        .service-option:hover {
+            border-color: var(--primary);
+            background: var(--blue-50);
+        }
+
+        .service-option.selected {
+            border-color: var(--primary);
+            background: var(--blue-50);
+        }
+
+        .service-option-name {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--primary-deep);
+            margin-bottom: 4px;
+        }
+
+        .service-option-meta {
+            display: flex;
+            gap: 12px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+
+        .calendar-header {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 8px 4px;
+            text-transform: uppercase;
+        }
+
+        .calendar-day {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .calendar-day.other-month {
+            color: var(--text-muted);
+            cursor: default;
+        }
+
+        .calendar-day.available {
+            color: var(--text);
+            border-color: var(--blue-border);
+        }
+
+        .calendar-day.available:hover {
+            background: var(--blue-50);
+            border-color: var(--primary);
+        }
+
+        .calendar-day.selected {
+            background: var(--primary);
+            color: #FFFFFF;
+            border-color: var(--primary);
+            font-weight: 700;
+        }
+
+        .calendar-day.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .time-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .time-option {
+            border: 2px solid var(--blue-border);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .time-option:hover {
+            border-color: var(--primary);
+            background: var(--blue-50);
+        }
+
+        .time-option.selected {
+            border-color: var(--primary);
+            background: var(--primary);
+            color: #FFFFFF;
+        }
+
+        .time-option.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            border-color: var(--blue-border);
+        }
+
+        .form-row {
+            margin-bottom: 16px;
+        }
+
+        .form-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid var(--blue-border);
+            border-radius: 12px;
+            font-size: 14px;
+            background: var(--bg);
+            color: var(--text);
+            transition: all 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--blue-50);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            display: block;
+            text-transform: uppercase;
+        }
+
+        .confirm-summary {
+            background: var(--blue-50);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--blue-border);
+        }
+
+        .summary-row:last-child {
+            border-bottom: none;
+        }
+
+        .summary-label {
+            color: var(--text-secondary);
+        }
+
+        .summary-value {
+            font-weight: 700;
+            color: var(--primary-deep);
+        }
+
+        .wizard-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .wizard-actions .btn {
+            flex: 1;
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            border: 1px solid var(--blue-border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: var(--blue-50);
+        }
+
+        .error-banner {
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+            color: #991b2b;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            display: none;
+        }
+
+        .error-banner.show {
+            display: block;
+        }
+
+        .loading-overlay {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+            display: none;
+        }
+
+        .loading-overlay.show {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wizard-container" id="wizard">
+        <!-- Wizard Header -->
+        <div class="wizard-header">
+            <button type="button" class="wizard-back" onclick="goBack()" id="backButton" style="display: none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15.5 19 8.5 12 15.5 5"></polyline>
+                </svg>
+            </button>
+            <h1 class="wizard-title">{{ public_frontend_config.business.name }}</h1>
+            <div style="width: 48px;"></div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="wizard-progress" id="progressBar">
+            <div class="progress-dot active" data-step="1"></div>
+            <div class="progress-dot" data-step="2"></div>
+            <div class="progress-dot" data-step="3"></div>
+            <div class="progress-dot" data-step="4"></div>
+        </div>
+
+        <!-- Error Banner -->
+        <div class="error-banner" id="errorBanner">
+            <span id="errorMessage"></span>
+        </div>
+
+        <!-- Step 1: Service Selection -->
+        <div class="wizard-step active" id="step1" data-step="1">
+            <div class="step-content">
+                <h2 class="step-title">Seleccioná un servicio</h2>
+                <p class="step-subtitle">Elegí el servicio que querés reservar</p>
+
+                <div class="service-list" id="serviceList">
+                    {% if services %}
+                    {% for service in services %}
+                    <button type="button" class="service-option"
+                        data-service="{{ service.name }}"
+                        onclick="selectService('{{ service.name }}')">
+                        <div class="service-option-name">{{ service.name }}</div>
+                        <div class="service-meta">
+                            <span>$${ service.price }}</span>
+                            <span>{{ service.duration }} min</span>
+                        </div>
+                    </button>
+                    {% endfor %}
+                    {% else %}
+                    <div style="text-align: center; padding: 24px; color: var(--text-muted);">
+                        No hay servicios disponibles
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="wizard-actions">
+                <button type="button" class="btn btn-primary" id="nextToStep2" onclick="nextStep(2)" disabled>
+                    Continuar
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Date & Time Selection -->
+        <div class="wizard-step" id="step2" data-step="2">
+            <div class="step-content">
+                <div class="step-title">Seleccioná fecha y horario</div>
+                <div class="step-subtitle" id="step2Subtitle">
+                    Servicio: <span id="selectedServiceName"></span>
+                </div>
+
+                <!-- Calendar -->
+                <div class="calendar-container" id="calendarContainer">
+                    <div class="calendar-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <button type="button" class="calendar-nav" id="prevMonth" style="background: none; border: none; cursor: pointer; font-size: 18px;">‹</button>
+                        <span class="calendar-month-year" id="currentMonthYear" style="font-size: 16px; font-weight: 700;"></span>
+                        <button type="button" class="calendar-nav" id="nextMonth" style="background: none; border: none; cursor: pointer; font-size: 18px;">›</button>
+                    </div>
+                    <div class="calendar-grid" id="calendarGrid"></div>
+                </div>
+
+                <!-- Time Slots -->
+                <div class="loading-overlay" id="timeLoading">
+                    Cargando horarios...
+                </div>
+                <div class="time-grid" id="timeGrid"></div>
+            </div>
+            <div class="wizard-actions">
+                <button type="button" class="btn btn-secondary" onclick="prevStep(1)">
+                    Atrás
+                </button>
+                <button type="button" class="btn btn-primary" id="nextToStep3" onclick="nextStep(3)" disabled>
+                    Continuar
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: Client Data -->
+        <div class="wizard-step" id="step3" data-step="3">
+            <div class="step-content">
+                <div class="step-title">Tus datos</div>
+                <div class="step-subtitle">Completá los datos para tu reserva</div>
+
+                <form id="bookingForm" method="POST" action="/b/{{ business.slug }}/reservar/confirmar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="servicio" id="formServicio" value="">
+                    <input type="hidden" name="fecha" id="formFecha" value="">
+                    <input type="hidden" name="hora" id="formHora" value="">
+                    <input type="hidden" name="resource_id" id="formResourceId" value="">
+
+                    <div class="form-row">
+                        <label class="form-label">Nombre y apellido *</label>
+                        <input type="text" name="nombre" id="nombre" class="form-input" placeholder="Ej: Juan Pérez" required>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">Teléfono *</label>
+                        <input type="tel" name="telefono" id="telefono" class="form-input" placeholder="Ej: 1123456789" required>
+                    </div>
+                    <div class="form-row">
+                        <label class="form-label">Email (para confirmación)</label>
+                        <input type="email" name="email" id="email" class="form-input" placeholder="Ej: tu@email.com">
+                    </div>
+                </form>
+            </div>
+            <div class="wizard-actions">
+                <button type="button" class="btn btn-secondary" onclick="prevStep(2)">
+                    Atrás
+                </button>
+                <button type="button" class="btn btn-primary" id="nextToStep4" onclick="nextStep(4)" disabled>
+                    Continuar
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 4: Confirmation -->
+        <div class="wizard-step" id="step4" data-step="4">
+            <div class="step-content">
+                <div class="step-title">Confirmá tu reserva</div>
+                <div class="step-subtitle">Revisá los datos antes de confirmar</div>
+
+                <div class="confirm-summary">
+                    <div class="summary-row">
+                        <span class="summary-label">Servicio</span>
+                        <span class="summary-value" id="confirmService"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Fecha</span>
+                        <span class="summary-value" id="confirmDate"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Hora</span>
+                        <span class="summary-value" id="confirmTime"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Nombre</span>
+                        <span class="summary-value" id="confirmName"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Teléfono</span>
+                        <span class="summary-value" id="confirmPhone"></span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Email</span>
+                        <span class="summary-value" id="confirmEmail"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="wizard-actions">
+                <button type="button" class="btn btn-secondary" onclick="prevStep(3)">
+                    Atrás
+                </button>
+                <button type="button" class="btn btn-primary" id="confirmButton" onclick="submitReservation()" disabled>
+                    Confirmar reserva
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='landing.js') }}"></script>
+    <script>
+        const BUSINESS_SLUG = "{{ business.slug }}";
+        const BUSINESS_ID = {{ business.id }};
+        const CURRENT_STEP = {{ step }};
+    </script>
+</body>
+
+</html>
