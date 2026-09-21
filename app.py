@@ -38,6 +38,7 @@ from services.ai import ask_ai
 from services.notifications import send_confirmation_email
 
 from database.database import (
+    get_active_services_scoped,
     get_business_settings,
     get_business_settings_scoped,
     get_connection,
@@ -60,6 +61,7 @@ from application.frontend import (
 )
 
 from application.rate_limit import (
+    API_REQUEST_LIMIT,
     CHAT_PHONE_REQUEST_LIMIT,
     CHAT_REQUEST_LIMIT,
     FORGOT_REQUEST_LIMIT,
