@@ -1507,10 +1507,11 @@ def format_reservation_confirmation(
     servicio,
     fecha,
     hora,
+    business_id,
     resource_nombre=None,
 ):
 
-    business_name = get_business_identity()["business_name"]
+    business_name = get_business_identity(business_id)["business_name"]
 
     try:
 
@@ -1637,9 +1638,10 @@ def format_cancellation_confirmation():
 def format_reschedule_confirmation(
     fecha,
     hora,
+    business_id,
 ):
 
-    business_name = get_business_identity()["business_name"]
+    business_name = get_business_identity(business_id)["business_name"]
 
     try:
 
@@ -2168,6 +2170,7 @@ días de la semana y fechas relativas.
                     servicio=arguments["servicio"],
                     fecha=arguments["fecha"],
                     hora=arguments["hora"],
+                    business_id=business_id,
                     resource_nombre=result.get("resource_nombre"),
                 ), session_id, public_token
 
@@ -2245,6 +2248,7 @@ días de la semana y fechas relativas.
                 return format_reschedule_confirmation(
                     fecha=result["nueva_fecha"],
                     hora=result["nueva_hora"],
+                    business_id=business_id,
                 ), session_id, public_token
 
 

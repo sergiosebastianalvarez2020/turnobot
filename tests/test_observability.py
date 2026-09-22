@@ -1014,5 +1014,52 @@ class TestGeminiTechnicalRobustness(unittest.TestCase):
         self.assertEqual(len(matches), 1)
 
 
+class TestFormatConfirmationBusinessId(unittest.TestCase):
+    """Regression tests: format_*confirmation must pass business_id to get_business_identity."""
+
+    def test_format_reservation_confirmation_uses_business_id(self):
+        with mock.patch.object(
+            ai, "get_business_identity", return_value={"business_name": "Mi Negocio"}
+        ) as mock_gbi:
+            result = ai.format_reservation_confirmation(
+                nombre="Juan",
+                servicio="Corte",
+                fecha="2026-10-15",
+                hora="10:00",
+                business_id=1,
+            )
+            mock_gbi.assert_called_once_with(1)
+            self.assertIn("Mi Negocio", result)
+            self.assertIn("Juan", result)
+
+    def test_format_reservation_confirmation_requires_business_id(self):
+        with self.assertRaises(TypeError):
+            ai.format_reservation_confirmation(
+                nombre="Juan",
+                servicio="Corte",
+                fecha="2026-10-15",
+                hora="10:00",
+            )
+
+    def test_format_reschedule_confirmation_uses_business_id(self):
+        with mock.patch.object(
+            ai, "get_business_identity", return_value={"business_name": "Mi Negocio"}
+        ) as mock_gbi:
+            result = ai.format_reschedule_confirmation(
+                fecha="2026-10-20",
+                hora="14:00",
+                business_id=1,
+            )
+            mock_gbi.assert_called_once_with(1)
+            self.assertIn("Mi Negocio", result)
+
+    def test_format_reschedule_confirmation_requires_business_id(self):
+        with self.assertRaises(TypeError):
+            ai.format_reschedule_confirmation(
+                fecha="2026-10-20",
+                hora="14:00",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
