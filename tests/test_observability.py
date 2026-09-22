@@ -795,6 +795,39 @@ class TestToolResultControl(unittest.TestCase):
                 p.stop()
 
 
+    def test_execute_tool_solicitar_atencion_humana_persiste_handoff(self):
+        with mock.patch("services.ai.request_human_handoff_scoped", return_value=True) as mock_handoff:
+            result = ai.execute_tool(
+                "solicitar_atencion_humana",
+                {"motivo": "Necesito hablar con un humano."},
+                business_id=1,
+                session_id=99,
+            )
+            mock_handoff.assert_called_once_with(99, 1)
+        self.assertTrue(result["success"])
+
+    def test_execute_tool_solicitar_atencion_humana_sin_session_id_retorna_success(self):
+        with mock.patch("services.ai.request_human_handoff_scoped", return_value=True) as mock_handoff:
+            result = ai.execute_tool(
+                "solicitar_atencion_humana",
+                {"motivo": "Consulta."},
+                business_id=1,
+            )
+            mock_handoff.assert_not_called()
+        self.assertTrue(result["success"])
+
+    def test_execute_tool_solicitar_atencion_humana_es_alcanzable(self):
+        with mock.patch("services.ai.request_human_handoff_scoped", return_value=True):
+            result = ai.execute_tool(
+                "solicitar_atencion_humana",
+                {"motivo": "Por favor."},
+                business_id=1,
+                session_id=1,
+            )
+        self.assertTrue(result["success"])
+        self.assertIn("registrada", result["message"])
+
+
 class TestErrorFormatStandardization(unittest.TestCase):
     """Verifica que las respuestas de error usan el formato {success, error, code}."""
 
