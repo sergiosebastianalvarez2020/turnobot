@@ -726,6 +726,74 @@ class TestToolResultControl(unittest.TestCase):
             for p in patches:
                 p.stop()
 
+    def test_execute_tool_cancelar_sin_token_retorna_missing_management_token(self):
+        result = ai.execute_tool(
+            "cancelar_turno",
+            {"appointment_id": 1, "telefono": "123"},
+            business_id=1,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result.get("reason"), "missing_management_token")
+
+    def test_execute_tool_reprogramar_sin_token_retorna_missing_management_token(self):
+        result = ai.execute_tool(
+            "reprogramar_turno",
+            {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-10-20", "nueva_hora": "14:00"},
+            business_id=1,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result.get("reason"), "missing_management_token")
+
+    def test_cancelar_sin_token_pregunta_token_no_retorna_error(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[
+            _MockResponse(function_calls=[_MockFunctionCall("cancelar_turno", {"appointment_id": 1, "telefono": "123"})]),
+            _MockResponse(text="Necesito tu token de gestión para proceder."),
+        ])
+        patches = self._common_patches(
+            mock_client,
+            tool_result={
+                "success": False,
+                "reason": "missing_management_token",
+                "message": "El token de gestión es obligatorio para cancelar un turno.",
+            },
+        )
+        for p in patches:
+            p.start()
+        try:
+            result, _, _ = ai.ask_ai("cancelar", business_id=1)
+            self.assertNotIn("no se pudo cancelar", result)
+            self.assertIn("token de gestión", result)
+            self.assertEqual(mock_client.call_count, 2)
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_reprogramar_sin_token_pregunta_token_no_retorna_error(self):
+        ai.client = None
+        mock_client = _MockGenAIClient(responses=[
+            _MockResponse(function_calls=[_MockFunctionCall("reprogramar_turno", {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-10-20", "nueva_hora": "14:00"})]),
+            _MockResponse(text="Necesito tu token de gestión para reprogramar."),
+        ])
+        patches = self._common_patches(
+            mock_client,
+            tool_result={
+                "success": False,
+                "reason": "missing_management_token",
+                "message": "El token de gestión es obligatorio para reprogramar un turno.",
+            },
+        )
+        for p in patches:
+            p.start()
+        try:
+            result, _, _ = ai.ask_ai("reprogramar", business_id=1)
+            self.assertNotIn("no se pudo reprogramar", result)
+            self.assertIn("token de gestión", result)
+            self.assertEqual(mock_client.call_count, 2)
+        finally:
+            for p in patches:
+                p.stop()
+
 
 class TestErrorFormatStandardization(unittest.TestCase):
     """Verifica que las respuestas de error usan el formato {success, error, code}."""
