@@ -458,6 +458,11 @@ CANCELAR
 22. Utilizá cancelar_turno solamente cuando tengas
     el ID exacto del turno que el cliente quiere cancelar.
 
+22b. Para cancelar necesitás el management_token del turno,
+    que se devuelve al momento de reservar. Si el cliente
+    no lo proporciona, pedilo explícitamente antes de
+    llamar a cancelar_turno.
+
 23. Si la cancelación fue exitosa, confirmala claramente.
 
 24. Si la cancelación falla, no digas que fue cancelado.
@@ -472,6 +477,7 @@ REPROGRAMAR
     - ID del turno
     - nueva fecha
     - nuevo horario
+    - management_token del turno (se devuelve al reservar)
 
 26. Utilizá reprogramar_turno para realizar el cambio.
 
@@ -1192,6 +1198,7 @@ def execute_tool(name, arguments, business_id=None):
             if not management_token:
                 return {
                     "success": False,
+                    "reason": "missing_management_token",
                     "message": "El token de gestión es obligatorio para cancelar un turno.",
                 }
 
@@ -1265,6 +1272,7 @@ def execute_tool(name, arguments, business_id=None):
             if not management_token:
                 return {
                     "success": False,
+                    "reason": "missing_management_token",
                     "message": "El token de gestión es obligatorio para reprogramar un turno.",
                 }
 
@@ -2212,6 +2220,7 @@ días de la semana y fechas relativas.
             if (
                 tool_name == "cancelar_turno"
                 and result.get("success") is False
+                and result.get("reason") != "missing_management_token"
             ):
 
                 logger.info(
@@ -2255,6 +2264,7 @@ días de la semana y fechas relativas.
             if (
                 tool_name == "reprogramar_turno"
                 and result.get("success") is False
+                and result.get("reason") != "missing_management_token"
             ):
 
                 logger.info(
