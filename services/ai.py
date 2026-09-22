@@ -925,10 +925,11 @@ solicitar_atencion_humana_declaration = types.FunctionDeclaration(
 )
 
 
-def _execute_solicitar_atencion_humana(arguments, business_id):
+def _execute_solicitar_atencion_humana(arguments, business_id, session_id=None):
     """Ejecuta la herramienta de solicitud de atención humana."""
     # La sesión se marca como needs_human en la capa de persistencia
-    # Aquí solo confirmamos la acción
+    if session_id:
+        request_human_handoff_scoped(session_id, business_id)
     return {
         "success": True,
         "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto."
@@ -956,7 +957,7 @@ BARBERIA_TOOL = types.Tool(
 # EJECUCIÓN DE HERRAMIENTAS
 # ============================================================
 
-def execute_tool(name, arguments, business_id=None):
+def execute_tool(name, arguments, business_id=None, session_id=None):
     if business_id is None:
         return {"success": False, "error": "Contexto de negocio inválido."}
 
@@ -1379,12 +1380,6 @@ def execute_tool(name, arguments, business_id=None):
             }
 
 
-    return {
-        "success": True,
-        "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto."
-    }
-
-
     # ========================================================
     # SOLICITAR ATENCIÓN HUMANA
     # ========================================================
@@ -1394,7 +1389,7 @@ def execute_tool(name, arguments, business_id=None):
         motivo = arguments.get("motivo", "El cliente solicita hablar con una persona.")
 
         try:
-            return _execute_solicitar_atencion_humana(arguments, business_id)
+            return _execute_solicitar_atencion_humana(arguments, business_id, session_id)
 
         except Exception as error:
 
@@ -2127,6 +2122,7 @@ días de la semana y fechas relativas.
                     tool_name,
                     arguments,
                     business_id,
+                    session_id,
                 )
 
             except Exception as error:
