@@ -3,3 +3,5 @@ python-dotenv==1.2.2
 google-genai==2.18.1
 waitress==3.0.2
 tzdata==2025.2
+psycopg[binary]==3.2.5
+psycopg-pool==3.2.4

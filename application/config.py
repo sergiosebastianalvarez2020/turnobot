@@ -10,10 +10,13 @@ import secrets
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from database.pg_pool import get_database_backend, normalize_database_url, sanitize_database_url
+
 
 def build_config(app, logger=None):
     """Configura la instancia Flask: secret, política de cookies, límites,
-    ProxyFix y lifetime de sesión. Devuelve los valores re-exportados por app."""
+    ProxyFix, lifetime de sesión y configuración de base de datos (Fase 4C).
+    Devuelve los valores re-exportados por app."""
     if os.getenv("FLASK_ENV") == "production" and not os.getenv("SECRET_KEY"):
         raise RuntimeError("SECRET_KEY es obligatoria en producción")
 
@@ -35,6 +38,19 @@ def build_config(app, logger=None):
             "SMTP_HOST no está configurada: las notificaciones de turnos no se enviarán por email. "
             "Configure SMTP_HOST/SMTP_USER/SMTP_PASSWORD e incree el servidor."
         )
+
+    # Configuración del backend de Base de Datos (Fase 4C)
+    raw_db_url = os.getenv("DATABASE_URL")
+    normalized_db_url = normalize_database_url(raw_db_url)
+    sanitized_db_url = sanitize_database_url(normalized_db_url)
+    db_backend = get_database_backend(normalized_db_url)
+
+    app.config["DATABASE_URL"] = normalized_db_url
+    app.config["DATABASE_URL_SANITIZED"] = sanitized_db_url
+    app.config["DB_BACKEND"] = db_backend
+
+    if db_backend == "postgresql" and logger is not None:
+        logger.info("Configurado backend PostgreSQL con URL %s", sanitized_db_url)
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
@@ -70,4 +86,6 @@ def build_config(app, logger=None):
         "ADMIN_PASSWORD_HASH": admin_password_hash,
         "ADMIN_PASSWORD": admin_password,
         "TRUSTED_PROXY_COUNT": trusted_proxy_count,
+        "DATABASE_URL_SANITIZED": sanitized_db_url,
+        "DB_BACKEND": db_backend,
     }
