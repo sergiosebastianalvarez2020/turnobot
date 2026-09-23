@@ -219,7 +219,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, q in enumerate(frequent_questions) %}
+                            {% for q in frequent_questions %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ q.question_text }}</td>
@@ -274,7 +274,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, q in enumerate(unanswered_questions) %}
+                            {% for q in unanswered_questions %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ q.question_text }}</td>
@@ -327,7 +327,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, q in enumerate(opportunities[:10]) %}
+                            {% for q in opportunities[:10] %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ q.question_text }}</td>

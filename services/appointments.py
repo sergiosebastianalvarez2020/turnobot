@@ -1189,6 +1189,17 @@ def reschedule_appointment_admin(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "not_found"}
 
+            historical_resource_id = appointment["resource_id"]
+            target_resource_id = historical_resource_id
+            if resource_id is not None:
+                validated_resource_id, resource_reason = _validate_resource(
+                    resource_id, business_id, connection=connection
+                )
+                if validated_resource_id is None:
+                    connection.execute("ROLLBACK")
+                    return {"success": False, "reason": resource_reason}
+                target_resource_id = validated_resource_id
+
             historical_duration = appointment["duration"]
             start_minutes = _to_minutes(new_time)
             end_minutes = start_minutes + historical_duration
@@ -1223,13 +1234,13 @@ def reschedule_appointment_admin(
             #
             # Excluimos el propio turno que estamos moviendo.
             #
-            # El turno conserva su resource_id histórico: si tenía recurso,
-            # sigue bloqueando solo ese recurso (+ bloqueos globales). Si no
-            # tenía recurso, sigue bloqueando todo el negocio.
+            # El turno bloquea según su recurso objetivo: si tiene recurso,
+            # bloquea solo ese recurso (+ bloqueos globales). Si no tenía
+            # recurso y no se indica uno nuevo, sigue bloqueando todo el
+            # negocio.
             # ------------------------------------------------
 
-            historical_resource_id = appointment["resource_id"]
-            if historical_resource_id is not None:
+            if target_resource_id is not None:
                 existing = connection.execute(
                     """
                     SELECT id
@@ -1246,7 +1257,7 @@ def reschedule_appointment_admin(
                         new_date,
                         appointment_id_int,
                         business_id,
-                        historical_resource_id,
+                        target_resource_id,
                         new_time,
                         new_end,
                     ),
@@ -1273,14 +1284,15 @@ def reschedule_appointment_admin(
             connection.execute(
                 """
                 UPDATE appointments
-                SET appointment_date = ?, appointment_time = ?, appointment_end = ?
+                SET appointment_date = ?, appointment_time = ?, appointment_end = ?,
+                    resource_id = ?
                 WHERE id = ? AND status = 'confirmed' AND business_id = ?
                 """,
-                (new_date, new_time, new_end, appointment_id_int, business_id),
+                (new_date, new_time, new_end, target_resource_id, appointment_id_int, business_id),
             )
 
             connection.commit()
-            return {"success": True, "reason": "rescheduled", "resource_id": historical_resource_id}
+            return {"success": True, "reason": "rescheduled", "resource_id": target_resource_id}
 
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")

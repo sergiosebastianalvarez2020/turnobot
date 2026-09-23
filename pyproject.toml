@@ -3,7 +3,7 @@ testpaths = ["tests", "."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-ra -q --cov=. --cov-report=term-missing"
+addopts = "-ra -q --cov=. --cov-report=term-missing --ignore=test_results.txt"
 
 [tool.coverage.run]
 source = ["."]

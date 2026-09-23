@@ -181,7 +181,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, q in enumerate(opportunities) %}
+                            {% for q in opportunities %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ q.question_text }}</td>
