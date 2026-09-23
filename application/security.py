@@ -107,6 +107,22 @@ def add_security_headers(response):
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
 
+    # Content-Security-Policy
+    # Permite: scripts/estilos inline (necesarios por templates actuales),
+    # fuentes de Google Fonts, imágenes/data:, recursos de mismo origen.
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    response.headers.setdefault("Content-Security-Policy", csp)
+
     # Correlación de petición HTTP (omitir /static/ para evitar ruido)
     if not request.path.startswith("/static/"):
         start_time = getattr(g, "start_time", None)

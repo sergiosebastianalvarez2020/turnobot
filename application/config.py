@@ -38,7 +38,7 @@ def build_config(app, logger=None):
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SAMESITE="Strict",
         SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
     )
     app.config["MAX_CONTENT_LENGTH"] = 512 * 1024

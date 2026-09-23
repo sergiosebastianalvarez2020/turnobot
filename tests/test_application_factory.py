@@ -158,7 +158,7 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
 
         self.assertTrue(new_app.secret_key)
         self.assertTrue(new_app.config["SESSION_COOKIE_HTTPONLY"])
-        self.assertEqual(new_app.config["SESSION_COOKIE_SAMESITE"], "Lax")
+        self.assertEqual(new_app.config["SESSION_COOKIE_SAMESITE"], "Strict")
         self.assertTrue(new_app.config["SESSION_COOKIE_SECURE"])
         self.assertEqual(new_app.config["MAX_CONTENT_LENGTH"], 512 * 1024)
         self.assertEqual(

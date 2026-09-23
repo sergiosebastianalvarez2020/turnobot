@@ -34,5 +34,5 @@ def is_api_request_allowed(client_ip, endpoint="api", business_id=None, user_id=
     )
 
 
-def is_login_request_allowed(client_ip):
-    return _is_request_allowed(_rate_limit_key("login", client_ip), 10)
+def is_login_request_allowed(client_ip, business_id=None):
+    return _is_request_allowed(_rate_limit_key("login", client_ip, business_id), 10)

@@ -109,7 +109,7 @@ def _authenticate_login(business, email, password):
     """
     from services.memberships import ROLE_CUSTOMER, get_membership_scoped
 
-    if not is_login_request_allowed(_get_client_ip()):
+    if not is_login_request_allowed(_get_client_ip(), business["id"] if business else None):
         return None, "Demasiados intentos. Esperá unos minutos."
 
     if business is None:

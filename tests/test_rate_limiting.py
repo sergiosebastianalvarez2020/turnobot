@@ -4,9 +4,16 @@ import unittest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import app as application
+from application.rate_limit import is_login_request_allowed
 
 
 class RateLimitingTests(unittest.TestCase):
+    def setUp(self):
+        application.rate_limit_state.clear()
+
+    def tearDown(self):
+        application.rate_limit_state.clear()
+
     def test_forwarded_headers_are_ignored_without_proxyfix(self):
         with application.app.test_request_context(
             "/",
@@ -65,6 +72,46 @@ class RateLimitingTests(unittest.TestCase):
         application.is_chat_request_allowed("1.2.3.4", 1)
         self.assertIn(
             application._rate_limit_key("chat", "1.2.3.4", 1), application.rate_limit_state
+        )
+
+    def test_login_rate_limit_per_tenant(self):
+        """Verifica que el rate limit de login distinga por business_id."""
+        ip = "1.2.3.4"
+        # Límite es 10 req por ventana
+        limit = 10
+
+        # Requests para business_id=1
+        for i in range(limit):
+            self.assertTrue(
+                is_login_request_allowed(ip, business_id=1),
+                f"Request {i + 1} para business_id=1 debería ser permitido",
+            )
+        # El siguiente debe ser bloqueado para business_id=1
+        self.assertFalse(
+            is_login_request_allowed(ip, business_id=1),
+            "Request 11 para business_id=1 debería ser bloqueado",
+        )
+
+        # Pero para business_id=2 con la misma IP, debería seguir permitido
+        for i in range(limit):
+            self.assertTrue(
+                is_login_request_allowed(ip, business_id=2),
+                f"Request {i + 1} para business_id=2 debería ser permitido",
+            )
+        self.assertFalse(
+            is_login_request_allowed(ip, business_id=2),
+            "Request 11 para business_id=2 debería ser bloqueado",
+        )
+
+        # Y sin business_id (fallback) también separado
+        for i in range(limit):
+            self.assertTrue(
+                is_login_request_allowed(ip, business_id=None),
+                f"Request {i + 1} sin business_id debería ser permitido",
+            )
+        self.assertFalse(
+            is_login_request_allowed(ip, business_id=None),
+            "Request 11 sin business_id debería ser bloqueado",
         )
 
 

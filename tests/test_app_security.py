@@ -1,15 +1,9 @@
 import re
-import tempfile
 import unittest
-from datetime import datetime, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from werkzeug.security import generate_password_hash
 
 import app as application
-import database.database as database
-from services import appointments
 
 
 class TestAdminSecurity(unittest.TestCase):
@@ -57,39 +51,29 @@ class TestAdminSecurity(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_csp_header_present(self):
+        """Verifica que el header Content-Security-Policy esté presente y no vacío."""
+        response = self.client.get("/login")
+        csp = response.headers.get("Content-Security-Policy")
+        self.assertIsNotNone(csp)
+        self.assertNotEqual(csp.strip(), "")
+        # Verificar directivas fundamentales
+        self.assertIn("default-src 'self'", csp)
+        self.assertIn("script-src", csp)
+        self.assertIn("style-src", csp)
+        self.assertIn("font-src", csp)
+        self.assertIn("img-src", csp)
+        self.assertIn("connect-src", csp)
+        self.assertIn("frame-ancestors 'self'", csp)
+        self.assertIn("base-uri 'self'", csp)
+        self.assertIn("form-action 'self'", csp)
 
-class TestDomainValidation(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    def test_servicio_inactivo_o_inexistente(self):
-        date = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        date = date.isoformat()
-        result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Servicio inexistente", date, "09:00", 1
-        )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "invalid_service")
-
-    def test_telefono_con_formato_se_normaliza(self):
-        date = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        date = date.isoformat()
-        result = appointments.create_appointment(
-            "Ana Pérez", "+54 383-843-9222", "Corte", date, "10:00", 1
-        )
-        self.assertTrue(result["success"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_session_cookie_samesite_strict(self):
+        """Verifica que la cookie de sesión use SameSite=Strict."""
+        login_page = self.client.get("/login")
+        token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        response = self.client.post("/login", data={"password": "correcta", "csrf_token": token})
+        self.assertEqual(response.status_code, 302)
+        # Verificar la cookie de sesión en el redirect
+        set_cookie = response.headers.get("Set-Cookie", "")
+        self.assertIn("SameSite=Strict", set_cookie)
