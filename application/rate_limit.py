@@ -5,7 +5,7 @@ junto con la constante RATE_LIMIT_MAX_KEYS (re-exportada desde extensions).
 """
 
 from application.requests import _rate_limit_key
-from extensions import RATE_LIMIT_MAX_KEYS, _is_request_allowed
+from extensions import _is_request_allowed
 from services.appointments import normalize_phone
 
 CHAT_REQUEST_LIMIT = 20

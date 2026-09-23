@@ -18,14 +18,7 @@ Estas rutas operan a nivel de PLATAFORMA (superadmin), no son tenant-scoped.
 
 import secrets
 
-from flask import (
-    abort,
-    redirect,
-    render_template,
-    request,
-    session,
-    url_for,
-)
+from flask import abort, redirect, render_template, request, session
 
 from application.platform import (
     _clear_platform_session,
@@ -34,18 +27,14 @@ from application.platform import (
     _platform_session_expires_at,
 )
 from application.requests import get_client_ip
-
-from extensions import valid_csrf_token
-from services import platform as platform_service
-from services.notifications import (
-    send_apply_confirmation_email,
-    send_apply_notice_to_superadmin,
-)
 from database.database import (
     get_business_settings_scoped,
     list_members_scoped,
     revoke_all_platform_sessions,
 )
+from extensions import valid_csrf_token
+from services import platform as platform_service
+from services.notifications import send_apply_confirmation_email, send_apply_notice_to_superadmin
 
 
 def _superadmin_gate():
@@ -58,18 +47,31 @@ def _superadmin_gate():
 def superadmin_login():
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
-            return render_template("superadmin_login.html", error=True, error_message="Solicitud no válida"), 400
+            return render_template(
+                "superadmin_login.html", error=True, error_message="Solicitud no válida"
+            ), 400
         email = (request.form.get("email", "") or "").strip().lower()
         password = request.form.get("password", "") or ""
         platform_user, error = platform_service.authenticate_superadmin(email, password)
         if platform_user is None:
-            return render_template("superadmin_login.html", error=True, error_message=error or "Credenciales inválidas."), 200
+            return render_template(
+                "superadmin_login.html",
+                error=True,
+                error_message=error or "Credenciales inválidas.",
+            ), 200
         token = secrets.token_urlsafe(48)
         expires_at = _platform_session_expires_at()
         platform_service.establish_platform_session(platform_user["id"], token, expires_at)
         session["platform_user_id"] = platform_user["id"]
         session["platform_session_token"] = token
-        platform_service.log_platform_action(platform_user["id"], platform_user["email"], None, "superadmin_login", "", get_client_ip())
+        platform_service.log_platform_action(
+            platform_user["id"],
+            platform_user["email"],
+            None,
+            "superadmin_login",
+            "",
+            get_client_ip(),
+        )
         return redirect("/superadmin")
 
     user, _ = _platform_current_user()
@@ -86,7 +88,9 @@ def superadmin_logout():
         return "Solicitud no válida", 400
     revoke_all_platform_sessions(user["id"])
     _clear_platform_session()
-    platform_service.log_platform_action(user["id"], user["email"], None, "superadmin_logout", "", get_client_ip())
+    platform_service.log_platform_action(
+        user["id"], user["email"], None, "superadmin_logout", "", get_client_ip()
+    )
     return redirect("/superadmin/login")
 
 
@@ -116,10 +120,7 @@ def superadmin_audit():
     user, _ = _platform_current_user()
     audit_rows = platform_service.list_audit_log()
     return render_template(
-        "superadmin.html",
-        superadmin=user,
-        section="audit",
-        audit_rows=audit_rows,
+        "superadmin.html", superadmin=user, section="audit", audit_rows=audit_rows
     )
 
 
@@ -137,9 +138,12 @@ def superadmin_negocios_crear():
     if not result["success"]:
         return redirect(f"/superadmin?error={result['reason']}")
     platform_service.log_platform_action(
-        user["id"], user["email"], result["business_id"],
-        "business_created", f"Negocio creado: {name} (slug: {result['slug']})",
-        get_client_ip()
+        user["id"],
+        user["email"],
+        result["business_id"],
+        "business_created",
+        f"Negocio creado: {name} (slug: {result['slug']})",
+        get_client_ip(),
     )
     # EMAIL 1: confirmación al solicitante + aviso al superadmin
     send_apply_confirmation_email(owner_email, name)
@@ -177,6 +181,7 @@ def superadmin_negocios_detalle(business_id):
 
 def superadmin_negocios_aprobar(business_id):
     from app import send_approved_invitation_email
+
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -187,9 +192,12 @@ def superadmin_negocios_aprobar(business_id):
     if not result["success"]:
         return redirect(f"/superadmin/negocios/{business_id}?error={result['reason']}")
     platform_service.log_platform_action(
-        user["id"], user["email"], business_id,
-        "business_approved", f"Negocio aprobado: {result['slug']} (slug: {result['slug']})",
-        get_client_ip()
+        user["id"],
+        user["email"],
+        business_id,
+        "business_approved",
+        f"Negocio aprobado: {result['slug']} (slug: {result['slug']})",
+        get_client_ip(),
     )
     # EMAIL 2: invitación al owner para definir contraseña
     send_approved_invitation_email(
@@ -199,7 +207,9 @@ def superadmin_negocios_aprobar(business_id):
         result.get("expires_at", ""),
         platform_service.invitation_lifetime_hours(),
     )
-    return redirect(f"/superadmin/negocios/{business_id}?message=Negocio aprobado e invitación generada.")
+    return redirect(
+        f"/superadmin/negocios/{business_id}?message=Negocio aprobado e invitación generada."
+    )
 
 
 def superadmin_negocios_desactivar(business_id):
@@ -211,8 +221,17 @@ def superadmin_negocios_desactivar(business_id):
     user, _ = _platform_current_user()
     ok = platform_service.set_business_active(business_id, False)
     if not ok:
-        return redirect(f"/superadmin/negocios/{business_id}?error=No se pudo suspender el negocio.")
-    platform_service.log_platform_action(user["id"], user["email"], business_id, "business_disabled", "Negocio suspendido", get_client_ip())
+        return redirect(
+            f"/superadmin/negocios/{business_id}?error=No se pudo suspender el negocio."
+        )
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "business_disabled",
+        "Negocio suspendido",
+        get_client_ip(),
+    )
     return redirect(f"/superadmin/negocios/{business_id}?message=Negocio suspendido correctamente.")
 
 
@@ -226,12 +245,20 @@ def superadmin_negocios_activar(business_id):
     ok = platform_service.set_business_active(business_id, True)
     if not ok:
         return redirect(f"/superadmin/negocios/{business_id}?error=No se pudo activar el negocio.")
-    platform_service.log_platform_action(user["id"], user["email"], business_id, "business_enabled", "Negocio reactivado", get_client_ip())
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "business_enabled",
+        "Negocio reactivado",
+        get_client_ip(),
+    )
     return redirect(f"/superadmin/negocios/{business_id}?message=Negocio activado correctamente.")
 
 
 def superadmin_negocios_reinviar(business_id):
     from app import send_approved_invitation_email
+
     denied = _superadmin_gate()
     if denied:
         return denied
@@ -245,9 +272,20 @@ def superadmin_negocios_reinviar(business_id):
             owner = m
             break
     if owner is None:
-        return redirect(f"/superadmin/negocios/{business_id}?error=No se encontró el owner del negocio.")
-    token, expires_at = platform_service.resend_invitation(business_id, owner["user_id"], owner["email"])
-    platform_service.log_platform_action(user["id"], user["email"], business_id, "invitation_resent", f"Nueva invitación enviada a {owner['email']}", get_client_ip())
+        return redirect(
+            f"/superadmin/negocios/{business_id}?error=No se encontró el owner del negocio."
+        )
+    token, expires_at = platform_service.resend_invitation(
+        business_id, owner["user_id"], owner["email"]
+    )
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "invitation_resent",
+        f"Nueva invitación enviada a {owner['email']}",
+        get_client_ip(),
+    )
     # EMAIL 2: nueva invitación al owner
     business = platform_service.get_business_by_id_platform(business_id)
     if business:

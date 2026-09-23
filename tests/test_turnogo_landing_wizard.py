@@ -8,13 +8,11 @@ Valida que:
 - CSRF se valida en el POST.
 """
 
-import unittest
 import re
-from unittest.mock import patch, MagicMock
+import unittest
+from unittest.mock import MagicMock, patch
 
 import app as application
-import database.database as database
-from database.database import get_connection
 
 
 class TestLandingPage(unittest.TestCase):
@@ -129,9 +127,7 @@ class TestWizardDateSelection(unittest.TestCase):
 
     def test_wizard_step2_returns_200_with_servicio(self):
         with application.app.test_client() as client:
-            response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte"
-            )
+            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte")
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step2_redirects_to_step1_without_servicio(self):
@@ -142,9 +138,7 @@ class TestWizardDateSelection(unittest.TestCase):
 
     def test_wizard_step2_contains_calendar(self):
         with application.app.test_client() as client:
-            response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte"
-            )
+            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte")
             self.assertIn("calendar-grid", response.text)
 
     def test_wizard_step2_inexistent_slug_404(self):
@@ -163,23 +157,25 @@ class TestWizardDatosSelection(unittest.TestCase):
     def test_wizard_step3_returns_200(self):
         with application.app.test_client() as client:
             response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
+                "/b/"
+                + self.BUSINESS_SLUG
+                + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
             )
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step3_contains_form(self):
         with application.app.test_client() as client:
             response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
+                "/b/"
+                + self.BUSINESS_SLUG
+                + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
             )
             self.assertIn("Nombre y apellido", response.text)
             self.assertIn("Teléfono", response.text)
 
     def test_wizard_step3_missing_data_shows_error(self):
         with application.app.test_client() as client:
-            response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/datos"
-            )
+            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/datos")
             self.assertEqual(response.status_code, 200)
 
 
@@ -193,19 +189,26 @@ class TestWizardConfirmation(unittest.TestCase):
     def test_wizard_step4_get_returns_200(self):
         with application.app.test_client() as client:
             response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
+                "/b/"
+                + self.BUSINESS_SLUG
+                + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
             )
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step4_get_contains_confirmation(self):
         with application.app.test_client() as client:
             response = client.get(
-                "/b/" + self.BUSINESS_SLUG + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
+                "/b/"
+                + self.BUSINESS_SLUG
+                + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
             )
             self.assertIn("Confirmá tu reserva", response.text)
 
     def test_wizard_step4_post_creates_appointment(self):
-        with patch("services.appointments.create_appointment", return_value={"success": True, "appointment_id": 99}):
+        with patch(
+            "services.appointments.create_appointment",
+            return_value={"success": True, "appointment_id": 99},
+        ):
             with application.app.test_client() as client:
                 page = client.get("/b/" + self.BUSINESS_SLUG + "/reservar?servicio=Corte")
                 csrf = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
@@ -273,8 +276,11 @@ class TestWizardEndpointsConsistency(unittest.TestCase):
             ]
             for endpoint in endpoints:
                 response = client.get(endpoint)
-                self.assertEqual(response.status_code, 200,
-                                 "Endpoint " + endpoint + " returned " + str(response.status_code))
+                self.assertEqual(
+                    response.status_code,
+                    200,
+                    "Endpoint " + endpoint + " returned " + str(response.status_code),
+                )
 
     def test_url_map_has_expected_endpoints(self):
         rules = {rule.endpoint for rule in application.app.url_map.iter_rules()}
@@ -321,19 +327,23 @@ class TestWizardRateLimiting(unittest.TestCase):
         )
 
     def test_wizard_post_allowed_under_limit(self):
-        with patch("services.appointments.create_appointment",
-                   return_value={"success": True, "appointment_id": 99}):
+        with patch(
+            "services.appointments.create_appointment",
+            return_value={"success": True, "appointment_id": 99},
+        ):
             with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
                 response = self._post_confirmation(client, csrf_token)
                 self.assertEqual(response.status_code, 201)
 
     def test_wizard_post_rate_limited_after_60_requests(self):
-        with patch("services.appointments.create_appointment",
-                   return_value={"success": True, "appointment_id": 99}):
+        with patch(
+            "services.appointments.create_appointment",
+            return_value={"success": True, "appointment_id": 99},
+        ):
             with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for i in range(application.API_REQUEST_LIMIT):
+                for _i in range(application.API_REQUEST_LIMIT):
                     response = self._post_confirmation(client, csrf_token)
                     self.assertIn(response.status_code, (201, 400))
                 blocked = self._post_confirmation(client, csrf_token)
@@ -349,7 +359,7 @@ class TestWizardRateLimiting(unittest.TestCase):
         with patch("services.appointments.create_appointment", mock_create):
             with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for i in range(application.API_REQUEST_LIMIT):
+                for _i in range(application.API_REQUEST_LIMIT):
                     self._post_confirmation(client, csrf_token)
                 mock_create.reset_mock()
                 blocked = self._post_confirmation(client, csrf_token)
@@ -359,11 +369,13 @@ class TestWizardRateLimiting(unittest.TestCase):
     def test_rate_limited_post_does_not_send_notifications(self):
         mock_send = MagicMock()
         mock_create = MagicMock(return_value={"success": True, "appointment_id": 99})
-        with patch("services.notifications.send_confirmation_email", mock_send), \
-             patch("services.appointments.create_appointment", mock_create):
+        with (
+            patch("services.notifications.send_confirmation_email", mock_send),
+            patch("services.appointments.create_appointment", mock_create),
+        ):
             with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for i in range(application.API_REQUEST_LIMIT):
+                for _i in range(application.API_REQUEST_LIMIT):
                     self._post_confirmation(client, csrf_token)
                 mock_send.reset_mock()
                 blocked = self._post_confirmation(client, csrf_token)

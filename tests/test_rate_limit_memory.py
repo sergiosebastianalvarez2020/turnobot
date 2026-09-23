@@ -1,4 +1,4 @@
-﻿"""Pruebas de P.9-F2: rate limiting acotado y thread-safe.
+"""Pruebas de P.9-F2: rate limiting acotado y thread-safe.
 
 - Poda de claves con timestamps viejos y de claves vacías.
 - Acotado por RATE_LIMIT_MAX_KEYS (expulsión FIFO).
@@ -15,7 +15,6 @@ import app as application
 
 
 class RateLimitMemoryTests(unittest.TestCase):
-
     def setUp(self):
         application.rate_limit_state.clear()
 
@@ -127,11 +126,7 @@ class RateLimitMemoryTests(unittest.TestCase):
         application.rate_limit_state.clear()
         client = application.app.test_client()
         huge = json.dumps({"message": "x" * 700_000})
-        response = client.post(
-            "/chat",
-            data=huge,
-            content_type="application/json",
-        )
+        response = client.post("/chat", data=huge, content_type="application/json")
         self.assertEqual(response.status_code, 413)
         payload = response.get_json()
         self.assertFalse(payload["success"])

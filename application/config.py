@@ -23,8 +23,12 @@ def build_config(app, logger=None):
     if os.getenv("FLASK_ENV") == "production" and admin_password:
         raise RuntimeError("ADMIN_PASSWORD fue eliminado; use ADMIN_PASSWORD_HASH")
     if not admin_password_hash and logger is not None:
-        logger.warning("ADMIN_PASSWORD_HASH no está configurada: acceso administrativo deshabilitado")
-    if os.getenv("FLASK_ENV") == "production" and (not admin_password_hash or os.getenv("COOKIE_SECURE") != "1"):
+        logger.warning(
+            "ADMIN_PASSWORD_HASH no está configurada: acceso administrativo deshabilitado"
+        )
+    if os.getenv("FLASK_ENV") == "production" and (
+        not admin_password_hash or os.getenv("COOKIE_SECURE") != "1"
+    ):
         raise RuntimeError("ADMIN_PASSWORD_HASH es obligatoria en producción")
     if os.getenv("FLASK_ENV") == "production" and not os.getenv("SMTP_HOST") and logger is not None:
         logger.warning(

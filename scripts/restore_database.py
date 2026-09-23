@@ -6,7 +6,6 @@ from pathlib import Path
 
 from database.database import DATABASE_PATH
 
-
 if len(sys.argv) != 2:
     raise SystemExit("Uso: python scripts/restore_database.py RUTA_BACKUP")
 

@@ -3,9 +3,8 @@ Tests de seguridad para operaciones de clientes.
 Verifican que un cliente no pueda operar sobre turnos ajenos.
 """
 
-import unittest
 import tempfile
-import threading
+import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -72,51 +71,43 @@ class SecurityOperationsTests(unittest.TestCase):
         appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token123")
 
         result = appointments.cancel_appointment(
-            appointment_id,
-            "+5491112345678",
-            1,
-            token,
-            "Juan Pérez",
+            appointment_id, "+5491112345678", 1, token, "Juan Pérez"
         )
         self.assertTrue(result)
 
     def test_cancel_other_client_appointment_rejected(self):
         """Cliente A no puede cancelar turno de Cliente B."""
-        appointment_id_a, token_a = self._create_appointment("Juan Pérez", "+5491112345678", "token_a")
-        _, token_b = self._create_appointment("María López", "+5491112345679", "token_b", appointment_time="11:00")
+        appointment_id_a, token_a = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_a"
+        )
+        _, token_b = self._create_appointment(
+            "María López", "+5491112345679", "token_b", appointment_time="11:00"
+        )
 
         result = appointments.cancel_appointment(
-            appointment_id_a,
-            "+5491112345679",
-            1,
-            "token_b",
-            "María López",
+            appointment_id_a, "+5491112345679", 1, "token_b", "María López"
         )
         self.assertFalse(result)
 
     def test_cancel_with_wrong_token_rejected(self):
         """Cancelación con token incorrecto es rechazada."""
-        appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token_valido")
+        appointment_id, token = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_valido"
+        )
 
         result = appointments.cancel_appointment(
-            appointment_id,
-            "+5491112345678",
-            1,
-            "token_invalido",
-            "Juan Pérez",
+            appointment_id, "+5491112345678", 1, "token_invalido", "Juan Pérez"
         )
         self.assertFalse(result)
 
     def test_cancel_without_token_rejected(self):
         """Cancelación sin token es rechazada."""
-        appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token_valido")
+        appointment_id, token = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_valido"
+        )
 
         result = appointments.cancel_appointment(
-            appointment_id,
-            "+5491112345678",
-            1,
-            None,
-            "Juan Pérez",
+            appointment_id, "+5491112345678", 1, None, "Juan Pérez"
         )
         self.assertFalse(result)
 
@@ -125,6 +116,7 @@ class SecurityOperationsTests(unittest.TestCase):
         appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token123")
 
         from services import appointments
+
         result = appointments.reschedule_appointment(
             appointment_id=appointment_id,
             new_date=self.future_date,
@@ -138,10 +130,15 @@ class SecurityOperationsTests(unittest.TestCase):
 
     def test_reschedule_other_client_appointment_rejected(self):
         """Cliente A no puede reprogramar turno de Cliente B."""
-        appointment_id_a, token_a = self._create_appointment("Juan Pérez", "+5491112345678", "token_a")
-        appointment_id_b, token_b = self._create_appointment("María López", "+5491112345679", "token_b", appointment_time="11:00")
+        appointment_id_a, token_a = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_a"
+        )
+        appointment_id_b, token_b = self._create_appointment(
+            "María López", "+5491112345679", "token_b", appointment_time="11:00"
+        )
 
         from services import appointments
+
         result = appointments.reschedule_appointment(
             appointment_id=appointment_id_a,
             new_date=self.future_date,
@@ -156,9 +153,12 @@ class SecurityOperationsTests(unittest.TestCase):
 
     def test_reschedule_with_wrong_token_rejected(self):
         """Reprogramación con token incorrecto es rechazada."""
-        appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token_valido")
+        appointment_id, token = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_valido"
+        )
 
         from services import appointments
+
         result = appointments.reschedule_appointment(
             appointment_id=appointment_id,
             new_date="2025-01-15",
@@ -173,9 +173,12 @@ class SecurityOperationsTests(unittest.TestCase):
 
     def test_reschedule_without_token_rejected(self):
         """Reprogramación sin token es rechazada."""
-        appointment_id, token = self._create_appointment("Juan Pérez", "+5491112345678", "token_valido")
+        appointment_id, token = self._create_appointment(
+            "Juan Pérez", "+5491112345678", "token_valido"
+        )
 
         from services import appointments
+
         result = appointments.reschedule_appointment(
             appointment_id=appointment_id,
             new_date="2025-01-15",
@@ -190,11 +193,9 @@ class SecurityOperationsTests(unittest.TestCase):
 
     def test_cross_tenant_cancel_rejected(self):
         """Cliente de negocio A no puede cancelar turno de negocio B."""
-        conn = __import__('database.database', fromlist=['get_connection']).get_connection()
+        conn = __import__("database.database", fromlist=["get_connection"]).get_connection()
         try:
-            conn.execute(
-                "INSERT INTO businesses (id, name, slug) VALUES (2, 'Otro', 'otro')"
-            )
+            conn.execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Otro', 'otro')")
             conn.execute(
                 "INSERT OR REPLACE INTO business_settings (business_id, business_name, timezone) VALUES (2, 'Otro', 'UTC')"
             )
@@ -208,11 +209,22 @@ class SecurityOperationsTests(unittest.TestCase):
         finally:
             conn.close()
 
-        conn = __import__('database.database', fromlist=['get_connection']).get_connection()
+        conn = __import__("database.database", fromlist=["get_connection"]).get_connection()
         try:
             conn.execute(
                 "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, business_id, status, management_token_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ("Cliente B", "+5491199999999", "Corte", "2025-01-15", "10:00", "10:30", 30, 2, "confirmed", "hash_b")
+                (
+                    "Cliente B",
+                    "+5491199999999",
+                    "Corte",
+                    "2025-01-15",
+                    "10:00",
+                    "10:30",
+                    30,
+                    2,
+                    "confirmed",
+                    "hash_b",
+                ),
             )
             conn.commit()
             appt_b_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -220,6 +232,7 @@ class SecurityOperationsTests(unittest.TestCase):
             conn.close()
 
         from services import appointments
+
         result = appointments.cancel_appointment(
             appointment_id=appt_b_id,
             phone="+5491199999999",

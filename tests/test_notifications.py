@@ -2,15 +2,13 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from email import policy
-from email.parser import BytesParser
-
 import database.database as database
-from services import appointments
-from services import notifications
+from services import appointments, notifications
 from services.notifications import send_confirmation_email
 
 
@@ -72,16 +70,14 @@ class BaseNotificationTest(unittest.TestCase):
 class TestEmailCapture(BaseNotificationTest):
     def test_create_appointment_persiste_email(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.valid_date, "09:00", 1, email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         self.assertTrue(result["success"])
         self.assertEqual(result["customer_email"], "ana@example.com")
 
         connection = database.get_connection()
         row = connection.execute(
-            "SELECT customer_email FROM appointments WHERE id = ?",
-            (result["appointment_id"],),
+            "SELECT customer_email FROM appointments WHERE id = ?", (result["appointment_id"],)
         ).fetchone()
         connection.close()
         self.assertEqual(row["customer_email"], "ana@example.com")
@@ -95,8 +91,7 @@ class TestEmailCapture(BaseNotificationTest):
 
     def test_create_appointment_email_invalido(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.valid_date, "09:00", 1, email="no-es-un-email",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="no-es-un-email"
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "invalid_email")
@@ -105,8 +100,7 @@ class TestEmailCapture(BaseNotificationTest):
 class TestConfirmationEmail(BaseNotificationTest):
     def _appointment(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.valid_date, "09:00", 1, email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         return result, {
             "id": result["appointment_id"],
@@ -140,17 +134,26 @@ class TestConfirmationEmail(BaseNotificationTest):
     def test_envia_y_es_idempotente(self):
         result, apt = self._appointment()
         fake = FakeSMTP()
-        env = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587",
-               "EMAIL_FROM": "no-reply@test.com"}
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        env = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587", "EMAIL_FROM": "no-reply@test.com"}
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             sent1, reason1 = send_confirmation_email(
-                1, apt, management_token="tokensecreto", slug="elcorte",
-                public_base_url="https://example.com", force=True,
+                1,
+                apt,
+                management_token="tokensecreto",
+                slug="elcorte",
+                public_base_url="https://example.com",
+                force=True,
             )
             sent2, reason2 = send_confirmation_email(
-                1, apt, management_token="tokensecreto", slug="elcorte",
-                public_base_url="https://example.com", force=True,
+                1,
+                apt,
+                management_token="tokensecreto",
+                slug="elcorte",
+                public_base_url="https://example.com",
+                force=True,
             )
 
         self.assertTrue(sent1)
@@ -164,14 +167,18 @@ class TestConfirmationEmail(BaseNotificationTest):
         to_addr = fake.messages[0][1]
         msg_text = _decode_mime_text(fake.messages[0][2])
         self.assertEqual(to_addr, ["ana@example.com"])
-        self.assertIn("/b/elcorte/turno/tokensecreto?id={}".format(result["appointment_id"]), msg_text)
+        self.assertIn(
+            "/b/elcorte/turno/tokensecreto?id={}".format(result["appointment_id"]), msg_text
+        )
 
     def test_respeto_notifications_enabled(self):
         result, apt = self._appointment()
         fake = FakeSMTP()
         env = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587"}
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             sent, reason = send_confirmation_email(1, apt, force=False)
 
         self.assertFalse(sent)
@@ -182,8 +189,7 @@ class TestConfirmationEmail(BaseNotificationTest):
 class TestAppointmentByToken(BaseNotificationTest):
     def test_devuelve_turno_con_token_correcto(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.valid_date, "09:00", 1, email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         apt = appointments.get_appointment_by_token(
             result["appointment_id"], 1, result["management_token"]
@@ -193,12 +199,9 @@ class TestAppointmentByToken(BaseNotificationTest):
 
     def test_token_incorrecto_devuelve_none(self):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.valid_date, "10:00", 1, email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "10:00", 1, email="ana@example.com"
         )
-        apt = appointments.get_appointment_by_token(
-            result["appointment_id"], 1, "token-invalido"
-        )
+        apt = appointments.get_appointment_by_token(result["appointment_id"], 1, "token-invalido")
         self.assertIsNone(apt)
 
 

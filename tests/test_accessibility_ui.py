@@ -20,7 +20,6 @@ from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
-from database.database import get_connection
 from services import appointments
 
 
@@ -32,7 +31,6 @@ def _next_open_day():
 
 
 class AccessibilityUITest(unittest.TestCase):
-
     def setUp(self):
         application.rate_limit_state.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -47,13 +45,8 @@ class AccessibilityUITest(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
@@ -86,11 +79,7 @@ class AccessibilityUITest(unittest.TestCase):
         appt_id, date_ = self._create_turno()
         page = self.client.post(
             f"/admin/turnos/{appt_id}/reprogramar",
-            data={
-                "csrf_token": self.csrf_token,
-                "new_date": "",
-                "new_time": "",
-            },
+            data={"csrf_token": self.csrf_token, "new_date": "", "new_time": ""},
             follow_redirects=True,
         )
         self.assertIn('role="alert"', page.text)
@@ -100,21 +89,11 @@ class AccessibilityUITest(unittest.TestCase):
     def test_admin_action_controls_have_aria_labels(self):
         appt_id, date_ = self._create_turno()
         page = self.client.get("/admin")
-        self.assertIn(
-            f'aria-label="Nuevo estado para Carlos L', page.text
-        )
-        self.assertIn(
-            f'aria-label="Aplicar nuevo estado a Carlos L', page.text
-        )
-        self.assertIn(
-            f'aria-label="Fecha de reprogramación para Carlos L', page.text
-        )
-        self.assertIn(
-            f'aria-label="Hora de reprogramación para Carlos L', page.text
-        )
-        self.assertIn(
-            f'aria-label="Reprogramar turno de Carlos L', page.text
-        )
+        self.assertIn('aria-label="Nuevo estado para Carlos L', page.text)
+        self.assertIn('aria-label="Aplicar nuevo estado a Carlos L', page.text)
+        self.assertIn('aria-label="Fecha de reprogramación para Carlos L', page.text)
+        self.assertIn('aria-label="Hora de reprogramación para Carlos L', page.text)
+        self.assertIn('aria-label="Reprogramar turno de Carlos L', page.text)
 
     # --- aria-hidden on decorative emojis ---
 
@@ -172,10 +151,7 @@ class AccessibilityUITest(unittest.TestCase):
     # --- Login error role ---
 
     def test_login_error_has_role_alert(self):
-        page = self.client.post(
-            "/login",
-            data={"password": "mala", "csrf_token": self.csrf_token},
-        )
+        page = self.client.post("/login", data={"password": "mala", "csrf_token": self.csrf_token})
         self.assertIn('role="alert"', page.text)
 
     # --- Login contrast ---

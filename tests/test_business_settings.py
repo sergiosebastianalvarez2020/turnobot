@@ -28,10 +28,7 @@ class TestBusinessSettings(unittest.TestCase):
 
     def test_timezone_valido(self):
         connection = database.get_connection()
-        connection.execute(
-            "UPDATE business_settings SET timezone = ? WHERE id = 1",
-            ("UTC",),
-        )
+        connection.execute("UPDATE business_settings SET timezone = ? WHERE id = 1", ("UTC",))
         connection.commit()
         connection.close()
 
@@ -40,8 +37,7 @@ class TestBusinessSettings(unittest.TestCase):
     def test_timezone_invalido_usa_fallback(self):
         connection = database.get_connection()
         connection.execute(
-            "UPDATE business_settings SET timezone = ? WHERE id = 1",
-            ("Zona/NoExiste",),
+            "UPDATE business_settings SET timezone = ? WHERE id = 1", ("Zona/NoExiste",)
         )
         connection.commit()
         connection.close()

@@ -17,7 +17,6 @@ import contextlib
 import http.server
 import io
 import os
-import socket
 import sys
 import threading
 import time
@@ -162,8 +161,7 @@ class TestCheckHealthFunctions(unittest.TestCase):
     def test_ok_returns_ok(self):
         server, url = start_sequential([(200, b'{"status":"ok"}')])
         try:
-            ok, intentos = ch.check_health(url=url, attempts=1,
-                                           timeout=5, delay=0)
+            ok, intentos = ch.check_health(url=url, attempts=1, timeout=5, delay=0)
             self.assertTrue(ok)
             self.assertEqual(intentos, [200])
         finally:
@@ -173,8 +171,7 @@ class TestCheckHealthFunctions(unittest.TestCase):
     def test_failure_returns_failure(self):
         server, url = start_sequential([(503, b"x"), (503, b"x")])
         try:
-            ok, intentos = ch.check_health(url=url, attempts=2,
-                                           timeout=5, delay=0)
+            ok, intentos = ch.check_health(url=url, attempts=2, timeout=5, delay=0)
             self.assertFalse(ok)
             self.assertEqual(intentos, [503, 503])
         finally:

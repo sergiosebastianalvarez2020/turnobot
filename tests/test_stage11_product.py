@@ -1,14 +1,18 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from test_loyalty import LoyaltyBase
+
 from services import product
 
 
 class ProductStage11Tests(LoyaltyBase):
     def test_summary_is_scoped_and_reuses_existing_data(self):
-        self._execute("INSERT INTO appointments (customer_name,phone,service,appointment_date,appointment_time,appointment_end,duration,status,business_id) VALUES ('A','3815000001','Corte','2020-01-01','10:00','11:00',60,'completed',1)")
+        self._execute(
+            "INSERT INTO appointments (customer_name,phone,service,appointment_date,appointment_time,appointment_end,duration,status,business_id) VALUES ('A','3815000001','Corte','2020-01-01','10:00','11:00',60,'completed',1)"
+        )
         summary = product.get_product_summary(1)
         self.assertEqual(summary["completed"], 1)
         self.assertIn("recurring", summary)

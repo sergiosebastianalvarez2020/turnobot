@@ -13,4 +13,4 @@ def _hash_session_token(token):
 
 
 def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")

@@ -3,12 +3,12 @@ Registro de rutas públicas - landing page, wizard de reserva y contexto de nego
 """
 
 from routes.public import (
-    index,
     business_index,
     business_reservar_wizard,
-    business_reservar_wizard_fecha,
-    business_reservar_wizard_datos,
     business_reservar_wizard_confirmar,
+    business_reservar_wizard_datos,
+    business_reservar_wizard_fecha,
+    index,
 )
 
 
@@ -19,17 +19,9 @@ def register(app):
         app: Instancia de Flask application.
     """
     # Public routes - landing page y contexto de negocio
+    app.add_url_rule("/", endpoint="index", view_func=index, methods=["GET"])
     app.add_url_rule(
-        "/",
-        endpoint="index",
-        view_func=index,
-        methods=["GET"],
-    )
-    app.add_url_rule(
-        "/b/<slug>",
-        endpoint="business_index",
-        view_func=business_index,
-        methods=["GET"],
+        "/b/<slug>", endpoint="business_index", view_func=business_index, methods=["GET"]
     )
     # Wizard de reserva visual
     app.add_url_rule(

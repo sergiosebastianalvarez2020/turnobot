@@ -51,7 +51,7 @@ _STRIPPED_ENV_KEYS = (
     "LOG_DIR",
 )
 
-_STANDALONE_PROBE = r'''
+_STANDALONE_PROBE = r"""
 import json
 import sys
 
@@ -140,7 +140,7 @@ payload["security_headers"] = {
 }
 
 print(MARKER + json.dumps(payload))
-'''
+"""
 
 
 class StandaloneCreateAppTests(unittest.TestCase):
@@ -184,9 +184,15 @@ class StandaloneCreateAppTests(unittest.TestCase):
         env["LOG_DIR"] = self._tmp.name
 
         script = (
-            "PROJECT_ROOT = " + repr(str(_PROJECT_ROOT)) + "\n"
-            + "EXPECTED_RULES = " + repr(self._expected_rules) + "\n"
-            + "MARKER = " + repr(_PAYLOAD_MARKER) + "\n"
+            "PROJECT_ROOT = "
+            + repr(str(_PROJECT_ROOT))
+            + "\n"
+            + "EXPECTED_RULES = "
+            + repr(self._expected_rules)
+            + "\n"
+            + "MARKER = "
+            + repr(_PAYLOAD_MARKER)
+            + "\n"
             + _STANDALONE_PROBE
         )
 
@@ -219,10 +225,9 @@ class StandaloneCreateAppTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(
-            payload_line,
-            msg=f"No se encontró el payload standalone.\nSTDOUT:\n{result.stdout}",
+            payload_line, msg=f"No se encontró el payload standalone.\nSTDOUT:\n{result.stdout}"
         )
-        return json.loads(payload_line[len(_PAYLOAD_MARKER):])
+        return json.loads(payload_line[len(_PAYLOAD_MARKER) :])
 
     # --- Assertions -------------------------------------------------------
     def test_create_app_runs_standalone_without_app_facade(self):
@@ -262,15 +267,10 @@ class StandaloneCreateAppTests(unittest.TestCase):
     def test_standalone_preserves_hooks_csrf_and_security_headers(self):
         payload = self._run_probe()
 
+        self.assertEqual(payload["before_request"], self._expectations["before_request"])
+        self.assertEqual(payload["after_request"], self._expectations["after_request"])
         self.assertEqual(
-            payload["before_request"], self._expectations["before_request"]
-        )
-        self.assertEqual(
-            payload["after_request"], self._expectations["after_request"]
-        )
-        self.assertEqual(
-            payload["before_request"],
-            ["load_current_business", "_reject_oversized_requests"],
+            payload["before_request"], ["load_current_business", "_reject_oversized_requests"]
         )
         self.assertEqual(payload["after_request"], ["add_security_headers"])
         self.assertIn("inject_admin_prefix", payload["context_processors"])
@@ -285,15 +285,9 @@ class StandaloneCreateAppTests(unittest.TestCase):
         headers = payload["security_headers"]
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(headers["X-Frame-Options"], "SAMEORIGIN")
-        self.assertEqual(
-            headers["Referrer-Policy"], "strict-origin-when-cross-origin"
-        )
-        self.assertEqual(
-            headers["Permissions-Policy"],
-            "camera=(), microphone=(), geolocation=()",
-        )
+        self.assertEqual(headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+        self.assertEqual(headers["Permissions-Policy"], "camera=(), microphone=(), geolocation=()")
 
 
 if __name__ == "__main__":
     unittest.main()
-

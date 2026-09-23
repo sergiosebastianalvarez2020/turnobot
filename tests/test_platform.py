@@ -85,9 +85,7 @@ class PlatformBase(unittest.TestCase):
         ), csrf
 
     def _make_tenant_user(self, email, password, business_id=1, role="owner"):
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         database.create_membership_scoped(user_id, business_id, role)
         return user_id
 
@@ -95,13 +93,11 @@ class PlatformBase(unittest.TestCase):
         page = self.client.get(f"/b/{slug}/login")
         csrf = self._csrf_from(page)
         return self.client.post(
-            f"/b/{slug}/login",
-            data={"email": email, "password": password, "csrf_token": csrf},
+            f"/b/{slug}/login", data={"email": email, "password": password, "csrf_token": csrf}
         )
 
 
 class TestSuperadminBootstrapYLogin(PlatformBase):
-
     def test_create_superadmin_por_servicio_hash_no_plano(self):
         result = self._create_superadmin()
         self.assertTrue(result["success"])
@@ -124,8 +120,7 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "email_exists")
         rows = self._query(
-            "SELECT COUNT(*) n FROM platform_users WHERE email = ?",
-            (self.SUPERADMIN_EMAIL,),
+            "SELECT COUNT(*) n FROM platform_users WHERE email = ?", (self.SUPERADMIN_EMAIL,)
         )
         self.assertEqual(rows[0]["n"], 1)
 
@@ -146,10 +141,7 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
         self._create_superadmin()
         response = self.client.post(
             "/superadmin/login",
-            data={
-                "email": self.SUPERADMIN_EMAIL,
-                "password": self.SUPERADMIN_PASSWORD,
-            },
+            data={"email": self.SUPERADMIN_EMAIL, "password": self.SUPERADMIN_PASSWORD},
         )
         self.assertEqual(response.status_code, 400)
 
@@ -163,23 +155,18 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
     def test_misma_direccion_en_ambas_identidades_es_separada(self):
         # El email puede existir en platform_users Y en users sin colisionar.
         self._create_superadmin()
-        user_id = self._make_tenant_user(
-            self.SUPERADMIN_EMAIL, "otra-password-segura", 1, "owner"
-        )
+        user_id = self._make_tenant_user(self.SUPERADMIN_EMAIL, "otra-password-segura", 1, "owner")
         self.assertIsNotNone(user_id)
         sa = self._query(
-            "SELECT COUNT(*) n FROM platform_users WHERE email = ?",
-            (self.SUPERADMIN_EMAIL,),
+            "SELECT COUNT(*) n FROM platform_users WHERE email = ?", (self.SUPERADMIN_EMAIL,)
         )[0]["n"]
-        bu = self._query(
-            "SELECT COUNT(*) n FROM users WHERE email = ?",
-            (self.SUPERADMIN_EMAIL,),
-        )[0]["n"]
+        bu = self._query("SELECT COUNT(*) n FROM users WHERE email = ?", (self.SUPERADMIN_EMAIL,))[
+            0
+        ]["n"]
         self.assertEqual((sa, bu), (1, 1))
 
 
 class TestAccesoYPanel(PlatformBase):
-
     def test_panel_anonimo_redirige_a_login(self):
         response = self.client.get("/superadmin")
         self.assertEqual(response.status_code, 302)
@@ -223,7 +210,6 @@ class TestAccesoYPanel(PlatformBase):
 
 
 class TestSesionYLogoutSelectivo(PlatformBase):
-
     def test_logout_superadmin_revoca_sesion_plataforma(self):
         self._create_superadmin()
         self._login_superadmin()
@@ -235,10 +221,7 @@ class TestSesionYLogoutSelectivo(PlatformBase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/superadmin/login", response.headers.get("Location", ""))
         self.assertEqual(
-            self._query(
-                "SELECT COUNT(*) n FROM platform_sessions WHERE revoked = 1"
-            )[0]["n"],
-            1,
+            self._query("SELECT COUNT(*) n FROM platform_sessions WHERE revoked = 1")[0]["n"], 1
         )
         # La sesión HTTP quedó sin credenciales de plataforma.
         follow = self.client.get("/superadmin", follow_redirects=True)
@@ -273,15 +256,11 @@ class TestSesionYLogoutSelectivo(PlatformBase):
 
 
 class TestAuditoria(PlatformBase):
-
     def test_acciones_quedan_en_audit_log(self):
         self._create_superadmin()
         self.client.get("/superadmin/login")
         self._login_superadmin()
-        actions = {
-            r["action"]
-            for r in self._query("SELECT action FROM audit_log ORDER BY id")
-        }
+        actions = {r["action"] for r in self._query("SELECT action FROM audit_log ORDER BY id")}
         self.assertTrue({"superadmin_created", "superadmin_login"} <= actions)
 
     def test_audit_log_no_guarda_secretos(self):

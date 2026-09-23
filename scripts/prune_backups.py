@@ -83,11 +83,7 @@ def list_entries(backups_dir):
 
 
 def plan(
-    backups_dir,
-    now=None,
-    daily_keep=DAILY_KEEP,
-    weekly_keep=WEEKLY_KEEP,
-    monthly_keep=MONTHLY_KEEP,
+    backups_dir, now=None, daily_keep=DAILY_KEEP, weekly_keep=WEEKLY_KEEP, monthly_keep=MONTHLY_KEEP
 ):
     """Calcula el plan (keep, delete, preserved) sin tocar el disco."""
     backups_dir = Path(backups_dir)
@@ -164,9 +160,7 @@ def main(argv=None):
         description="Retención de backups automáticos (dry-run por defecto)."
     )
     parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Elimina realmente los archivos marcados como DELETE.",
+        "--apply", action="store_true", help="Elimina realmente los archivos marcados como DELETE."
     )
     parser.add_argument(
         "--dir",
@@ -192,8 +186,7 @@ def main(argv=None):
 
     if len(plan_result["delete"]) > MAX_DELETIONS:
         print(
-            "ABORTADO: el plan de borrado excede el máximo de seguridad "
-            f"({MAX_DELETIONS}).",
+            f"ABORTADO: el plan de borrado excede el máximo de seguridad ({MAX_DELETIONS}).",
             file=sys.stderr,
         )
         return 3

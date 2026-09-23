@@ -12,8 +12,8 @@ from pathlib import Path
 import app as application
 import database.database as database
 from database.database import (
-    get_connection,
     create_resource_scoped,
+    get_connection,
     update_business_settings_scoped,
 )
 
@@ -71,8 +71,13 @@ def main():
             conn.close()
 
         update_business_settings_scoped(
-            2, "Padel Club", "Pádel", "PC", "Club de pádel",
-            "America/Argentina/Buenos_Aires", notifications_enabled=0
+            2,
+            "Padel Club",
+            "Pádel",
+            "PC",
+            "Club de pádel",
+            "America/Argentina/Buenos_Aires",
+            notifications_enabled=0,
         )
 
         cancha1 = create_resource_scoped(2, "Cancha 1")
@@ -81,7 +86,9 @@ def main():
         cancha4 = create_resource_scoped(2, "Cancha 4")
 
         print(f"Fecha de prueba: {date}")
-        print(f"Recursos creados: Cancha 1={cancha1}, Cancha 2={cancha2}, Cancha 3={cancha3}, Cancha 4={cancha4}")
+        print(
+            f"Recursos creados: Cancha 1={cancha1}, Cancha 2={cancha2}, Cancha 3={cancha3}, Cancha 4={cancha4}"
+        )
         print()
 
         # ------------------------------------------------------------------
@@ -89,7 +96,6 @@ def main():
         # ------------------------------------------------------------------
         ok = True
         obs = "4 canchas creadas correctamente"
-        recursos = [cancha1, cancha2, cancha3, cancha4]
         results.append(("1. Crear/configurar negocio con 4 recursos", ok, obs))
 
         # ------------------------------------------------------------------
@@ -98,8 +104,12 @@ def main():
         ok = True
         obs_parts = []
         disponibles_18 = []
-        for rid, nombre in [(cancha1, "Cancha 1"), (cancha2, "Cancha 2"),
-                            (cancha3, "Cancha 3"), (cancha4, "Cancha 4")]:
+        for rid, nombre in [
+            (cancha1, "Cancha 1"),
+            (cancha2, "Cancha 2"),
+            (cancha3, "Cancha 3"),
+            (cancha4, "Cancha 4"),
+        ]:
             resp = client.get(
                 f"/b/padel-club/api/disponibilidad/{date}"
                 f"?servicio=Partido%20P%C3%A1del&resource_id={rid}"
@@ -128,9 +138,7 @@ def main():
             "resource_id": cancha2,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json",
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         data = json.loads(resp.data)
         if resp.status_code == 201 and data.get("success") is True:
@@ -158,9 +166,7 @@ def main():
             "resource_id": cancha2,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json",
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         data = json.loads(resp.data)
         if resp.status_code == 400 and data.get("reason") == "occupied":
@@ -184,9 +190,7 @@ def main():
             "resource_id": cancha3,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json",
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         data = json.loads(resp.data)
         if resp.status_code == 201 and data.get("success") is True:
@@ -205,14 +209,13 @@ def main():
         # ------------------------------------------------------------------
         ok = True
         obs_parts = []
-        esperado = {
-            "Cancha 1": True,
-            "Cancha 2": False,
-            "Cancha 3": False,
-            "Cancha 4": True,
-        }
-        for rid, nombre in [(cancha1, "Cancha 1"), (cancha2, "Cancha 2"),
-                            (cancha3, "Cancha 3"), (cancha4, "Cancha 4")]:
+        esperado = {"Cancha 1": True, "Cancha 2": False, "Cancha 3": False, "Cancha 4": True}
+        for rid, nombre in [
+            (cancha1, "Cancha 1"),
+            (cancha2, "Cancha 2"),
+            (cancha3, "Cancha 3"),
+            (cancha4, "Cancha 4"),
+        ]:
             resp = client.get(
                 f"/b/padel-club/api/disponibilidad/{date}"
                 f"?servicio=Partido%20P%C3%A1del&resource_id={rid}"
@@ -241,9 +244,7 @@ def main():
             "hora": "10:00",
         }
         resp = client.post(
-            "/b/el-corte/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json",
+            "/b/el-corte/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         data = json.loads(resp.data)
         if resp.status_code == 201 and data.get("success") is True:
@@ -278,16 +279,16 @@ def main():
             "resource_id": cancha1,  # recurso de Padel, usado contra El Corte
         }
         resp = client.post(
-            "/b/el-corte/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json",
+            "/b/el-corte/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         data = json.loads(resp.data)
         if resp.status_code == 400:
             obs_parts.append("Reserva cross-tenant rechazada (OK)")
         else:
             ok = False
-            obs_parts.append(f"Reserva cross-tenant aceptada: status={resp.status_code} data={data}")
+            obs_parts.append(
+                f"Reserva cross-tenant aceptada: status={resp.status_code} data={data}"
+            )
 
         # 8c: No se modifican reservas del otro negocio
         resp = client.get(f"/b/el-corte/api/disponibilidad/{date}?servicio=Corte")
@@ -323,7 +324,9 @@ def main():
     print(f"Total: {passed}/{total} pruebas passed")
     print()
     print("Recursos creados: Cancha 1, Cancha 2, Cancha 3, Cancha 4 (business_id=2)")
-    print("Reservas realizadas: Cancha 2 a las 18:00, Cancha 3 a las 18:00, Corte a las 10:00 (El Corte)")
+    print(
+        "Reservas realizadas: Cancha 2 a las 18:00, Cancha 3 a las 18:00, Corte a las 10:00 (El Corte)"
+    )
     print("Conflictos correctamente rechazados: Re-reserva Cancha 2 a las 18:00 -> occupied")
     print("Disponibilidad correcta: Verificada por recurso post-reservas")
     print("Negocio sin recursos correcto: Reserva tradicional en El Corte funciona")

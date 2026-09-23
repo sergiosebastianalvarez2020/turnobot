@@ -71,10 +71,7 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         self.assertIsNot(new_app, application.app)
 
         # root_path apunta a la raíz del proyecto
-        self.assertEqual(
-            os.path.normcase(new_app.root_path),
-            os.path.normcase(str(_PROJECT_ROOT)),
-        )
+        self.assertEqual(os.path.normcase(new_app.root_path), os.path.normcase(str(_PROJECT_ROOT)))
 
         # templates/static configurados y presentes en el repo
         self.assertEqual(new_app.template_folder, "templates")
@@ -120,22 +117,17 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         new_app = create_app()
 
         before_request = [
-            getattr(func, "__name__", None)
-            for func in new_app.before_request_funcs.get(None, [])
+            getattr(func, "__name__", None) for func in new_app.before_request_funcs.get(None, [])
         ]
         after_request = [
-            getattr(func, "__name__", None)
-            for func in new_app.after_request_funcs.get(None, [])
+            getattr(func, "__name__", None) for func in new_app.after_request_funcs.get(None, [])
         ]
         context_processors = [
             getattr(func, "__name__", None)
             for func in new_app.template_context_processors.get(None, [])
         ]
 
-        self.assertEqual(
-            before_request,
-            ["load_current_business", "_reject_oversized_requests"],
-        )
+        self.assertEqual(before_request, ["load_current_business", "_reject_oversized_requests"])
         self.assertEqual(after_request, ["add_security_headers"])
         self.assertIn("inject_admin_prefix", context_processors)
         self.assertIn("inject_business_settings", context_processors)
@@ -149,13 +141,9 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
         self.assertEqual(response.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(response.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
         self.assertEqual(
-            response.headers.get("Referrer-Policy"),
-            "strict-origin-when-cross-origin",
-        )
-        self.assertEqual(
-            response.headers.get("Permissions-Policy"),
-            "camera=(), microphone=(), geolocation=()",
+            response.headers.get("Permissions-Policy"), "camera=(), microphone=(), geolocation=()"
         )
 
 
@@ -174,8 +162,7 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
         self.assertTrue(new_app.config["SESSION_COOKIE_SECURE"])
         self.assertEqual(new_app.config["MAX_CONTENT_LENGTH"], 512 * 1024)
         self.assertEqual(
-            new_app.config["PERMANENT_SESSION_LIFETIME"],
-            datetime.timedelta(seconds=86400),
+            new_app.config["PERMANENT_SESSION_LIFETIME"], datetime.timedelta(seconds=86400)
         )
         self.assertEqual(new_app.TRUSTED_PROXY_COUNT, 0)
         self.assertNotIsInstance(new_app.wsgi_app, ProxyFix)
@@ -196,11 +183,7 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
                 "ADMIN_PASSWORD presente en producción",
             ),
             (
-                {
-                    "FLASK_ENV": "production",
-                    "SECRET_KEY": "x-secret",
-                    "COOKIE_SECURE": "1",
-                },
+                {"FLASK_ENV": "production", "SECRET_KEY": "x-secret", "COOKIE_SECURE": "1"},
                 "sin ADMIN_PASSWORD_HASH",
             ),
             (

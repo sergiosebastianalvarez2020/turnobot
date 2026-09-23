@@ -17,7 +17,7 @@ import smtplib
 import socket
 import ssl
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.message import EmailMessage
 
 
@@ -41,7 +41,7 @@ def _build_message(unit):
     message.set_content(
         f"La unidad systemd '{unit}' terminó con fallo.\n\n"
         f"Host: {socket.gethostname()}\n"
-        f"Fecha (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"Fecha (UTC): {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         f"Revisar el journal:\n"
         f"    sudo journalctl -u {unit} -n 100 --no-pager\n"
     )
@@ -50,10 +50,7 @@ def _build_message(unit):
 
 def send_failure_notice(unit):
     if not _smtp_configured():
-        print(
-            "SMTP no configurado (falta SMTP_HOST); no se envía aviso.",
-            file=sys.stderr,
-        )
+        print("SMTP no configurado (falta SMTP_HOST); no se envía aviso.", file=sys.stderr)
         return False
 
     recipient = _recipient()
@@ -65,7 +62,6 @@ def send_failure_notice(unit):
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASSWORD")
-    sender = os.environ.get("EMAIL_FROM", "")
 
     message = _build_message(unit)
 

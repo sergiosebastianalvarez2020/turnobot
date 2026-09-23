@@ -21,7 +21,6 @@ from services import platform as platform_service
 
 
 class ProvisionBase(unittest.TestCase):
-
     SUPERADMIN_EMAIL = "admin@tu-dominio.com"
     SUPERADMIN_PASSWORD = "s3cr3t-strong-pass"
     OWNER_EMAIL = "dueno@aurora.com"
@@ -69,18 +68,12 @@ class ProvisionBase(unittest.TestCase):
             },
         )
 
-    def _provision(self, name="Cafetería Aurora", slug="cafetera-aurora",
-                   owner_email=OWNER_EMAIL):
+    def _provision(self, name="Cafetería Aurora", slug="cafetera-aurora", owner_email=OWNER_EMAIL):
         page = self.client.get("/superadmin")
         csrf = self._csrf_from(page)
         return self.client.post(
             "/superadmin/negocios/crear",
-            data={
-                "nombre": name,
-                "slug": slug,
-                "owner_email": owner_email,
-                "csrf_token": csrf,
-            },
+            data={"nombre": name, "slug": slug, "owner_email": owner_email, "csrf_token": csrf},
         ), csrf
 
     def _business_id(self, slug="cafetera-aurora"):
@@ -92,8 +85,7 @@ class ProvisionBase(unittest.TestCase):
         page = self.client.get(f"/superadmin/negocios/{business_id}")
         csrf = self._csrf_from(page)
         return self.client.post(
-            f"/superadmin/negocios/{business_id}/aprobar",
-            data={"csrf_token": csrf},
+            f"/superadmin/negocios/{business_id}/aprobar", data={"csrf_token": csrf}
         )
 
     def _invitation_token(self, slug="cafetera-aurora", owner_email=OWNER_EMAIL):
@@ -110,7 +102,6 @@ class ProvisionBase(unittest.TestCase):
     def _provision_and_get_token(self, **kwargs):
         """Crea el negocio, lo APRUEBA y extrae el token definitivo del 302
         (el plaintext NO se persiste en DB, solo su hash)."""
-        from urllib.parse import unquote
 
         self._provision(**kwargs)
         result = platform_service.approve_business(self._business_id())
@@ -136,13 +127,11 @@ class ProvisionBase(unittest.TestCase):
         page = self.client.get(f"/b/{slug}/login")
         csrf = self._csrf_from(page)
         return self.client.post(
-            f"/b/{slug}/login",
-            data={"email": email, "password": password, "csrf_token": csrf},
+            f"/b/{slug}/login", data={"email": email, "password": password, "csrf_token": csrf}
         )
 
 
 class TestAltaDeNegocioConInvitacion(ProvisionBase):
-
     def test_crear_negocio_con_owner_pendiente(self):
         self._login_superadmin()
         response, _ = self._provision()
@@ -173,7 +162,7 @@ class TestAltaDeNegocioConInvitacion(ProvisionBase):
 
     def test_owner_pendiente_no_puede_iniciar_sesion(self):
         self._login_superadmin()
-        token = self._provision_and_get_token()
+        self._provision_and_get_token()
         # Aprobado pero el owner aún NO aceptó la invitación: login rechazado.
         response = self._login_owner("cafetera-aurora", self.OWNER_EMAIL, "cualquier-cosa")
         self.assertNotEqual(response.status_code, 302)
@@ -244,7 +233,6 @@ class TestAltaDeNegocioConInvitacion(ProvisionBase):
 
 
 class TestFlujoDeInvitacion(ProvisionBase):
-
     def test_pagina_invitacion_carga_con_email(self):
         self._login_superadmin()
         token = self._provision_and_get_token()
@@ -265,9 +253,12 @@ class TestFlujoDeInvitacion(ProvisionBase):
         token = self._provision_and_get_token()
         response = self._accept("cafetera-aurora", token, "corta")
         self.assertIn("al menos 12 caracteres", response.text)
-        self.assertEqual(self._query(
-            "SELECT active FROM users WHERE email = ?", (self.OWNER_EMAIL,)
-        )[0]["active"], 0)
+        self.assertEqual(
+            self._query("SELECT active FROM users WHERE email = ?", (self.OWNER_EMAIL,))[0][
+                "active"
+            ],
+            0,
+        )
 
     def test_contrasenas_distintas_rechazadas(self):
         self._login_superadmin()
@@ -284,9 +275,7 @@ class TestFlujoDeInvitacion(ProvisionBase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/b/cafetera-aurora/login", response.headers["Location"])
 
-        users = self._query(
-            "SELECT active FROM users WHERE email = ?", (self.OWNER_EMAIL,)
-        )
+        users = self._query("SELECT active FROM users WHERE email = ?", (self.OWNER_EMAIL,))
         self.assertEqual(users[0]["active"], 1)
         invitations = self._query(
             """SELECT used_at FROM invitations i
@@ -314,9 +303,7 @@ class TestFlujoDeInvitacion(ProvisionBase):
 
         page = self.client.get("/superadmin/negocios/2")
         csrf = self._csrf_from(page)
-        response = self.client.post(
-            "/superadmin/negocios/2/reinviar", data={"csrf_token": csrf}
-        )
+        response = self.client.post("/superadmin/negocios/2/reinviar", data={"csrf_token": csrf})
         self.assertEqual(response.status_code, 302)
         self.assertIn("/superadmin/negocios/2", response.headers["Location"])
 
@@ -329,7 +316,6 @@ class TestFlujoDeInvitacion(ProvisionBase):
 
 
 class TestSuspensionDeNegocios(ProvisionBase):
-
     def test_suspender_quita_el_sitio_publico(self):
         self._login_superadmin()
         token = self._provision_and_get_token()
@@ -339,16 +325,17 @@ class TestSuspensionDeNegocios(ProvisionBase):
 
         panel = self.client.get("/superadmin")
         csrf = self._csrf_from(panel)
-        response = self.client.post(
-            "/superadmin/negocios/2/desactivar", data={"csrf_token": csrf}
-        )
+        response = self.client.post("/superadmin/negocios/2/desactivar", data={"csrf_token": csrf})
         self.assertEqual(response.status_code, 302)
 
         page = self.client.get("/b/cafetera-aurora")
         self.assertEqual(page.status_code, 404)
-        self.assertEqual(self._query(
-            "SELECT active FROM businesses WHERE slug = 'cafetera-aurora'"
-        )[0]["active"], 0)
+        self.assertEqual(
+            self._query("SELECT active FROM businesses WHERE slug = 'cafetera-aurora'")[0][
+                "active"
+            ],
+            0,
+        )
 
     def test_reactivar_restaura_el_sitio(self):
         self._login_superadmin()
@@ -360,13 +347,10 @@ class TestSuspensionDeNegocios(ProvisionBase):
         self.client.get("/b/cafetera-aurora")
         page = self.client.get("/b/cafetera-aurora")
         self.assertEqual(page.status_code, 200)
-        self.assertEqual(self._query(
-            "SELECT active FROM businesses WHERE id = 2"
-        )[0]["active"], 1)
+        self.assertEqual(self._query("SELECT active FROM businesses WHERE id = 2")[0]["active"], 1)
 
 
 class TestDetalleYAuditoriaPlataforma(ProvisionBase):
-
     def test_detalle_muestra_owner_miembros_e_invitaciones(self):
         self._login_superadmin()
         self._provision_and_get_token()

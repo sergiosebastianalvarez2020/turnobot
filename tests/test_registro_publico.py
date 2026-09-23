@@ -15,12 +15,15 @@ from unittest import mock
 import app as application
 import database.database as database
 from database.database import get_connection
-from services import platform as platform_service
 from services import notifications
+from services import platform as platform_service
 
-
-SMTP_ENV = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587",
-            "EMAIL_FROM": "no-reply@test.com", "SMTP_USER": "user@test.com"}
+SMTP_ENV = {
+    "SMTP_HOST": "smtp.test",
+    "SMTP_PORT": "587",
+    "EMAIL_FROM": "no-reply@test.com",
+    "SMTP_USER": "user@test.com",
+}
 
 
 class FakeSMTP:
@@ -47,7 +50,6 @@ class FakeSMTP:
 
 
 class RegistroPublicoBase(unittest.TestCase):
-
     OWNER_EMAIL = "dueno@test-registro.com"
 
     def setUp(self):
@@ -80,23 +82,19 @@ class RegistroPublicoBase(unittest.TestCase):
         page = self.client.get("/registro")
         return page
 
-    def _post_registro(self, business_name="Mi Negocio", slug=None,
-                       owner_email=OWNER_EMAIL, csrf=None):
+    def _post_registro(
+        self, business_name="Mi Negocio", slug=None, owner_email=OWNER_EMAIL, csrf=None
+    ):
         if csrf is None:
             page = self._get_registro_form()
             csrf = self._csrf_from(page)
-        data = {
-            "business_name": business_name,
-            "owner_email": owner_email,
-            "csrf_token": csrf,
-        }
+        data = {"business_name": business_name, "owner_email": owner_email, "csrf_token": csrf}
         if slug is not None:
             data["slug"] = slug
         return self.client.post("/registro", data=data)
 
 
 class TestRegistroPublico(RegistroPublicoBase):
-
     def test_get_registro_devuelve_200(self):
         page = self._get_registro_form()
         self.assertEqual(page.status_code, 200)
@@ -108,27 +106,27 @@ class TestRegistroPublico(RegistroPublicoBase):
         self.assertIn("Solicitud recibida", page.text)
 
     def test_registro_exitoso_crea_negocio_pending(self):
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()),
+        ):
             response = self._post_registro(business_name="Cafe Luna")
         self.assertEqual(response.status_code, 302)
         self.assertIn("/registro?sent=1", response.headers["Location"])
 
-        rows = self._query(
-            "SELECT active, pending, slug FROM businesses WHERE slug = 'cafe-luna'"
-        )
+        rows = self._query("SELECT active, pending, slug FROM businesses WHERE slug = 'cafe-luna'")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["active"], 0)
         self.assertEqual(rows[0]["pending"], 1)
 
     def test_registro_exitoso_envia_email_al_owner(self):
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
-            self._post_registro(business_name="Café Luna",
-                                owner_email="dueno@cafe-luna.com")
-        owner_emails = [msg for _from, to, msg in fake.messages
-                        if "dueno@cafe-luna.com" in to]
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
+            self._post_registro(business_name="Café Luna", owner_email="dueno@cafe-luna.com")
+        owner_emails = [msg for _from, to, msg in fake.messages if "dueno@cafe-luna.com" in to]
         self.assertEqual(len(owner_emails), 1)
 
     def test_registro_exitoso_envia_email_al_superadmin(self):
@@ -136,27 +134,31 @@ class TestRegistroPublico(RegistroPublicoBase):
             "admin@test-registro.com", "s3cr3t-strong-pass-1", "admin@test-registro.com"
         )
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             self._post_registro(business_name="Café Luna")
-        sa_emails = [msg for _from, to, msg in fake.messages
-                     if "admin@test-registro.com" in to]
+        sa_emails = [msg for _from, to, msg in fake.messages if "admin@test-registro.com" in to]
         self.assertEqual(len(sa_emails), 1)
 
     def test_registro_requiere_csrf_valido(self):
-        response = self.client.post("/registro", data={
-            "business_name": "Test", "slug": "", "owner_email": "test@x.com",
-            "csrf_token": "invalid-token-12345",
-        })
+        response = self.client.post(
+            "/registro",
+            data={
+                "business_name": "Test",
+                "slug": "",
+                "owner_email": "test@x.com",
+                "csrf_token": "invalid-token-12345",
+            },
+        )
         self.assertEqual(response.status_code, 400)
 
     def test_rate_limiting_bloquea_despues_del_limite(self):
         for i in range(application.REGISTRO_REQUEST_LIMIT):
-            response = self._post_registro(business_name="Negocio",
-                                           owner_email=f"owner{i}@x.com")
+            response = self._post_registro(business_name="Negocio", owner_email=f"owner{i}@x.com")
             self.assertEqual(response.status_code, 302)
-        blocked = self._post_registro(business_name="Negocio",
-                                       owner_email="blocked@x.com")
+        blocked = self._post_registro(business_name="Negocio", owner_email="blocked@x.com")
         self.assertEqual(blocked.status_code, 302)
         self.assertIn("error", blocked.headers["Location"])
 
@@ -185,12 +187,18 @@ class TestRegistroPublico(RegistroPublicoBase):
         self.assertNotIn("SQL", location)
 
     def test_registro_reutiliza_business_id_de_provision(self):
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()), \
-             mock.patch.object(notifications, "send_apply_notice_to_superadmin",
-                               wraps=notifications.send_apply_notice_to_superadmin) as mock_notice:
-            response = self._post_registro(business_name="Test Registro",
-                                           owner_email="prop@test-registro.com")
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()),
+            mock.patch.object(
+                notifications,
+                "send_apply_notice_to_superadmin",
+                wraps=notifications.send_apply_notice_to_superadmin,
+            ) as mock_notice,
+        ):
+            response = self._post_registro(
+                business_name="Test Registro", owner_email="prop@test-registro.com"
+            )
 
         self.assertEqual(response.status_code, 302)
 
@@ -207,22 +215,26 @@ class TestRegistroPublico(RegistroPublicoBase):
         self.assertEqual(notice_business_id, db_business_id)
 
     def test_negocio_con_slug_duplicado_falla(self):
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()):
-            self._post_registro(business_name="Primero", slug="slug-test",
-                                owner_email="a@x.com")
-        response = self._post_registro(business_name="Segundo", slug="slug-test",
-                                       owner_email="b@x.com")
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()),
+        ):
+            self._post_registro(business_name="Primero", slug="slug-test", owner_email="a@x.com")
+        response = self._post_registro(
+            business_name="Segundo", slug="slug-test", owner_email="b@x.com"
+        )
         self.assertEqual(response.status_code, 302)
         self.assertIn("error", response.headers["Location"])
 
     def test_email_duplicado_no_genera_500(self):
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()):
-            self._post_registro(business_name="Primero",
-                                owner_email="duplicado@test-registro.com")
-        response = self._post_registro(business_name="Segundo",
-                                       owner_email="duplicado@test-registro.com")
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()),
+        ):
+            self._post_registro(business_name="Primero", owner_email="duplicado@test-registro.com")
+        response = self._post_registro(
+            business_name="Segundo", owner_email="duplicado@test-registro.com"
+        )
         self.assertEqual(response.status_code, 302)
         self.assertIn("error", response.headers["Location"])
 

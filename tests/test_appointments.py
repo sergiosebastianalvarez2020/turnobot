@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo
 import database.database as database
 from services import appointments
 
-FROZEN_NOW = datetime(2027, 1, 24, 10, 0)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
+FROZEN_NOW = datetime(
+    2027, 1, 24, 10, 0
+)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
 
 ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -186,11 +188,7 @@ class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
         appointment_id = result["appointment_id"]
         self.assertFalse(
             appointments.cancel_appointment(
-                appointment_id,
-                "3838439222",
-                1,
-                "token_incorrecto",
-                customer_name="Ana Pérez",
+                appointment_id, "3838439222", 1, "token_incorrecto", customer_name="Ana Pérez"
             )
         )
 
@@ -200,9 +198,7 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
         self._datetime_patch = mock.patch(f"{__name__}.datetime", _FrozenDatetime)
         self._datetime_patch.start()
         self.addCleanup(self._datetime_patch.stop)
-        self._service_datetime_patch = mock.patch(
-            "services.appointments.datetime", _FrozenDatetime
-        )
+        self._service_datetime_patch = mock.patch("services.appointments.datetime", _FrozenDatetime)
         self._service_datetime_patch.start()
         self.addCleanup(self._service_datetime_patch.stop)
         self.temp_dir = tempfile.TemporaryDirectory()

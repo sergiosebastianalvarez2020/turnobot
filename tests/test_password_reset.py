@@ -16,11 +16,9 @@ import app as application
 import database.database as database
 from database.database import get_connection
 from services import platform as platform_service
-from services import notifications
 
 
 class PasswordResetBase(unittest.TestCase):
-
     OWNER_EMAIL = "owner@test-reset.com"
     OWNER_PASSWORD = "clave-segura-123"
 
@@ -49,20 +47,15 @@ class PasswordResetBase(unittest.TestCase):
             c.close()
 
     def _provision_and_approve(self):
-        result = platform_service.provision_business(
-            "Test Biz", "test-reset-biz", self.OWNER_EMAIL
-        )
+        result = platform_service.provision_business("Test Biz", "test-reset-biz", self.OWNER_EMAIL)
         approved = platform_service.approve_business(result["business_id"])
         return result, approved
 
     def _set_owner_password(self, business_id, token):
-        platform_service.accept_invitation(
-            business_id, token, self.OWNER_PASSWORD
-        )
+        platform_service.accept_invitation(business_id, token, self.OWNER_PASSWORD)
 
 
 class TestPasswordResetFlow(PasswordResetBase):
-
     def test_request_reset_returns_token_for_existing_user(self):
         result, approved = self._provision_and_approve()
         token = approved["invitation_url"].rsplit("/", 1)[-1]
@@ -100,14 +93,10 @@ class TestPasswordResetFlow(PasswordResetBase):
         consumed = platform_service.reset_password(reset_result["reset_token"], new_password)
         self.assertTrue(consumed["success"])
 
-        rows = self._query(
-            "SELECT password_hash FROM users WHERE email = ?",
-            (self.OWNER_EMAIL,),
-        )
+        rows = self._query("SELECT password_hash FROM users WHERE email = ?", (self.OWNER_EMAIL,))
         self.assertGreater(len(rows[0]["password_hash"]), 12)
         sessions = self._query(
-            "SELECT revoked FROM sessions WHERE user_id = ?",
-            (consumed["user_id"],),
+            "SELECT revoked FROM sessions WHERE user_id = ?", (consumed["user_id"],)
         )
         for s in sessions:
             self.assertEqual(s["revoked"], 1)
@@ -152,9 +141,7 @@ class TestPasswordResetFlow(PasswordResetBase):
 
         def worker():
             barrier.wait()
-            outcomes.append(
-                platform_service.reset_password(rt, "clave-segura-12345")
-            )
+            outcomes.append(platform_service.reset_password(rt, "clave-segura-12345"))
 
         threads = [threading.Thread(target=worker) for _ in range(2)]
         for t in threads:
@@ -178,10 +165,7 @@ class TestPasswordResetFlow(PasswordResetBase):
 
         page = self.client.get("/forgot")
         csrf = self._csrf(page)
-        response = self.client.post(
-            "/forgot",
-            data={"email": self.OWNER_EMAIL, "csrf_token": csrf},
-        )
+        response = self.client.post("/forgot", data={"email": self.OWNER_EMAIL, "csrf_token": csrf})
         self.assertEqual(response.status_code, 302)
 
     def test_forgot_post_rate_limited(self):
@@ -189,8 +173,7 @@ class TestPasswordResetFlow(PasswordResetBase):
             page = self.client.get("/forgot")
             csrf = self._csrf(page)
             response = self.client.post(
-                "/forgot",
-                data={"email": "nobody@test-reset.com", "csrf_token": csrf},
+                "/forgot", data={"email": "nobody@test-reset.com", "csrf_token": csrf}
             )
             if i < 5:
                 self.assertEqual(response.status_code, 302)
@@ -199,7 +182,6 @@ class TestPasswordResetFlow(PasswordResetBase):
 
 
 class TestResetRouteIntegration(PasswordResetBase):
-
     def _full_setup(self):
         result, approved = self._provision_and_approve()
         token = approved["invitation_url"].rsplit("/", 1)[-1]
@@ -226,11 +208,7 @@ class TestResetRouteIntegration(PasswordResetBase):
         new_password = "nueva-clave-segura-456"
         response = self.client.post(
             f"/reset/{reset_token}",
-            data={
-                "password": new_password,
-                "password2": new_password,
-                "csrf_token": csrf,
-            },
+            data={"password": new_password, "password2": new_password, "csrf_token": csrf},
         )
         self.assertEqual(response.status_code, 302)
 

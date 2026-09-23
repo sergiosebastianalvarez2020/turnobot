@@ -18,14 +18,14 @@ import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from unittest import mock
 
-from email import policy
-from email.parser import BytesParser
-
 import app as application
 import database.database as database
+import scripts.retry_failed_notifications as retry_runner
 from database.database import get_connection
 from services import appointments, notifications
 from services import platform as platform_service
@@ -36,7 +36,6 @@ from services.notifications import (
     send_business_confirmation_email,
     send_confirmation_email,
 )
-import scripts.retry_failed_notifications as retry_runner
 
 SMTP_ENV = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587", "EMAIL_FROM": "no-reply@test.com"}
 
@@ -143,8 +142,11 @@ class EmailPlataformaHighLevel(EmailBase):
         csrf = self._csrf_from(page)
         return self.client.post(
             "/superadmin/login",
-            data={"email": self.SUPERADMIN_EMAIL,
-                  "password": self.SUPERADMIN_PASSWORD, "csrf_token": csrf},
+            data={
+                "email": self.SUPERADMIN_EMAIL,
+                "password": self.SUPERADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
         )
 
     def _provision(self):
@@ -152,28 +154,30 @@ class EmailPlataformaHighLevel(EmailBase):
         csrf = self._csrf_from(page)
         return self.client.post(
             "/superadmin/negocios/crear",
-            data={"nombre": "Cafetería Aurora", "slug": "cafetera-aurora",
-                  "owner_email": self.OWNER_EMAIL, "csrf_token": csrf},
+            data={
+                "nombre": "Cafetería Aurora",
+                "slug": "cafetera-aurora",
+                "owner_email": self.OWNER_EMAIL,
+                "csrf_token": csrf,
+            },
         )
 
     def _approve(self):
         page = self.client.get("/superadmin/negocios/2")
         csrf = self._csrf_from(page)
-        return self.client.post("/superadmin/negocios/2/aprobar",
-                                data={"csrf_token": csrf})
+        return self.client.post("/superadmin/negocios/2/aprobar", data={"csrf_token": csrf})
 
     def _send(self, response, fake):
-        sent = [
-            (to, _decode_mime_text(msg))
-            for _from, to, msg in fake.messages
-        ]
+        sent = [(to, _decode_mime_text(msg)) for _from, to, msg in fake.messages]
         return sent
 
     def test_email1_solicitud_confirma_al_solicitante_y_notifica_al_superadmin(self):
         self._login_superadmin()
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             response = self._provision()
         self.assertEqual(response.status_code, 302)
 
@@ -189,9 +193,9 @@ class EmailPlataformaHighLevel(EmailBase):
         self.assertIn("pendiente", sa_emails[0].lower())
 
         # Sin auto-activar y sin invitación.
-        row = self._query(
-            "SELECT active, pending FROM businesses WHERE slug = 'cafetera-aurora'"
-        )[0]
+        row = self._query("SELECT active, pending FROM businesses WHERE slug = 'cafetera-aurora'")[
+            0
+        ]
         self.assertEqual(row["active"], 0)
         self.assertEqual(row["pending"], 1)
         invites = self._query(
@@ -204,38 +208,40 @@ class EmailPlataformaHighLevel(EmailBase):
     def test_email2_invitacion_solo_despues_de_aprobar(self):
         self._login_superadmin()
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             self._provision()
             # Tras crear el owner recibe EMAIL 1 (recepción), pero NUNCA EMAIL 2.
             owner_emails = [
-                _decode_mime_text(msg)
-                for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
+                _decode_mime_text(msg) for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
             ]
             self.assertGreaterEqual(len(owner_emails), 1)
             self.assertNotIn("/invitacion/", owner_emails[0])
 
             self._approve()
             owner_emails = [
-                _decode_mime_text(msg)
-                for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
+                _decode_mime_text(msg) for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
             ]
             self.assertEqual(len(owner_emails), 2)  # EMAIL 1 + EMAIL 2
             invitation_email = owner_emails[1]
             self.assertIn("aprobado", invitation_email.lower())
             self.assertIn("/invitacion/", invitation_email)
 
-        row = self._query(
-            "SELECT active, pending FROM businesses WHERE slug = 'cafetera-aurora'"
-        )[0]
+        row = self._query("SELECT active, pending FROM businesses WHERE slug = 'cafetera-aurora'")[
+            0
+        ]
         self.assertEqual(row["active"], 1)
         self.assertEqual(row["pending"], 0)
 
     def test_email2_reenvio_genera_token_nuevo(self):
         self._login_superadmin()
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             self._provision()
             self._approve()
             page = self.client.get("/superadmin/negocios/2")
@@ -243,8 +249,7 @@ class EmailPlataformaHighLevel(EmailBase):
             self.client.post("/superadmin/negocios/2/reinviar", data={"csrf_token": csrf})
 
         owner_emails = [
-            _decode_mime_text(msg)
-            for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
+            _decode_mime_text(msg) for _f, to, msg in fake.messages if self.OWNER_EMAIL in to[0]
         ]
         # EMAIL 1 (recepción) + EMAIL 2 (aprobación) + EMAIL 2 (reenvío).
         invitation_emails = [m for m in owner_emails if "/invitacion/" in m]
@@ -281,18 +286,19 @@ class EmailReservas(EmailBase):
     def test_reserva_confirma_al_cliente_y_avisa_al_negocio(self):
         self._enable_notifications(1, "turnos@negocio.com")
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         self.assertTrue(result["success"])
         apt = self._appointment_dict(result)
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
-            outcome = dispatch_booking_emails(1, apt, slug="elcorte",
-                                              management_token="tok-x",
-                                              public_base_url="https://x.com")
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
+            outcome = dispatch_booking_emails(
+                1, apt, slug="elcorte", management_token="tok-x", public_base_url="https://x.com"
+            )
 
         self.assertTrue(outcome["confirmation"][0])
         self.assertTrue(outcome["business"][0])
@@ -306,7 +312,9 @@ class EmailReservas(EmailBase):
             next(m for _f, to, m in fake.messages if "ana@example.com" in to)
         )
         self.assertIn("cancelar o reprogramar", customer_text.lower())
-        self.assertIn("/b/elcorte/turno/tok-x?id={}".format(result["appointment_id"]), customer_text)
+        self.assertIn(
+            "/b/elcorte/turno/tok-x?id={}".format(result["appointment_id"]), customer_text
+        )
 
         # EMAIL 5 muestra cliente/servicio/fecha.
         business_text = _decode_mime_text(
@@ -315,24 +323,29 @@ class EmailReservas(EmailBase):
         self.assertIn("Ana Pérez", business_text)
         self.assertIn("Corte", business_text)
 
-        self.assertEqual(self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "sent")
         self.assertEqual(
-            self._notification_row(result["appointment_id"], BUSINESS_CONFIRMATION)["status"], "sent"
+            self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "sent"
+        )
+        self.assertEqual(
+            self._notification_row(result["appointment_id"], BUSINESS_CONFIRMATION)["status"],
+            "sent",
         )
 
     def test_sin_email_de_negocio_el_aviso_no_impide_la_confirmacion(self):
         self._enable_notifications(1, "")
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "10:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "10:00", 1, email="ana@example.com"
         )
         apt = self._appointment_dict(result)
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
-            outcome = dispatch_booking_emails(1, apt, slug="elcorte",
-                                              public_base_url="https://x.com")
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
+            outcome = dispatch_booking_emails(
+                1, apt, slug="elcorte", public_base_url="https://x.com"
+            )
 
         self.assertTrue(outcome["confirmation"][0])
         self.assertFalse(outcome["business"][0])
@@ -341,20 +354,22 @@ class EmailReservas(EmailBase):
 
     def test_email5_scoped_por_tenant_no_filtra_otro_negocio(self):
         # Negocio 2 tiene su propio email; el aviso del negocio 1 jamás lo usa.
-        database.create_business_with_owner("Otro Negocio", "otro@x.com",
-                                            password="clave-muy-segura-123", slug="otro")
+        database.create_business_with_owner(
+            "Otro Negocio", "otro@x.com", password="clave-muy-segura-123", slug="otro"
+        )
         self._enable_notifications(1, "a@x.com")
         self._enable_notifications(2, "b@y.com")
 
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "11:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "11:00", 1, email="ana@example.com"
         )
         apt = self._appointment_dict(result)
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             ok, reason = send_business_confirmation_email(1, apt)
 
         self.assertTrue(ok)
@@ -368,13 +383,20 @@ class EmailReservas(EmailBase):
         fake = FailingSMTP()
         env = dict(SMTP_ENV)
         env["SMTP_PASSWORD"] = "muy-secreta-clave-xyz"
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             response = self.client.post(
                 "/b/el-corte/api/reservar",
-                json={"nombre": "Ana Pérez", "telefono": "3838439222",
-                      "servicio": "Corte", "fecha": self.valid_date, "hora": "09:00",
-                      "email": "ana@example.com"},
+                json={
+                    "nombre": "Ana Pérez",
+                    "telefono": "3838439222",
+                    "servicio": "Corte",
+                    "fecha": self.valid_date,
+                    "hora": "09:00",
+                    "email": "ana@example.com",
+                },
             )
 
         # La reserva SE GUARDÓ (201) aunque los emails fallaron.
@@ -395,45 +417,58 @@ class EmailReservas(EmailBase):
             self.assertNotIn("\n", row["error"])
 
         # El turno existe y sigue confirmado.
-        self.assertEqual(self._query(
-            "SELECT status FROM appointments WHERE id = ?", (appointment_id,)
-        )[0]["status"], "confirmed")
+        self.assertEqual(
+            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+                "status"
+            ],
+            "confirmed",
+        )
 
     def test_reintento_de_failed_pasa_a_sent_y_no_duplica(self):
         self._enable_notifications(1, "turnos@negocio.com")
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         apt = self._appointment_dict(result)
 
         fake_bad = FailingSMTP()
         env = dict(SMTP_ENV)
         env["SMTP_PASSWORD"] = "muy-secreta-clave-xyz"
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_bad):
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_bad),
+        ):
             self.assertFalse(dispatch_booking_emails(1, apt)["confirmation"][0])
             self.assertFalse(dispatch_booking_emails(1, apt)["business"][0])
 
-        self.assertEqual(self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "failed")
+        self.assertEqual(
+            self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "failed"
+        )
 
         # El runner reintenta y acierta (SMTP bien configurado ahora).
         fake_ok = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok),
+        ):
             retried = retry_runner._run_once(business_id=1)
 
         self.assertEqual(retried, 2)
         self.assertEqual(len(fake_ok.messages), 2)
-        self.assertEqual(self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "sent")
         self.assertEqual(
-            self._notification_row(result["appointment_id"], BUSINESS_CONFIRMATION)["status"], "sent"
+            self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "sent"
+        )
+        self.assertEqual(
+            self._notification_row(result["appointment_id"], BUSINESS_CONFIRMATION)["status"],
+            "sent",
         )
 
         # Un segundo intento no vuelve a enviar (idempotencia).
         fake_ok2 = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok2):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok2),
+        ):
             retried2 = retry_runner._run_once(business_id=1)
         self.assertEqual(retried2, 0)
         self.assertEqual(len(fake_ok2.messages), 0)
@@ -441,21 +476,22 @@ class EmailReservas(EmailBase):
     def test_sin_smtp_falla_temprano_y_no_registra(self):
         env = {k: v for k, v in os.environ.items() if k != "SMTP_HOST"}
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "12:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "12:00", 1, email="ana@example.com"
         )
         with mock.patch.dict(os.environ, env, clear=True):
             sent, reason = send_confirmation_email(1, self._appointment_dict(result), force=True)
         self.assertFalse(sent)
         self.assertEqual(reason, "smtp_not_configured")
-        self.assertEqual(self._query(
-            "SELECT COUNT(*) AS n FROM notification_log WHERE appointment_id = ?",
-            (result["appointment_id"],),
-        )[0]["n"], 0)
+        self.assertEqual(
+            self._query(
+                "SELECT COUNT(*) AS n FROM notification_log WHERE appointment_id = ?",
+                (result["appointment_id"],),
+            )[0]["n"],
+            0,
+        )
 
 
 class EmailSeguridad(EmailBase):
-
     def test_subject_sanitiza_crlf_no_inyecta_headers(self):
         # El nombre del negocio (origen del subject) no puede inyectar
         # cabeceras nuevas en el email.
@@ -468,8 +504,7 @@ class EmailSeguridad(EmailBase):
         connection.close()
 
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1, email="ana@example.com"
         )
         apt = {
             "id": result["appointment_id"],
@@ -481,8 +516,10 @@ class EmailSeguridad(EmailBase):
             "appointment_end": "09:30",
         }
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             ok, reason = send_confirmation_email(1, apt, force=True)
         self.assertTrue(ok)
 
@@ -505,39 +542,57 @@ class EmailSeguridad(EmailBase):
         csrf = self._csrf_from(page)
         self.client.post(
             "/superadmin/login",
-            data={"email": self.SUPERADMIN_EMAIL,
-                  "password": self.SUPERADMIN_PASSWORD, "csrf_token": csrf},
+            data={
+                "email": self.SUPERADMIN_EMAIL,
+                "password": self.SUPERADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
         )
 
         fake = FakeSMTP()
         invitation_links = []
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake), \
-             mock.patch.object(application, "send_approved_invitation_email", side_effect=lambda *args, **kwargs: invitation_links.append(args[2]) or (True, None)), \
-             mock.patch.object(application.logger, "error") as log_error, \
-             mock.patch.object(application.logger, "exception") as log_exc, \
-             mock.patch.object(application.logger, "info"), \
-             mock.patch.object(notifications.logger, "error"):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+            mock.patch.object(
+                application,
+                "send_approved_invitation_email",
+                side_effect=lambda *args, **kwargs: (
+                    invitation_links.append(args[2]) or (True, None)
+                ),
+            ),
+            mock.patch.object(application.logger, "error") as log_error,
+            mock.patch.object(application.logger, "exception") as log_exc,
+            mock.patch.object(application.logger, "info"),
+            mock.patch.object(notifications.logger, "error"),
+        ):
             page = self.client.get("/superadmin")
             csrf = self._csrf_from(page)
             self.client.post(
                 "/superadmin/negocios/crear",
-                data={"nombre": "Cafetería Aurora", "slug": "cafetera-aurora",
-                      "owner_email": self.OWNER_EMAIL, "csrf_token": csrf},
+                data={
+                    "nombre": "Cafetería Aurora",
+                    "slug": "cafetera-aurora",
+                    "owner_email": self.OWNER_EMAIL,
+                    "csrf_token": csrf,
+                },
             )
             page = self.client.get("/superadmin/negocios/2")
             csrf = self._csrf_from(page)
-            response = self.client.post("/superadmin/negocios/2/aprobar",
-                                        data={"csrf_token": csrf})
+            response = self.client.post("/superadmin/negocios/2/aprobar", data={"csrf_token": csrf})
 
-        token = re.search(r"/b/cafetera-aurora/invitacion/([A-Za-z0-9_-]+)",
-                          response.headers.get("Location", ""))
+        token = re.search(
+            r"/b/cafetera-aurora/invitacion/([A-Za-z0-9_-]+)", response.headers.get("Location", "")
+        )
         self.assertIsNone(token)
         token = re.search(r"invitacion/([A-Za-z0-9_-]+)", " ".join(invitation_links))
         self.assertIsNotNone(token)
 
-        call_logs = " ".join(str(c) for call in list(log_error.call_args_list)
-                             + list(log_exc.call_args_list) for c in (call,))
+        call_logs = " ".join(
+            str(c)
+            for call in list(log_error.call_args_list) + list(log_exc.call_args_list)
+            for c in (call,)
+        )
         self.assertNotIn(token.group(1), call_logs)
         # Y tampoco en la auditoría de plataforma ni en el detalle del negocio.
         audit = self._query("SELECT detail FROM audit_log")

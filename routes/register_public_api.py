@@ -32,12 +32,7 @@ def register(app):
         app: Instancia de Flask application.
     """
     # Public API routes - customer-facing API and public turn management
-    app.add_url_rule(
-        "/chat",
-        endpoint="chat",
-        view_func=chat,
-        methods=["POST"],
-    )
+    app.add_url_rule("/chat", endpoint="chat", view_func=chat, methods=["POST"])
     app.add_url_rule(
         "/api/conversations/<public_token>/messages",
         endpoint="public_conversation_messages",
@@ -45,10 +40,7 @@ def register(app):
         methods=["GET"],
     )
     app.add_url_rule(
-        "/api/servicios",
-        endpoint="api_servicios",
-        view_func=api_servicios,
-        methods=["GET"],
+        "/api/servicios", endpoint="api_servicios", view_func=api_servicios, methods=["GET"]
     )
     app.add_url_rule(
         "/b/<slug>/api/servicios",
@@ -57,10 +49,7 @@ def register(app):
         methods=["GET"],
     )
     app.add_url_rule(
-        "/api/recursos",
-        endpoint="api_recursos",
-        view_func=api_recursos,
-        methods=["GET"],
+        "/api/recursos", endpoint="api_recursos", view_func=api_recursos, methods=["GET"]
     )
     app.add_url_rule(
         "/b/<slug>/api/recursos",
@@ -68,12 +57,7 @@ def register(app):
         view_func=business_api_recursos,
         methods=["GET"],
     )
-    app.add_url_rule(
-        "/api/puntos",
-        endpoint="api_puntos",
-        view_func=api_puntos,
-        methods=["GET"],
-    )
+    app.add_url_rule("/api/puntos", endpoint="api_puntos", view_func=api_puntos, methods=["GET"])
     app.add_url_rule(
         "/b/<slug>/api/puntos",
         endpoint="business_api_puntos",
@@ -92,12 +76,7 @@ def register(app):
         view_func=business_api_disponibilidad,
         methods=["GET"],
     )
-    app.add_url_rule(
-        "/api/turnos",
-        endpoint="api_turnos",
-        view_func=api_turnos,
-        methods=["GET"],
-    )
+    app.add_url_rule("/api/turnos", endpoint="api_turnos", view_func=api_turnos, methods=["GET"])
     app.add_url_rule(
         "/b/<slug>/api/turnos",
         endpoint="business_api_turnos",
@@ -105,10 +84,7 @@ def register(app):
         methods=["GET"],
     )
     app.add_url_rule(
-        "/api/reservar",
-        endpoint="api_reservar",
-        view_func=api_reservar,
-        methods=["POST"],
+        "/api/reservar", endpoint="api_reservar", view_func=api_reservar, methods=["POST"]
     )
     app.add_url_rule(
         "/b/<slug>/api/reservar",
@@ -123,10 +99,7 @@ def register(app):
         methods=["GET", "POST"],
     )
     app.add_url_rule(
-        "/api/cancelar",
-        endpoint="api_cancelar",
-        view_func=api_cancelar,
-        methods=["POST"],
+        "/api/cancelar", endpoint="api_cancelar", view_func=api_cancelar, methods=["POST"]
     )
     app.add_url_rule(
         "/b/<slug>/api/cancelar",
@@ -135,10 +108,7 @@ def register(app):
         methods=["POST"],
     )
     app.add_url_rule(
-        "/api/reprogramar",
-        endpoint="api_reprogramar",
-        view_func=api_reprogramar,
-        methods=["POST"],
+        "/api/reprogramar", endpoint="api_reprogramar", view_func=api_reprogramar, methods=["POST"]
     )
     app.add_url_rule(
         "/b/<slug>/api/reprogramar",

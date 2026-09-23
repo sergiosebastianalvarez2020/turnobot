@@ -2,11 +2,7 @@
 Registro de rutas de invitaciones - staff, públicas y panel admin.
 """
 
-from routes.invitation import (
-    staff_invitation,
-    public_invitation,
-    admin_usuarios_invitar_enlace,
-)
+from routes.invitation import admin_usuarios_invitar_enlace, public_invitation, staff_invitation
 
 
 def register(app):

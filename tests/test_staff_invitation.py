@@ -20,7 +20,6 @@ from services import platform as platform_service
 
 
 class StaffInvitationBase(unittest.TestCase):
-
     OWNER_EMAIL = "owner@test-staff.com"
     OWNER_PASSWORD = "clave-segura-123"
     STAFF_EMAIL = "staff@test-staff.com"
@@ -96,7 +95,6 @@ class StaffInvitationBase(unittest.TestCase):
 
 
 class TestStaffInvitationAuthorization(StaffInvitationBase):
-
     def test_owner_invite_existing_user_as_admin(self):
         self._provision_and_approve()
         self._login_owner()
@@ -129,7 +127,9 @@ class TestStaffInvitationAuthorization(StaffInvitationBase):
         admin_id = self._create_admin_user()
         business_id = self._business_id()
 
-        result = ps.create_staff_invitation(business_id, self.STAFF_EMAIL, "staff", actor_user_id=admin_id)
+        result = ps.create_staff_invitation(
+            business_id, self.STAFF_EMAIL, "staff", actor_user_id=admin_id
+        )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "forbidden")
 
@@ -164,8 +164,7 @@ class TestStaffInvitationAuthorization(StaffInvitationBase):
         self._login_owner()
 
         result = platform_service.create_staff_invitation(
-            self._business_id(), self.STAFF_EMAIL, "staff",
-            actor_user_id=self._get_owner_user_id(),
+            self._business_id(), self.STAFF_EMAIL, "staff", actor_user_id=self._get_owner_user_id()
         )
         self.assertTrue(result["success"])
         self.assertIsNotNone(result["invitation_token"])
@@ -178,13 +177,11 @@ class TestStaffInvitationAuthorization(StaffInvitationBase):
 
 
 class TestStaffInvitationAccept(StaffInvitationBase):
-
     def _setup_invitation(self, role="staff"):
         self._provision_and_approve()
         self._login_owner()
         return platform_service.create_staff_invitation(
-            self._business_id(), self.STAFF_EMAIL, role,
-            actor_user_id=self._get_owner_user_id(),
+            self._business_id(), self.STAFF_EMAIL, role, actor_user_id=self._get_owner_user_id()
         )
 
     def test_staff_invitation_route_get_shows_email(self):

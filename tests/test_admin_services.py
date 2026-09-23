@@ -24,13 +24,8 @@ class TestAdminServices(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
@@ -51,9 +46,7 @@ class TestAdminServices(unittest.TestCase):
         self.assertIn("Barba", response.text)
 
     def test_crear_servicio_valido(self):
-        response = self.post_service(
-            name="Masaje", price="12000", duration="45"
-        )
+        response = self.post_service(name="Masaje", price="12000", duration="45")
         self.assertEqual(response.status_code, 302)
         services = database.get_all_services_scoped(1)
         service = next(row for row in services if row["name"] == "Masaje")
@@ -78,10 +71,7 @@ class TestAdminServices(unittest.TestCase):
     def test_editar_servicio(self):
         service = database.get_all_services_scoped(1)[0]
         response = self.post_service(
-            service_id=str(service["id"]),
-            name="Corte actualizado",
-            price="11000",
-            duration="35",
+            service_id=str(service["id"]), name="Corte actualizado", price="11000", duration="35"
         )
         self.assertEqual(response.status_code, 302)
         updated = next(

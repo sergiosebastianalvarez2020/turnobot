@@ -47,11 +47,7 @@ from database.database import (
 # Helpers de dominio (compat con tests y rutas)
 from application.session_crypto import _hash_session_token
 
-from application.tenant import (
-    get_current_business_id,
-    load_current_business,
-    resolve_business,
-)
+from application.tenant import get_current_business_id, load_current_business, resolve_business
 
 from application.frontend import (
     MAX_HISTORY_CONTENT_LENGTH,
@@ -91,12 +87,7 @@ from application.platform import (
     _platform_session_expires_at,
 )
 
-from application.security import (
-    _is_json_request,
-    _json_error,
-    add_security_headers,
-    handle_400,
-)
+from application.security import _is_json_request, _json_error, add_security_headers, handle_400
 
 # Instancia de la aplicación (app factory)
 from application import create_app

@@ -1,11 +1,7 @@
-import re
 import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
-
-from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
@@ -60,8 +56,8 @@ class BaseIsolationTest(unittest.TestCase):
 # READ ISOLATION
 # ============================================================
 
-class TestReadIsolation(BaseIsolationTest):
 
+class TestReadIsolation(BaseIsolationTest):
     def test_a_solo_ve_sus_recursos(self):
         nombres_a = {row["name"] for row in database.get_resources_scoped(1)}
         self.assertEqual(nombres_a, {"Cancha A1", "Cancha A2"})
@@ -81,39 +77,28 @@ class TestReadIsolation(BaseIsolationTest):
 # WRITE ISOLATION
 # ============================================================
 
-class TestWriteIsolation(BaseIsolationTest):
 
+class TestWriteIsolation(BaseIsolationTest):
     def test_a_no_puede_modificar_recurso_de_b(self):
-        self.assertFalse(
-            database.set_resource_active_scoped(self.resource_b, 1, False)
-        )
-        fila = self._query(
-            "SELECT active FROM resources WHERE id = ?", (self.resource_b,)
-        )[0]
+        self.assertFalse(database.set_resource_active_scoped(self.resource_b, 1, False))
+        fila = self._query("SELECT active FROM resources WHERE id = ?", (self.resource_b,))[0]
         self.assertEqual(fila["active"], 1)
 
     def test_b_no_puede_modificar_recurso_de_a(self):
-        self.assertFalse(
-            database.set_resource_active_scoped(self.resource_a, 2, False)
-        )
-        fila = self._query(
-            "SELECT active FROM resources WHERE id = ?", (self.resource_a,)
-        )[0]
+        self.assertFalse(database.set_resource_active_scoped(self.resource_a, 2, False))
+        fila = self._query("SELECT active FROM resources WHERE id = ?", (self.resource_a,))[0]
         self.assertEqual(fila["active"], 1)
 
     def test_tenant_puede_modificar_recurso_propio(self):
-        self.assertTrue(
-            database.set_resource_active_scoped(self.resource_a, 1, False)
-        )
-        fila = self._query(
-            "SELECT active FROM resources WHERE id = ?", (self.resource_a,)
-        )[0]
+        self.assertTrue(database.set_resource_active_scoped(self.resource_a, 1, False))
+        fila = self._query("SELECT active FROM resources WHERE id = ?", (self.resource_a,))[0]
         self.assertEqual(fila["active"], 0)
 
 
 # ============================================================
 # BOOKING ISOLATION (resource_id de otro tenant)
 # ============================================================
+
 
 def _next_open_day():
     date = datetime.now().date() + timedelta(days=1)
@@ -123,9 +108,9 @@ def _next_open_day():
 
 
 class TestBookingIsolation(BaseIsolationTest):
-
     def _create(self, business_id, resource_id=None):
         from services.appointments import create_appointment
+
         return create_appointment(
             "Cliente Test",
             "111111111",

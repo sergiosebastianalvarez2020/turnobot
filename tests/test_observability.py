@@ -27,6 +27,7 @@ import services.ai as ai
 
 class _LogCapture:
     """Captura registros de log para aserciones."""
+
     def __init__(self, logger_name="el_corte"):
         self.records = []
         self.handler = logging.Handler()
@@ -49,6 +50,7 @@ class _LogCapture:
 
 class _MockResponse:
     """Simula una respuesta de Gemini con candidates."""
+
     def __init__(self, text=None, function_calls=None, tool_iterations=None, usage_metadata=None):
         self.text = text
         self.tool_iterations = tool_iterations
@@ -90,6 +92,7 @@ class _MockFunctionCall:
 
 class _MockGenAIClient:
     """Mock del cliente Gemini para tests de ai.py."""
+
     def __init__(self, responses=None, errors=None):
         self.responses = list(responses or [])
         self.errors = list(errors or [])
@@ -141,14 +144,11 @@ class TestRequestIdAndHeaders(unittest.TestCase):
         client = application.app.test_client()
         resp1 = client.get("/health")
         resp2 = client.get("/health")
-        self.assertNotEqual(
-            resp1.headers["X-Request-ID"],
-            resp2.headers["X-Request-ID"],
-        )
+        self.assertNotEqual(resp1.headers["X-Request-ID"], resp2.headers["X-Request-ID"])
 
     def test_request_id_logged_on_404(self):
         client = application.app.test_client()
-        with _LogCapture("el_corte.web") as cap:
+        with _LogCapture("el_corte.web"):
             resp = client.get("/api/nonexistent")
             self.assertEqual(resp.status_code, 404)
 
@@ -188,7 +188,7 @@ class TestGlobalErrorHandlers(unittest.TestCase):
 
     def test_handler_429(self):
         client = application.app.test_client()
-        for i in range(70):
+        for _i in range(70):
             client.get("/api/servicios")
         resp = client.get("/api/servicios")
         self.assertEqual(resp.status_code, 429)
@@ -197,7 +197,9 @@ class TestGlobalErrorHandlers(unittest.TestCase):
         self.assertEqual(data["code"], "RATE_LIMITED")
 
     def test_handler_500_no_stack_trace(self):
-        with mock.patch.object(application, "ask_ai", side_effect=RuntimeError("internal test error")):
+        with mock.patch.object(
+            application, "ask_ai", side_effect=RuntimeError("internal test error")
+        ):
             client = application.app.test_client()
             application.app.config["PROPAGATE_EXCEPTIONS"] = False
             resp = client.post("/chat", json={"message": "hola"})
@@ -226,7 +228,9 @@ class TestGlobalErrorHandlers(unittest.TestCase):
         self.assertNotIn("Traceback", body)
 
     def test_error_does_not_expose_sql(self):
-        with mock.patch.object(application, "ask_ai", side_effect=RuntimeError("SELECT * FROM users WHERE id=1")):
+        with mock.patch.object(
+            application, "ask_ai", side_effect=RuntimeError("SELECT * FROM users WHERE id=1")
+        ):
             client = application.app.test_client()
             application.app.config["PROPAGATE_EXCEPTIONS"] = False
             resp = client.post("/chat", json={"message": "test"})
@@ -236,7 +240,6 @@ class TestGlobalErrorHandlers(unittest.TestCase):
 
 
 class TestGeminiErrorHandling(unittest.TestCase):
-
     def _make_mock(self, errors=None, responses=None):
         return _MockGenAIClient(errors=errors or [], responses=responses or [])
 
@@ -254,7 +257,9 @@ class TestGeminiErrorHandling(unittest.TestCase):
 
     def test_gemini_quota_error_returns_appropriate_message(self):
         ai.client = None
-        err = genai_errors.ClientError(429, {"status": "RESOURCE_EXHAUSTED", "message": "quota exceeded"})
+        err = genai_errors.ClientError(
+            429, {"status": "RESOURCE_EXHAUSTED", "message": "quota exceeded"}
+        )
         mock_client = self._make_mock(errors=[err] * ai.MAX_RETRIES)
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with mock.patch("time.sleep"):
@@ -265,7 +270,9 @@ class TestGeminiErrorHandling(unittest.TestCase):
 
     def test_gemini_auth_error_is_not_retried(self):
         ai.client = None
-        err = genai_errors.ClientError(401, {"status": "UNAUTHENTICATED", "message": "Invalid API key"})
+        err = genai_errors.ClientError(
+            401, {"status": "UNAUTHENTICATED", "message": "Invalid API key"}
+        )
         mock_client = self._make_mock(errors=[err])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -294,7 +301,9 @@ class TestGeminiErrorHandling(unittest.TestCase):
 
     def test_gemini_auth_error_no_api_key_exposed(self):
         ai.client = None
-        err = genai_errors.ClientError(401, {"status": "UNAUTHENTICATED", "message": "Invalid API key: abc123secret"})
+        err = genai_errors.ClientError(
+            401, {"status": "UNAUTHENTICATED", "message": "Invalid API key: abc123secret"}
+        )
         mock_client = self._make_mock(errors=[err])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -309,10 +318,11 @@ class TestGeminiErrorHandling(unittest.TestCase):
 
 
 class TestGeminiRetryLogic(unittest.TestCase):
-
     def test_retry_on_transitory_error(self):
         ai.client = None
-        err = genai_errors.ServerError(503, {"status": "UNAVAILABLE", "message": "temporarily unavailable"})
+        err = genai_errors.ServerError(
+            503, {"status": "UNAVAILABLE", "message": "temporarily unavailable"}
+        )
         mock_client = _MockGenAIClient(errors=[err, None], responses=[_MockResponse(text="ok")])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with mock.patch("time.sleep"):
@@ -323,7 +333,9 @@ class TestGeminiRetryLogic(unittest.TestCase):
 
     def test_no_retry_on_permanent_error(self):
         ai.client = None
-        err = genai_errors.ClientError(400, {"status": "INVALID_ARGUMENT", "message": "bad request"})
+        err = genai_errors.ClientError(
+            400, {"status": "INVALID_ARGUMENT", "message": "bad request"}
+        )
         mock_client = _MockGenAIClient(errors=[err])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -366,7 +378,9 @@ class TestGeminiRetryLogic(unittest.TestCase):
     def test_retry_on_connection_error(self):
         ai.client = None
         err = ConnectionError("connection reset by peer")
-        mock_client = _MockGenAIClient(errors=[err, None], responses=[_MockResponse(text="recuperado")])
+        mock_client = _MockGenAIClient(
+            errors=[err, None], responses=[_MockResponse(text="recuperado")]
+        )
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with mock.patch("time.sleep"):
                 response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -375,10 +389,11 @@ class TestGeminiRetryLogic(unittest.TestCase):
                 self.assertIsNone(error_info)
 
     def test_retry_on_socket_timeout(self):
-        import socket
         ai.client = None
-        err = socket.timeout("timed out")
-        mock_client = _MockGenAIClient(errors=[err, None], responses=[_MockResponse(text="recuperado")])
+        err = TimeoutError("timed out")
+        mock_client = _MockGenAIClient(
+            errors=[err, None], responses=[_MockResponse(text="recuperado")]
+        )
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with mock.patch("time.sleep"):
                 response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -388,7 +403,9 @@ class TestGeminiRetryLogic(unittest.TestCase):
 
     def test_retry_residual_return_contract(self):
         ai.client = None
-        err = genai_errors.ClientError(400, {"status": "INVALID_ARGUMENT", "message": "bad argument"})
+        err = genai_errors.ClientError(
+            400, {"status": "INVALID_ARGUMENT", "message": "bad argument"}
+        )
         mock_client = _MockGenAIClient(errors=[err])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             response, attempt, error_info = ai._call_gemini_with_retry([], None)
@@ -399,13 +416,14 @@ class TestGeminiRetryLogic(unittest.TestCase):
 
 
 class TestGeminiMetrics(unittest.TestCase):
-
     def test_latency_tracked_on_success(self):
         ai.client = None
         mock_client = _MockGenAIClient(responses=[_MockResponse(text="hello")])
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with _LogCapture("el_corte") as cap:
-                response, attempt, _ = ai._call_gemini_with_retry([], None, request_id="test-rid", business_id=1)
+                response, attempt, _ = ai._call_gemini_with_retry(
+                    [], None, request_id="test-rid", business_id=1
+                )
                 self.assertIsNotNone(response)
                 latency_records = [r for r in cap.records if "gemini_call" in r.getMessage()]
                 self.assertTrue(len(latency_records) > 0)
@@ -437,19 +455,42 @@ class TestGeminiMetrics(unittest.TestCase):
             with mock.patch("time.sleep"):
                 with _LogCapture("el_corte") as cap:
                     ai._call_gemini_with_retry([], None, request_id="test-rid-3")
-                    attempt_records = [r for r in cap.records if "attempt=" in r.getMessage() and "gemini_call" in r.getMessage()]
+                    attempt_records = [
+                        r
+                        for r in cap.records
+                        if "attempt=" in r.getMessage() and "gemini_call" in r.getMessage()
+                    ]
                     self.assertGreaterEqual(len(attempt_records), 1)
 
     def test_tool_iterations_logged(self):
         ai.client = None
         mock_client = _MockGenAIClient(responses=[_MockResponse(text="respuesta final")])
-        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client), \
-             mock.patch.object(ai, "get_services_prompt", return_value="servicio: test"), \
-             mock.patch.object(ai, "get_business_hours_prompt", return_value="horarios: test"), \
-             mock.patch.object(ai, "get_business_identity", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.search_knowledge_scoped", return_value=[]), \
-             mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None):
+        with (
+            mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
+            mock.patch.object(ai, "get_services_prompt", return_value="servicio: test"),
+            mock.patch.object(ai, "get_business_hours_prompt", return_value="horarios: test"),
+            mock.patch.object(
+                ai,
+                "get_business_identity",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch(
+                "services.ai.get_business_settings_scoped",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch("services.ai.search_knowledge_scoped", return_value=[]),
+            mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None),
+        ):
             with _LogCapture("el_corte") as cap:
                 ai.ask_ai("hola", business_id=1)
                 iter_records = [r for r in cap.records if "tool_iterations=" in r.getMessage()]
@@ -459,7 +500,9 @@ class TestGeminiMetrics(unittest.TestCase):
     def test_usage_metadata_logged_when_present(self):
         ai.client = None
         usage = mock.Mock(prompt_token_count=120, candidates_token_count=35, total_token_count=155)
-        mock_client = _MockGenAIClient(responses=[_MockResponse(text="test tokens", usage_metadata=usage)])
+        mock_client = _MockGenAIClient(
+            responses=[_MockResponse(text="test tokens", usage_metadata=usage)]
+        )
         with mock.patch.object(ai, "get_gemini_client", return_value=mock_client):
             with _LogCapture("el_corte") as cap:
                 response, attempt, _ = ai._call_gemini_with_retry([], None)
@@ -472,29 +515,30 @@ class TestGeminiMetrics(unittest.TestCase):
 
 
 class TestHistoryLimit(unittest.TestCase):
-
     def test_total_chars_limit_truncates_oldest(self):
         from google.genai import types as gtypes
+
         contents = []
         for i in range(10):
-            contents.append(gtypes.Content(
-                role="user",
-                parts=[gtypes.Part.from_text(text=f"mensaje numero {i} " * 200)]
-            ))
+            contents.append(
+                gtypes.Content(
+                    role="user", parts=[gtypes.Part.from_text(text=f"mensaje numero {i} " * 200)]
+                )
+            )
         truncated = ai.truncate_history_by_total_chars(contents, max_total_chars=1000)
-        total = sum(
-            len(part.text) for c in truncated for part in (c.parts or []) if part.text
-        )
+        total = sum(len(part.text) for c in truncated for part in (c.parts or []) if part.text)
         self.assertLessEqual(total, 1000)
 
     def test_total_chars_limit_keeps_recent(self):
         from google.genai import types as gtypes
+
         contents = []
         for i in range(5):
-            contents.append(gtypes.Content(
-                role="user",
-                parts=[gtypes.Part.from_text(text=f"mensaje {i} " * 10)]
-            ))
+            contents.append(
+                gtypes.Content(
+                    role="user", parts=[gtypes.Part.from_text(text=f"mensaje {i} " * 10)]
+                )
+            )
         truncated = ai.truncate_history_by_total_chars(contents, max_total_chars=150)
         last_text = truncated[-1].parts[0].text
         self.assertIn("mensaje 4", last_text)
@@ -505,30 +549,72 @@ class TestHistoryLimit(unittest.TestCase):
 
     def test_build_contents_applies_total_limit(self):
         mock_client = _MockGenAIClient(responses=[_MockResponse(text="ok")])
-        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client), \
-             mock.patch.object(ai, "get_services_prompt", return_value="s"), \
-             mock.patch.object(ai, "get_business_hours_prompt", return_value="h"), \
-             mock.patch.object(ai, "get_business_identity", return_value={"business_name": "T", "business_type": "T", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "T", "business_type": "T", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.search_knowledge_scoped", return_value=[]), \
-             mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None):
+        with (
+            mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
+            mock.patch.object(ai, "get_services_prompt", return_value="s"),
+            mock.patch.object(ai, "get_business_hours_prompt", return_value="h"),
+            mock.patch.object(
+                ai,
+                "get_business_identity",
+                return_value={
+                    "business_name": "T",
+                    "business_type": "T",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch(
+                "services.ai.get_business_settings_scoped",
+                return_value={
+                    "business_name": "T",
+                    "business_type": "T",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch("services.ai.search_knowledge_scoped", return_value=[]),
+            mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None),
+        ):
             long_conv = [{"role": "user", "content": "x" * 5000} for _ in range(20)]
             result, _, _ = ai.ask_ai("hola", conversation=long_conv, business_id=1)
             self.assertIsInstance(result[0], str)
 
 
 class TestToolResultControl(unittest.TestCase):
-
     def _common_patches(self, mock_client, tool_result=None):
         patches = [
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value="Corte: $100 (30 min)"),
             mock.patch.object(ai, "get_business_hours_prompt", return_value="lunes: abierto"),
-            mock.patch.object(ai, "get_business_identity", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}),
-            mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC", "notifications_enabled": 0}),
+            mock.patch.object(
+                ai,
+                "get_business_identity",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch(
+                "services.ai.get_business_settings_scoped",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                    "notifications_enabled": 0,
+                },
+            ),
             mock.patch("services.ai.search_knowledge_scoped", return_value=[]),
-            mock.patch("services.conversations.get_or_create_conversation_session_scoped", return_value=None),
-            mock.patch("services.conversations.get_or_create_public_conversation_session_scoped", return_value=None),
+            mock.patch(
+                "services.conversations.get_or_create_conversation_session_scoped",
+                return_value=None,
+            ),
+            mock.patch(
+                "services.conversations.get_or_create_public_conversation_session_scoped",
+                return_value=None,
+            ),
         ]
         if tool_result is not None:
             patches.append(mock.patch.object(ai, "execute_tool", return_value=tool_result))
@@ -536,10 +622,31 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reservar_fallida_no_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reservar_turno", {"nombre": "Test", "telefono": "123", "servicio": "Corte", "fecha": "2025-01-01", "hora": "10:00"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reservar_turno",
+                            {
+                                "nombre": "Test",
+                                "telefono": "123",
+                                "servicio": "Corte",
+                                "fecha": "2025-01-01",
+                                "hora": "10:00",
+                            },
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(
             mock_client,
-            tool_result={"success": False, "reason": "occupied", "message": "El horario está ocupado."}
+            tool_result={
+                "success": False,
+                "reason": "occupied",
+                "message": "El horario está ocupado.",
+            },
         )
         for p in patches:
             p.start()
@@ -553,10 +660,19 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_cancelar_fallida_no_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("cancelar_turno", {"appointment_id": 1, "telefono": "123"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "cancelar_turno", {"appointment_id": 1, "telefono": "123"}
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(
-            mock_client,
-            tool_result={"success": False, "message": "Turno no encontrado."}
+            mock_client, tool_result={"success": False, "message": "Turno no encontrado."}
         )
         for p in patches:
             p.start()
@@ -569,10 +685,26 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reprogramar_fallida_no_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reprogramar_turno", {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2025-01-02", "nueva_hora": "11:00"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reprogramar_turno",
+                            {
+                                "appointment_id": 1,
+                                "telefono": "123",
+                                "nueva_fecha": "2025-01-02",
+                                "nueva_hora": "11:00",
+                            },
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(
             mock_client,
-            tool_result={"success": False, "reason": "occupied", "message": "Horario ocupado."}
+            tool_result={"success": False, "reason": "occupied", "message": "Horario ocupado."},
         )
         for p in patches:
             p.start()
@@ -586,10 +718,32 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reservar_exitosa_sí_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reservar_turno", {"nombre": "Ana", "telefono": "1234567890", "servicio": "Corte", "fecha": "2025-01-01", "hora": "10:00"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reservar_turno",
+                            {
+                                "nombre": "Ana",
+                                "telefono": "1234567890",
+                                "servicio": "Corte",
+                                "fecha": "2025-01-01",
+                                "hora": "10:00",
+                            },
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(
             mock_client,
-            tool_result={"success": True, "appointment_id": 1, "message": "El turno fue reservado correctamente.", "resource_id": None}
+            tool_result={
+                "success": True,
+                "appointment_id": 1,
+                "message": "El turno fue reservado correctamente.",
+                "resource_id": None,
+            },
         )
         for p in patches:
             p.start()
@@ -602,7 +756,9 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reserva_texto_plano_sin_tool_se_neutraliza(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Tu turno quedó reservado correctamente.")])
+        mock_client = _MockGenAIClient(
+            responses=[_MockResponse(text="Tu turno quedó reservado correctamente.")]
+        )
         patches = self._common_patches(mock_client)
         for p in patches:
             p.start()
@@ -618,7 +774,9 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_cancelacion_texto_plano_sin_tool_se_neutraliza(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Listo. Tu turno fue cancelado correctamente.")])
+        mock_client = _MockGenAIClient(
+            responses=[_MockResponse(text="Listo. Tu turno fue cancelado correctamente.")]
+        )
         patches = self._common_patches(mock_client)
         for p in patches:
             p.start()
@@ -634,7 +792,9 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reprogramacion_texto_plano_sin_tool_se_neutraliza(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Listo. Tu turno fue reprogramado correctamente.")])
+        mock_client = _MockGenAIClient(
+            responses=[_MockResponse(text="Listo. Tu turno fue reprogramado correctamente.")]
+        )
         patches = self._common_patches(mock_client)
         for p in patches:
             p.start()
@@ -650,12 +810,13 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_confirmacion_falsa_despues_de_consultar_disponibilidad(self):
         ai.client = None
-        first = _MockResponse(function_calls=[_MockFunctionCall("consultar_disponibilidad", {"fecha": "2026-09-20"})])
+        first = _MockResponse(
+            function_calls=[_MockFunctionCall("consultar_disponibilidad", {"fecha": "2026-09-20"})]
+        )
         second = _MockResponse(text="Tu turno quedó reservado correctamente.")
         mock_client = _MockGenAIClient(responses=[first, second])
         patches = self._common_patches(
-            mock_client,
-            tool_result={"success": True, "horarios_disponibles": ["10:00"]},
+            mock_client, tool_result={"success": True, "horarios_disponibles": ["10:00"]}
         )
         for p in patches:
             p.start()
@@ -670,7 +831,9 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_texto_normal_sin_confirmacion_permanece_intacto(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(text="Claro, ¿qué horarios tenés disponibles para mañana?")])
+        mock_client = _MockGenAIClient(
+            responses=[_MockResponse(text="Claro, ¿qué horarios tenés disponibles para mañana?")]
+        )
         patches = self._common_patches(mock_client)
         for p in patches:
             p.start()
@@ -684,7 +847,24 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_mutacion_sin_success_no_alimenta_gemini(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reservar_turno", {"nombre": "Ana", "telefono": "1234567890", "servicio": "Corte", "fecha": "2026-09-20", "hora": "10:00"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reservar_turno",
+                            {
+                                "nombre": "Ana",
+                                "telefono": "1234567890",
+                                "servicio": "Corte",
+                                "fecha": "2026-09-20",
+                                "hora": "10:00",
+                            },
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(mock_client, tool_result={"error": "sin clave success"})
         for p in patches:
             p.start()
@@ -699,7 +879,17 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_cancelar_exitosa_sí_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("cancelar_turno", {"appointment_id": 1, "telefono": "123"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "cancelar_turno", {"appointment_id": 1, "telefono": "123"}
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(mock_client, tool_result={"success": True})
         for p in patches:
             p.start()
@@ -712,7 +902,23 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reprogramar_exitosa_sí_confirma(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[_MockResponse(function_calls=[_MockFunctionCall("reprogramar_turno", {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-09-20", "nueva_hora": "10:00"})])])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reprogramar_turno",
+                            {
+                                "appointment_id": 1,
+                                "telefono": "123",
+                                "nueva_fecha": "2026-09-20",
+                                "nueva_hora": "10:00",
+                            },
+                        )
+                    ]
+                )
+            ]
+        )
         patches = self._common_patches(
             mock_client,
             tool_result={"success": True, "nueva_fecha": "2026-09-20", "nueva_hora": "10:00"},
@@ -728,9 +934,7 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_execute_tool_cancelar_sin_token_retorna_missing_management_token(self):
         result = ai.execute_tool(
-            "cancelar_turno",
-            {"appointment_id": 1, "telefono": "123"},
-            business_id=1,
+            "cancelar_turno", {"appointment_id": 1, "telefono": "123"}, business_id=1
         )
         self.assertFalse(result["success"])
         self.assertEqual(result.get("reason"), "missing_management_token")
@@ -738,7 +942,12 @@ class TestToolResultControl(unittest.TestCase):
     def test_execute_tool_reprogramar_sin_token_retorna_missing_management_token(self):
         result = ai.execute_tool(
             "reprogramar_turno",
-            {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-10-20", "nueva_hora": "14:00"},
+            {
+                "appointment_id": 1,
+                "telefono": "123",
+                "nueva_fecha": "2026-10-20",
+                "nueva_hora": "14:00",
+            },
             business_id=1,
         )
         self.assertFalse(result["success"])
@@ -746,10 +955,18 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_cancelar_sin_token_pregunta_token_no_retorna_error(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[
-            _MockResponse(function_calls=[_MockFunctionCall("cancelar_turno", {"appointment_id": 1, "telefono": "123"})]),
-            _MockResponse(text="Necesito tu token de gestión para proceder."),
-        ])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "cancelar_turno", {"appointment_id": 1, "telefono": "123"}
+                        )
+                    ]
+                ),
+                _MockResponse(text="Necesito tu token de gestión para proceder."),
+            ]
+        )
         patches = self._common_patches(
             mock_client,
             tool_result={
@@ -771,10 +988,24 @@ class TestToolResultControl(unittest.TestCase):
 
     def test_reprogramar_sin_token_pregunta_token_no_retorna_error(self):
         ai.client = None
-        mock_client = _MockGenAIClient(responses=[
-            _MockResponse(function_calls=[_MockFunctionCall("reprogramar_turno", {"appointment_id": 1, "telefono": "123", "nueva_fecha": "2026-10-20", "nueva_hora": "14:00"})]),
-            _MockResponse(text="Necesito tu token de gestión para reprogramar."),
-        ])
+        mock_client = _MockGenAIClient(
+            responses=[
+                _MockResponse(
+                    function_calls=[
+                        _MockFunctionCall(
+                            "reprogramar_turno",
+                            {
+                                "appointment_id": 1,
+                                "telefono": "123",
+                                "nueva_fecha": "2026-10-20",
+                                "nueva_hora": "14:00",
+                            },
+                        )
+                    ]
+                ),
+                _MockResponse(text="Necesito tu token de gestión para reprogramar."),
+            ]
+        )
         patches = self._common_patches(
             mock_client,
             tool_result={
@@ -794,9 +1025,10 @@ class TestToolResultControl(unittest.TestCase):
             for p in patches:
                 p.stop()
 
-
     def test_execute_tool_solicitar_atencion_humana_persiste_handoff(self):
-        with mock.patch("services.ai.request_human_handoff_scoped", return_value=True) as mock_handoff:
+        with mock.patch(
+            "services.ai.request_human_handoff_scoped", return_value=True
+        ) as mock_handoff:
             result = ai.execute_tool(
                 "solicitar_atencion_humana",
                 {"motivo": "Necesito hablar con un humano."},
@@ -807,11 +1039,11 @@ class TestToolResultControl(unittest.TestCase):
         self.assertTrue(result["success"])
 
     def test_execute_tool_solicitar_atencion_humana_sin_session_id_retorna_success(self):
-        with mock.patch("services.ai.request_human_handoff_scoped", return_value=True) as mock_handoff:
+        with mock.patch(
+            "services.ai.request_human_handoff_scoped", return_value=True
+        ) as mock_handoff:
             result = ai.execute_tool(
-                "solicitar_atencion_humana",
-                {"motivo": "Consulta."},
-                business_id=1,
+                "solicitar_atencion_humana", {"motivo": "Consulta."}, business_id=1
             )
             mock_handoff.assert_not_called()
         self.assertTrue(result["success"])
@@ -819,10 +1051,7 @@ class TestToolResultControl(unittest.TestCase):
     def test_execute_tool_solicitar_atencion_humana_es_alcanzable(self):
         with mock.patch("services.ai.request_human_handoff_scoped", return_value=True):
             result = ai.execute_tool(
-                "solicitar_atencion_humana",
-                {"motivo": "Por favor."},
-                business_id=1,
-                session_id=1,
+                "solicitar_atencion_humana", {"motivo": "Por favor."}, business_id=1, session_id=1
             )
         self.assertTrue(result["success"])
         self.assertIn("registrada", result["message"])
@@ -862,7 +1091,7 @@ class TestErrorFormatStandardization(unittest.TestCase):
 
     def test_429_response_has_code_field(self):
         client = application.app.test_client()
-        for i in range(70):
+        for _i in range(70):
             client.get("/api/servicios")
         resp = client.get("/api/servicios")
         data = resp.get_json()
@@ -910,7 +1139,9 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
 
     def test_structured_formatter_plaintext(self):
         formatter = application.StructuredFormatter()
-        rec = logging.LogRecord("test.logger", logging.INFO, "path", 1, "Operacion exitosa", (), None)
+        rec = logging.LogRecord(
+            "test.logger", logging.INFO, "path", 1, "Operacion exitosa", (), None
+        )
         rec.request_id = "req-abc"
         rec.business_id = "10"
         rec.endpoint = "api_turnos"
@@ -924,7 +1155,9 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
 
     def test_structured_formatter_json(self):
         formatter = application.StructuredFormatter()
-        rec = logging.LogRecord("test.logger", logging.WARNING, "path", 1, "Alerta de sistema", (), None)
+        rec = logging.LogRecord(
+            "test.logger", logging.WARNING, "path", 1, "Alerta de sistema", (), None
+        )
         rec.request_id = "req-xyz"
         rec.business_id = "5"
         rec.endpoint = "chat"
@@ -953,8 +1186,7 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
             resp = client.get("/health")
             self.assertEqual(resp.status_code, 200)
             correlation_records = [
-                r for r in cap.records
-                if "HTTP GET /health -> 200" in r.getMessage()
+                r for r in cap.records if "HTTP GET /health -> 200" in r.getMessage()
             ]
             self.assertTrue(len(correlation_records) >= 1)
             record = correlation_records[0]
@@ -967,7 +1199,8 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
         with _LogCapture("el_corte.web") as cap:
             client.get("/static/css/style.css")
             static_records = [
-                r for r in cap.records
+                r
+                for r in cap.records
                 if "/static/" in r.getMessage() and r.getMessage().startswith("HTTP ")
             ]
             self.assertEqual(len(static_records), 0)
@@ -981,7 +1214,10 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
             self.assertIn("Solicitud malformada", resp)
 
     def test_html_error_500_status_code(self):
-        with mock.patch.dict(application.app.view_functions, {"index": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_html"))}):
+        with mock.patch.dict(
+            application.app.view_functions,
+            {"index": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_html"))},
+        ):
             client = application.app.test_client()
             application.app.config["PROPAGATE_EXCEPTIONS"] = False
             resp = client.get("/", headers={"Accept": "text/html"})
@@ -1004,7 +1240,10 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
         self.assertIn("request_id", data)
 
     def test_unhandled_exception_returns_json_when_requested(self):
-        with mock.patch.dict(application.app.view_functions, {"api_servicios": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_db"))}):
+        with mock.patch.dict(
+            application.app.view_functions,
+            {"api_servicios": mock.Mock(side_effect=RuntimeError("error_interno_confidencial_db"))},
+        ):
             client = application.app.test_client()
             application.app.config["PROPAGATE_EXCEPTIONS"] = False
             resp = client.get("/api/servicios", headers={"Accept": "application/json"})
@@ -1021,7 +1260,9 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
 
     def test_error_html_displays_request_id(self):
         client = application.app.test_client()
-        resp = client.get("/pagina-que-no-existe", headers={"X-Request-ID": "mi-request-id-visible-999"})
+        resp = client.get(
+            "/pagina-que-no-existe", headers={"X-Request-ID": "mi-request-id-visible-999"}
+        )
         self.assertEqual(resp.status_code, 404)
         body = resp.get_data(as_text=True)
         self.assertIn("mi-request-id-visible-999", body)
@@ -1033,12 +1274,10 @@ class TestLogFileAndHealth(unittest.TestCase):
 
     def test_rotating_file_handler_adjuntado_al_logger_raiz(self):
         from logging.handlers import RotatingFileHandler
+
         root = logging.getLogger()
         self.assertTrue(
-            any(
-                isinstance(handler, RotatingFileHandler)
-                for handler in root.handlers
-            ),
+            any(isinstance(handler, RotatingFileHandler) for handler in root.handlers),
             "El RotatingFileHandler de logs/app.log debe estar adjuntado al logger raíz",
         )
 
@@ -1050,7 +1289,9 @@ class TestLogFileAndHealth(unittest.TestCase):
 
     def test_health_503_sin_database_y_sin_exponer_el_error(self):
         import sqlite3
+
         import database.database as database_mod
+
         real_get_connection = database_mod.get_connection
 
         class GuardedConnection:
@@ -1069,9 +1310,7 @@ class TestLogFileAndHealth(unittest.TestCase):
             return GuardedConnection(real_get_connection(*args, **kwargs))
 
         client = application.app.test_client()
-        with mock.patch.object(
-            application, "get_connection", side_effect=guarded_get_connection
-        ):
+        with mock.patch.object(application, "get_connection", side_effect=guarded_get_connection):
             resp = client.get("/health")
 
         self.assertEqual(resp.status_code, 503)
@@ -1097,19 +1336,39 @@ class TestGeminiTechnicalRobustness(unittest.TestCase):
         mock_client = mock.Mock()
         mock_client.models.generate_content.side_effect = mock_generate
 
-        with mock.patch.object(ai, "get_gemini_client", return_value=mock_client), \
-             mock.patch.object(ai, "get_services_prompt", return_value=""), \
-             mock.patch.object(ai, "get_business_hours_prompt", return_value=""), \
-             mock.patch.object(ai, "get_business_identity", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.get_business_settings_scoped", return_value={"business_name": "Test", "business_type": "Test", "business_description": "", "timezone": "UTC"}), \
-             mock.patch("services.ai.search_knowledge_scoped", return_value=[]), \
-             mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None):
+        with (
+            mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
+            mock.patch.object(ai, "get_services_prompt", return_value=""),
+            mock.patch.object(ai, "get_business_hours_prompt", return_value=""),
+            mock.patch.object(
+                ai,
+                "get_business_identity",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch(
+                "services.ai.get_business_settings_scoped",
+                return_value={
+                    "business_name": "Test",
+                    "business_type": "Test",
+                    "business_description": "",
+                    "timezone": "UTC",
+                },
+            ),
+            mock.patch("services.ai.search_knowledge_scoped", return_value=[]),
+            mock.patch.object(ai, "get_or_create_conversation_session_scoped", return_value=None),
+        ):
             ai.ask_ai("hola", business_id=1)
             self.assertTrue(len(captured_config) > 0)
             self.assertEqual(captured_config[0].max_output_tokens, ai.MAX_OUTPUT_TOKENS)
 
     def test_max_tool_iterations_defined_once(self):
         import inspect
+
         source = inspect.getsource(ai)
         matches = re.findall(r"^MAX_TOOL_ITERATIONS\s*=", source, flags=re.MULTILINE)
         self.assertEqual(len(matches), 1)
@@ -1123,11 +1382,7 @@ class TestFormatConfirmationBusinessId(unittest.TestCase):
             ai, "get_business_identity", return_value={"business_name": "Mi Negocio"}
         ) as mock_gbi:
             result = ai.format_reservation_confirmation(
-                nombre="Juan",
-                servicio="Corte",
-                fecha="2026-10-15",
-                hora="10:00",
-                business_id=1,
+                nombre="Juan", servicio="Corte", fecha="2026-10-15", hora="10:00", business_id=1
             )
             mock_gbi.assert_called_once_with(1)
             self.assertIn("Mi Negocio", result)
@@ -1136,10 +1391,7 @@ class TestFormatConfirmationBusinessId(unittest.TestCase):
     def test_format_reservation_confirmation_requires_business_id(self):
         with self.assertRaises(TypeError):
             ai.format_reservation_confirmation(
-                nombre="Juan",
-                servicio="Corte",
-                fecha="2026-10-15",
-                hora="10:00",
+                nombre="Juan", servicio="Corte", fecha="2026-10-15", hora="10:00"
             )
 
     def test_format_reschedule_confirmation_uses_business_id(self):
@@ -1147,19 +1399,14 @@ class TestFormatConfirmationBusinessId(unittest.TestCase):
             ai, "get_business_identity", return_value={"business_name": "Mi Negocio"}
         ) as mock_gbi:
             result = ai.format_reschedule_confirmation(
-                fecha="2026-10-20",
-                hora="14:00",
-                business_id=1,
+                fecha="2026-10-20", hora="14:00", business_id=1
             )
             mock_gbi.assert_called_once_with(1)
             self.assertIn("Mi Negocio", result)
 
     def test_format_reschedule_confirmation_requires_business_id(self):
         with self.assertRaises(TypeError):
-            ai.format_reschedule_confirmation(
-                fecha="2026-10-20",
-                hora="14:00",
-            )
+            ai.format_reschedule_confirmation(fecha="2026-10-20", hora="14:00")
 
 
 if __name__ == "__main__":

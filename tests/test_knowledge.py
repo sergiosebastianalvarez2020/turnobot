@@ -5,17 +5,12 @@ from pathlib import Path
 import database.database as database
 from services.knowledge import (
     create_knowledge_scoped,
+    delete_knowledge_scoped,
+    get_knowledge_by_id_scoped,
     get_knowledge_scoped,
     search_knowledge_scoped,
     update_knowledge_scoped,
-    delete_knowledge_scoped,
-    get_knowledge_by_id_scoped,
-    TYPE_FAQ,
-    TYPE_INSTRUCTION,
-    TYPE_POLICY,
 )
-from database.database import create_user_scoped
-from werkzeug.security import generate_password_hash
 
 
 class TestKnowledge(unittest.TestCase):
@@ -25,7 +20,9 @@ class TestKnowledge(unittest.TestCase):
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
         # Crear usuario owner para tests
-        self.owner_id = database.create_user_scoped("owner@test.com", database.generate_password_hash("testpass"), active=True)
+        self.owner_id = database.create_user_scoped(
+            "owner@test.com", database.generate_password_hash("testpass"), active=True
+        )
         # Asignar rol owner al negocio 1
         connection = database.get_connection()
         try:
@@ -48,11 +45,11 @@ class TestKnowledge(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
-                'INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)',
+                "INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)",
                 (self.owner_id, 2, owner_role["id"]),
             )
             connection.commit()
@@ -124,7 +121,9 @@ class TestKnowledge(unittest.TestCase):
 
     def test_knowledge_in_prompt(self):
         """Conocimiento relevante aparece en search_knowledge_scoped."""
-        create_knowledge_scoped(1, "faq", "Aceptan transferencia", "Si, al alias MINE.NEGOCIO", "pagos", self.owner_id)
+        create_knowledge_scoped(
+            1, "faq", "Aceptan transferencia", "Si, al alias MINE.NEGOCIO", "pagos", self.owner_id
+        )
 
         # Verificar que la búsqueda encuentra el conocimiento
         results = search_knowledge_scoped(1, "transferencia", limit=5)
@@ -138,11 +137,11 @@ class TestKnowledge(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
-                'INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)',
+                "INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)",
                 (self.owner_id, 2, owner_role["id"]),
             )
             connection.commit()
@@ -153,7 +152,9 @@ class TestKnowledge(unittest.TestCase):
             connection.close()
 
         create_knowledge_scoped(1, "faq", "Pregunta A", "Respuesta A", "tag1", self.owner_id)
-        create_knowledge_scoped(2, "faq", "Pregunta B", "Respuesta B SOLO PARA B", "tag2", self.owner_id)
+        create_knowledge_scoped(
+            2, "faq", "Pregunta B", "Respuesta B SOLO PARA B", "tag2", self.owner_id
+        )
 
         # Búsqueda scoped por business_id=1 no debe devolver conocimiento de business_id=2
         results = search_knowledge_scoped(1, "Pregunta B", limit=5)
@@ -176,7 +177,9 @@ class TestKnowledge(unittest.TestCase):
         # Crear entrada activa
         create_knowledge_scoped(1, "faq", "Activa", "Esta deberia aparecer", "tag", self.owner_id)
         # Crear entrada inactiva
-        kid = create_knowledge_scoped(1, "faq", "Inactiva", "Esta no deberia aparecer", "tag", self.owner_id)
+        kid = create_knowledge_scoped(
+            1, "faq", "Inactiva", "Esta no deberia aparecer", "tag", self.owner_id
+        )
         update_knowledge_scoped(kid, 1, "faq", "Inactiva", "Esta no deberia aparecer", "tag", 0)
 
         # Solo la activa debe aparecer en la búsqueda
@@ -194,8 +197,22 @@ class TestKnowledge(unittest.TestCase):
 
     def test_fts_search(self):
         """Busqueda por palabras clave devuelve la entrada correcta."""
-        create_knowledge_scoped(1, "faq", "Aceptan transferencia bancaria", "Si, aceptamos transferencias", "pagos transferencia", self.owner_id)
-        create_knowledge_scoped(1, "faq", "Cuanto cuesta el corte", "El corte cuesta 5000", "precios corte", self.owner_id)
+        create_knowledge_scoped(
+            1,
+            "faq",
+            "Aceptan transferencia bancaria",
+            "Si, aceptamos transferencias",
+            "pagos transferencia",
+            self.owner_id,
+        )
+        create_knowledge_scoped(
+            1,
+            "faq",
+            "Cuanto cuesta el corte",
+            "El corte cuesta 5000",
+            "precios corte",
+            self.owner_id,
+        )
 
         results = search_knowledge_scoped(1, "transferencia", limit=5)
         self.assertEqual(len(results), 1)

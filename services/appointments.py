@@ -1,7 +1,7 @@
-import sqlite3
-import re
 import hashlib
+import re
 import secrets
+import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -11,16 +11,12 @@ else:  # pragma: no cover
     _EMAIL_RE = None
 
 from database.database import (
-    get_active_services,
     get_active_services_scoped,
-    get_business_settings,
     get_business_settings_scoped,
     get_connection,
     get_resource_scoped,
-    get_weekly_schedule,
     get_weekly_schedule_scoped,
 )
-
 
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
@@ -49,7 +45,6 @@ def _validate_resource(resource_id, business_id, connection=None):
     return resource_id_int, None
 
 
-
 def _to_minutes(hm):
     """Convierte 'HH:MM' a minutos desde medianoche."""
     hour, minute = hm.split(":")
@@ -58,7 +53,7 @@ def _to_minutes(hm):
 
 def _to_hhmm(minutes):
     """Convierte minutos desde medianoche a 'HH:MM' (con ceros a la izquierda)."""
-    return "{:02d}:{:02d}".format(minutes // 60, minutes % 60)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 def _fits_closing(date, time, end_minutes, business_id, connection=None):
@@ -66,7 +61,9 @@ def _fits_closing(date, time, end_minutes, business_id, connection=None):
     `end_minutes` cabe dentro del cierre del bloque (mañana/tarde) que lo
     contiene. Permite terminar exactamente al cierre."""
     appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
+    schedule = get_weekly_schedule_scoped(
+        appointment_date.weekday(), business_id, connection=connection
+    )
     if not schedule or not schedule["is_open"]:
         return False
     start_minutes = _to_minutes(time)
@@ -85,7 +82,9 @@ def _fits_closing(date, time, end_minutes, business_id, connection=None):
 
 def get_business_timezone(business_id, connection=None):
     settings = get_business_settings_scoped(business_id, connection=connection)
-    configured_timezone = settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
+    configured_timezone = (
+        settings["timezone"] if settings and settings["timezone"] else DEFAULT_TIMEZONE
+    )
     try:
         ZoneInfo(configured_timezone)
     except (TypeError, ValueError, ZoneInfoNotFoundError):
@@ -97,26 +96,27 @@ def get_business_timezone(business_id, connection=None):
 # FUNCIONES DE VALIDACIÓN
 # ============================================================
 
+
 def validate_phone(phone):
     """
     Valida que el teléfono:
     - contenga solo dígitos
     - tenga al menos 7 dígitos
-    
+
     Devuelve True si es válido, False si no.
     """
     if not phone or not isinstance(phone, str):
         return False
-    
+
     phone_clean = normalize_phone(phone)
 
     if not phone_clean:
         return False
-    
+
     # Verificar que tenga al menos 7 dígitos
     if len(phone_clean) < 7:
         return False
-    
+
     return True
 
 
@@ -135,19 +135,19 @@ def validate_customer_name(customer_name):
     Valida que el nombre del cliente:
     - sea un string
     - tenga al menos 2 caracteres
-    
+
     Devuelve True si es válido, False si no.
     """
     if not customer_name or not isinstance(customer_name, str):
         return False
-    
+
     # Remover espacios en blanco al inicio y final
     name_clean = customer_name.strip()
-    
+
     # Verificar que tenga al menos 2 caracteres
     if len(name_clean) < 2:
         return False
-    
+
     return True
 
 
@@ -169,6 +169,7 @@ def validate_email(email):
 # HORARIOS DISPONIBLES
 # ============================================================
 
+
 def get_available_slots(date, business_id, service=None, duration=None, connection=None):
     """Construye la grilla de horarios a partir de la configuración del negocio.
 
@@ -182,14 +183,18 @@ def get_available_slots(date, business_id, service=None, duration=None, connecti
     slot_duration + break_between_slots.
     """
     appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
+    schedule = get_weekly_schedule_scoped(
+        appointment_date.weekday(), business_id, connection=connection
+    )
     settings = get_business_settings_scoped(business_id, connection=connection)
 
     if not schedule or not schedule["is_open"]:
         return []
 
     slot_duration = settings["slot_duration"] if settings and settings["slot_duration"] else 60
-    break_between_slots = settings["break_between_slots"] if settings and settings["break_between_slots"] else 0
+    break_between_slots = (
+        settings["break_between_slots"] if settings and settings["break_between_slots"] else 0
+    )
     services = get_active_services_scoped(business_id, connection=connection)
     if duration is not None and duration <= 0:
         return []
@@ -224,6 +229,7 @@ def get_available_slots(date, business_id, service=None, duration=None, connecti
 # VALIDAR FECHA
 # ============================================================
 
+
 def validate_appointment_date(date, business_id, connection=None):
     """
     Valida que la fecha del turno:
@@ -251,49 +257,28 @@ def validate_appointment_date(date, business_id, connection=None):
     """
 
     try:
-
-        appointment_date = datetime.strptime(
-            date,
-            "%Y-%m-%d"
-        ).date()
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
 
     except (ValueError, TypeError):
-
-        return {
-            "valid": False,
-            "reason": "invalid_date",
-        }
-
+        return {"valid": False, "reason": "invalid_date"}
 
     today = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection))).date()
-
 
     # --------------------------------------------------------
     # FECHA PASADA
     # --------------------------------------------------------
 
     if appointment_date < today:
+        return {"valid": False, "reason": "past_date"}
 
-        return {
-            "valid": False,
-            "reason": "past_date",
-        }
-
-
-    schedule = get_weekly_schedule_scoped(appointment_date.weekday(), business_id, connection=connection)
+    schedule = get_weekly_schedule_scoped(
+        appointment_date.weekday(), business_id, connection=connection
+    )
 
     if not schedule or not schedule["is_open"]:
+        return {"valid": False, "reason": "closed_day"}
 
-        return {
-            "valid": False,
-            "reason": "closed_day",
-        }
-
-
-    return {
-        "valid": True,
-        "reason": None,
-    }
+    return {"valid": True, "reason": None}
 
 
 def validate_appointment_time(date, time, business_id=None, connection=None):
@@ -305,7 +290,9 @@ def validate_appointment_time(date, time, business_id=None, connection=None):
         return False, "invalid_time"
 
     now = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection)))
-    if appointment_date == now.date() and parsed_time <= now.time().replace(second=0, microsecond=0):
+    if appointment_date == now.date() and parsed_time <= now.time().replace(
+        second=0, microsecond=0
+    ):
         return False, "past_time"
     return True, None
 
@@ -313,6 +300,7 @@ def validate_appointment_time(date, time, business_id=None, connection=None):
 # ============================================================
 # CONSULTAR DISPONIBILIDAD
 # ============================================================
+
 
 def get_available_times(date, business_id=None, service=None, resource_id=None):
     if business_id is None:
@@ -336,19 +324,24 @@ def get_available_times(date, business_id=None, service=None, resource_id=None):
         validation = validate_appointment_date(date, business_id, connection=connection)
 
         if not validation["valid"]:
-
             return []
         service_duration = None
         if service is not None:
             selected = next(
-                (row for row in get_active_services_scoped(business_id, connection=connection) if row["name"] == service),
+                (
+                    row
+                    for row in get_active_services_scoped(business_id, connection=connection)
+                    if row["name"] == service
+                ),
                 None,
             )
             if selected is None or selected["duration"] <= 0:
                 return []
             service_duration = selected["duration"]
 
-        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id, connection=connection)
+        resource_id_validated, resource_reason = _validate_resource(
+            resource_id, business_id, connection=connection
+        )
         if resource_id is not None and resource_id_validated is None:
             return []
 
@@ -388,20 +381,21 @@ def get_available_times(date, business_id=None, service=None, resource_id=None):
             for time in get_available_slots(date, business_id, service, connection=connection)
             if not any(
                 _to_minutes(time) < end_minute
-                and (service_duration is None or _to_minutes(time) + service_duration > start_minute)
+                and (
+                    service_duration is None or _to_minutes(time) + service_duration > start_minute
+                )
                 for start_minute, end_minute in occupied_intervals
             )
         ]
 
-
     finally:
-
         connection.close()
 
 
 # ============================================================
 # CREAR TURNO
 # ============================================================
+
 
 def create_appointment(
     customer_name,
@@ -452,58 +446,34 @@ def create_appointment(
     # --------------------------------------------------------
 
     if not validate_customer_name(customer_name):
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_name",
-        }
+        return {"success": False, "appointment_id": None, "reason": "invalid_name"}
 
     # --------------------------------------------------------
     # VALIDAR TELÉFONO
     # --------------------------------------------------------
 
     if not validate_phone(phone):
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_phone",
-        }
+        return {"success": False, "appointment_id": None, "reason": "invalid_phone"}
 
     # --------------------------------------------------------
     # VALIDAR EMAIL (si se provee)
     # --------------------------------------------------------
 
     if not validate_email(email):
-        return {
-            "success": False,
-            "appointment_id": None,
-            "reason": "invalid_email",
-        }
+        return {"success": False, "appointment_id": None, "reason": "invalid_email"}
     customer_email = (email or "").strip()
 
     connection = get_connection()
 
     try:
-
         active_services = get_active_services_scoped(business_id, connection=connection)
-        service_row = next(
-            (row for row in active_services if row["name"] == service),
-            None,
-        )
+        service_row = next((row for row in active_services if row["name"] == service), None)
         if service_row is None:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": "invalid_service",
-            }
+            return {"success": False, "appointment_id": None, "reason": "invalid_service"}
 
         duration = service_row["duration"]
         if duration is None or duration <= 0:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": "invalid_duration",
-            }
+            return {"success": False, "appointment_id": None, "reason": "invalid_duration"}
 
         # --------------------------------------------------------
         # VALIDAR RECURSO (si se provee)
@@ -513,65 +483,46 @@ def create_appointment(
         # es rechazado con invalid_resource.
         # --------------------------------------------------------
 
-        resource_id_validated, resource_reason = _validate_resource(resource_id, business_id, connection=connection)
+        resource_id_validated, resource_reason = _validate_resource(
+            resource_id, business_id, connection=connection
+        )
         if resource_reason is not None:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": resource_reason,
-            }
+            return {"success": False, "appointment_id": None, "reason": resource_reason}
 
         # --------------------------------------------------------
         # VALIDAR FECHA
         # --------------------------------------------------------
 
-        validation = validate_appointment_date(
-            appointment_date,
-            business_id,
-            connection=connection,
-        )
+        validation = validate_appointment_date(appointment_date, business_id, connection=connection)
 
         if not validation["valid"]:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": validation["reason"],
-            }
+            return {"success": False, "appointment_id": None, "reason": validation["reason"]}
 
         # --------------------------------------------------------
         # VALIDAR HORARIO (formato y hora pasada)
         # --------------------------------------------------------
 
-        valid_time, time_reason = validate_appointment_time(appointment_date, appointment_time, business_id, connection=connection)
+        valid_time, time_reason = validate_appointment_time(
+            appointment_date, appointment_time, business_id, connection=connection
+        )
         if not valid_time:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": time_reason,
-            }
+            return {"success": False, "appointment_id": None, "reason": time_reason}
 
         start_minutes = _to_minutes(appointment_time)
         end_minutes = start_minutes + duration
         if end_minutes <= start_minutes:
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": "invalid_duration",
-            }
+            return {"success": False, "appointment_id": None, "reason": "invalid_duration"}
         appointment_end = _to_hhmm(end_minutes)
 
-        if appointment_time not in get_available_slots(appointment_date, business_id, service, connection=connection):
-            return {
-                "success": False,
-                "appointment_id": None,
-                "reason": "invalid_time",
-            }
+        if appointment_time not in get_available_slots(
+            appointment_date, business_id, service, connection=connection
+        ):
+            return {"success": False, "appointment_id": None, "reason": "invalid_time"}
 
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
 
         try:
-
             # ------------------------------------------------
             # VALIDAR HORARIO DE CIERRE
             #
@@ -579,13 +530,11 @@ def create_appointment(
             # del bloque (mañana/tarde) en el que comienza.
             # ------------------------------------------------
 
-            if not _fits_closing(appointment_date, appointment_time, end_minutes, business_id, connection=connection):
+            if not _fits_closing(
+                appointment_date, appointment_time, end_minutes, business_id, connection=connection
+            ):
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "appointment_id": None,
-                    "reason": "invalid_time",
-                }
+                return {"success": False, "appointment_id": None, "reason": "invalid_time"}
 
             # ------------------------------------------------
             # VERIFICAR SOLAPAMIENTO POR INTERVALO
@@ -633,21 +582,12 @@ def create_appointment(
                     AND ? < appointment_end
                     AND ? > appointment_time
                     """,
-                    (
-                        appointment_date,
-                        business_id,
-                        appointment_time,
-                        appointment_end,
-                    ),
+                    (appointment_date, business_id, appointment_time, appointment_end),
                 ).fetchone()
 
             if existing:
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "appointment_id": None,
-                    "reason": "occupied",
-                }
+                return {"success": False, "appointment_id": None, "reason": "occupied"}
 
             # ------------------------------------------------
             # CREAR TURNO
@@ -699,7 +639,7 @@ def create_appointment(
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")
             return {"success": False, "appointment_id": None, "reason": "occupied"}
-        except Exception as e:
+        except Exception:
             connection.execute("ROLLBACK")
             raise
 
@@ -711,7 +651,10 @@ def create_appointment(
 # OBTENER TODOS LOS TURNOS CONFIRMADOS
 # ============================================================
 
-def get_appointments(status="confirmed", appointment_date=None, business_id=None, limit=None, offset=None):
+
+def get_appointments(
+    status="confirmed", appointment_date=None, business_id=None, limit=None, offset=None
+):
     """
     Devuelve todos los turnos confirmados con soporte de paginación.
 
@@ -728,7 +671,6 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
     connection = get_connection()
 
     try:
-
         params = [status, status, appointment_date, appointment_date, business_id]
         query = """
             SELECT *
@@ -764,9 +706,7 @@ def get_appointments(status="confirmed", appointment_date=None, business_id=None
             result.append(item)
         return result
 
-
     finally:
-
         connection.close()
 
 
@@ -830,11 +770,8 @@ PUBLIC_APPOINTMENT_COLUMNS = (
     "business_id",
 )
 
-def get_customer_appointments(
-    customer_name,
-    phone=None,
-    business_id=None,
-):
+
+def get_customer_appointments(customer_name, phone=None, business_id=None):
     """
     Busca los turnos confirmados de un cliente.
 
@@ -851,9 +788,7 @@ def get_customer_appointments(
     connection = get_connection()
 
     try:
-
         if phone:
-
             rows = connection.execute(
                 f"""
                 SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
@@ -864,15 +799,10 @@ def get_customer_appointments(
                 AND business_id = ?
                 ORDER BY appointment_date, appointment_time
                 """,
-                (
-                    customer_name,
-                    normalize_phone(phone),
-                    business_id,
-                ),
+                (customer_name, normalize_phone(phone), business_id),
             ).fetchall()
 
         else:
-
             rows = connection.execute(
                 f"""
                 SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
@@ -882,27 +812,19 @@ def get_customer_appointments(
                 AND business_id = ?
                 ORDER BY appointment_date, appointment_time
                 """,
-                (
-                    customer_name,
-                    business_id,
-                ),
+                (customer_name, business_id),
             ).fetchall()
 
-
-        return [
-            dict(row)
-            for row in rows
-        ]
-
+        return [dict(row) for row in rows]
 
     finally:
-
         connection.close()
 
 
 # ============================================================
 # CANCELAR TURNO
 # ============================================================
+
 
 def get_appointment_by_token(appointment_id, business_id, management_token):
     """Devuelve el turno de un negocio si el token de gestión es correcto.
@@ -920,11 +842,7 @@ def get_appointment_by_token(appointment_id, business_id, management_token):
 
 
 def cancel_appointment(
-    appointment_id,
-    phone,
-    business_id=None,
-    management_token=None,
-    customer_name=None,
+    appointment_id, phone, business_id=None, management_token=None, customer_name=None
 ):
     """
     Cancela un turno confirmado.
@@ -953,7 +871,6 @@ def cancel_appointment(
 
     if management_token is None or not isinstance(management_token, str) or not management_token:
         return False
-    token_given = True  # management_token es obligatorio
 
     # --------------------------------------------------------
     # VALIDAR APPOINTMENT_ID
@@ -971,12 +888,10 @@ def cancel_appointment(
     connection = get_connection()
 
     try:
-
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
 
         try:
-
             # ------------------------------------------------
             # VERIFICAR QUE EXISTE Y PERTENECE AL SOLICITANTE
             # ------------------------------------------------
@@ -990,11 +905,7 @@ def cancel_appointment(
                 AND business_id = ?
                 AND management_token_hash = ?
                 """,
-                (
-                    appointment_id_int,
-                    business_id,
-                    hashlib.sha256(management_token.encode()).hexdigest(),
-                ),
+                (appointment_id_int, business_id, token_hash),
             ).fetchone()
 
             if existing is None:
@@ -1014,18 +925,14 @@ def cancel_appointment(
                 AND business_id = ?
                 AND management_token_hash = ?
                 """,
-                (
-                    appointment_id_int,
-                    business_id,
-                    hashlib.sha256(management_token.encode()).hexdigest(),
-                ),
+                (appointment_id_int, business_id, token_hash),
             )
 
             connection.commit()
 
             return cursor.rowcount > 0
 
-        except Exception as e:
+        except Exception:
             connection.execute("ROLLBACK")
             raise
 
@@ -1036,6 +943,7 @@ def cancel_appointment(
 # ============================================================
 # REPROGRAMAR TURNO
 # ============================================================
+
 
 def reschedule_appointment(
     appointment_id,
@@ -1073,7 +981,6 @@ def reschedule_appointment(
 
     if management_token is None or not isinstance(management_token, str) or not management_token:
         return {"success": False, "reason": "not_found"}
-    token_given = True
 
     # --------------------------------------------------------
     # VALIDAR APPOINTMENT_ID
@@ -1082,29 +989,19 @@ def reschedule_appointment(
     try:
         appointment_id_int = int(appointment_id)
         if appointment_id_int <= 0:
-            return {
-                "success": False,
-                "reason": "invalid_appointment_id",
-            }
+            return {"success": False, "reason": "invalid_appointment_id"}
     except (ValueError, TypeError):
-        return {
-            "success": False,
-            "reason": "invalid_appointment_id",
-        }
+        return {"success": False, "reason": "invalid_appointment_id"}
 
     token_hash = hashlib.sha256(management_token.encode()).hexdigest()
-    normalized_phone = normalize_phone(phone) if phone else None
-    normalized_name = (customer_name or "").strip()
 
     connection = get_connection()
 
     try:
-
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
 
         try:
-
             # ------------------------------------------------
             # BUSCAR TURNO ORIGINAL
             # ------------------------------------------------
@@ -1118,18 +1015,12 @@ def reschedule_appointment(
                 AND business_id = ?
                 AND management_token_hash = ?
                 """,
-                (
-                    appointment_id_int, business_id,
-                    token_hash,
-                ),
+                (appointment_id_int, business_id, token_hash),
             ).fetchone()
 
             if appointment is None:
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "reason": "not_found",
-                }
+                return {"success": False, "reason": "not_found"}
 
             # Conservar la duración histórica del turno (no la del servicio
             # actual). Un cambio posterior de duración del servicio no altera
@@ -1143,40 +1034,31 @@ def reschedule_appointment(
             # VALIDAR NUEVA FECHA
             # ------------------------------------------------
 
-            validation = validate_appointment_date(
-                new_date,
-                business_id,
-                connection=connection,
-            )
+            validation = validate_appointment_date(new_date, business_id, connection=connection)
 
             if not validation["valid"]:
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "reason": validation["reason"],
-                }
+                return {"success": False, "reason": validation["reason"]}
 
             # ------------------------------------------------
             # VALIDAR NUEVO HORARIO
             # ------------------------------------------------
 
-            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration, connection=connection):
+            if new_time not in get_available_slots(
+                new_date, business_id, duration=historical_duration, connection=connection
+            ):
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "reason": "invalid_time",
-                }
+                return {"success": False, "reason": "invalid_time"}
 
             # ------------------------------------------------
             # VALIDAR HORARIO DE CIERRE
             # ------------------------------------------------
 
-            if not _fits_closing(new_date, new_time, end_minutes, business_id, connection=connection):
+            if not _fits_closing(
+                new_date, new_time, end_minutes, business_id, connection=connection
+            ):
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "reason": "invalid_time",
-                }
+                return {"success": False, "reason": "invalid_time"}
 
             # ------------------------------------------------
             # VERIFICAR SOLAPAMIENTO POR INTERVALO
@@ -1223,21 +1105,12 @@ def reschedule_appointment(
                     AND ? < appointment_end
                     AND ? > appointment_time
                     """,
-                    (
-                        new_date,
-                        appointment_id_int,
-                        business_id,
-                        new_time,
-                        new_end,
-                    ),
+                    (new_date, appointment_id_int, business_id, new_time, new_end),
                 ).fetchone()
 
             if existing:
                 connection.execute("ROLLBACK")
-                return {
-                    "success": False,
-                    "reason": "occupied",
-                }
+                return {"success": False, "reason": "occupied"}
 
             # ------------------------------------------------
             # ACTUALIZAR TURNO
@@ -1250,22 +1123,17 @@ def reschedule_appointment(
                 WHERE id = ? AND status = 'confirmed' AND business_id = ?
                 AND management_token_hash = ?
                 """,
-                (new_date, new_time, new_end, appointment_id_int, business_id,
-                 token_hash),
+                (new_date, new_time, new_end, appointment_id_int, business_id, token_hash),
             )
 
             connection.commit()
 
-            return {
-                "success": True,
-                "reason": "rescheduled",
-                "resource_id": historical_resource_id,
-            }
+            return {"success": True, "reason": "rescheduled", "resource_id": historical_resource_id}
 
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")
             return {"success": False, "reason": "occupied"}
-        except Exception as e:
+        except Exception:
             connection.execute("ROLLBACK")
             raise
 
@@ -1274,11 +1142,7 @@ def reschedule_appointment(
 
 
 def reschedule_appointment_admin(
-    appointment_id,
-    new_date,
-    new_time,
-    business_id=None,
-    resource_id=None,
+    appointment_id, new_date, new_time, business_id=None, resource_id=None
 ):
     """
     Cambia la fecha y hora de un turno confirmado desde el panel admin.
@@ -1335,16 +1199,22 @@ def reschedule_appointment_admin(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": validation["reason"]}
 
-            time_valid, time_reason = validate_appointment_time(new_date, new_time, business_id, connection=connection)
+            time_valid, time_reason = validate_appointment_time(
+                new_date, new_time, business_id, connection=connection
+            )
             if not time_valid:
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": time_reason}
 
-            if new_time not in get_available_slots(new_date, business_id, duration=historical_duration, connection=connection):
+            if new_time not in get_available_slots(
+                new_date, business_id, duration=historical_duration, connection=connection
+            ):
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
 
-            if not _fits_closing(new_date, new_time, end_minutes, business_id, connection=connection):
+            if not _fits_closing(
+                new_date, new_time, end_minutes, business_id, connection=connection
+            ):
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
 
@@ -1410,11 +1280,7 @@ def reschedule_appointment_admin(
             )
 
             connection.commit()
-            return {
-                "success": True,
-                "reason": "rescheduled",
-                "resource_id": historical_resource_id,
-            }
+            return {"success": True, "reason": "rescheduled", "resource_id": historical_resource_id}
 
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")

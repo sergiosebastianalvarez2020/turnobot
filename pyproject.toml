@@ -25,3 +25,63 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [
+    "venv",
+    "venv312",
+    ".kilo",
+    ".github",
+    "logs",
+    "database/backups",
+    "get_inventory.py",
+]
+
+[tool.ruff.lint]
+# Conjunto controlado y razonable: errores de sintaxis/imports (E,F),
+# orden de imports (I), modernizaciones seguras (UP), bugbear (B) y
+# whitespace (W). Los patrones de "except Exception" fueron auditados
+# manualmente (ver docs/adr/ADR-0004) por lo que BLE001/B009 se omiten.
+select = ["E", "F", "I", "UP", "B", "W"]
+# E501 (línea muy larga) queda a cargo de `ruff format`, que ya lo resuelve.
+# BLE001/B009: los "except Exception" fueron auditados manualmente
+# (ver docs/adr/ADR-0004).
+# B017/B905: patrones deliberados en tests (assertRaises(Exception) genérico
+# y zip() en snapshots de migraciones); cambiarlos alteraría aserciones.
+ignore = ["E501", "BLE001", "B009", "B017", "B905"]
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+files = ["services/product.py"]
+# Incremental: solo los módulos listados exigen anotaciones. El resto del
+# código permanece sin tipos hasta que se cubra (ver docs/adr/ADR-0005).
+
+[[tool.mypy.overrides]]
+module = "services.product"
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[tool.ruff.lint.per-file-ignores]
+# app.py y application/__init__.py son fachadas de compatibilidad que
+# re-exportan nombres consumidos por rutas y tests (from app import ...).
+"app.py" = ["F401", "I001", "E402"]
+"application/__init__.py" = ["F401"]
+
+# Patrón deliberado de bootstrap: load_dotenv()/sys.path antes de imports
+# de módulos del proyecto (scripts standalone y tests que lo simulan).
+"scripts/retry_failed_notifications.py" = ["E402"]
+"scripts/send_reminders.py" = ["E402"]
+"tests/test_check_health.py" = ["E402"]
+"tests/test_prune_backups.py" = ["E402"]
+"tests/test_verify_backup.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = true

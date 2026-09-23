@@ -8,7 +8,7 @@ por logout.
 import re
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,13 +20,11 @@ from database.database import get_connection
 
 
 def _now_iso():
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _expires_iso(delta_seconds):
-    return (
-        datetime.now(tz=timezone.utc) + timedelta(seconds=delta_seconds)
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return (datetime.now(tz=UTC) + timedelta(seconds=delta_seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class BaseMultiTenantAdminTest(unittest.TestCase):
@@ -38,9 +36,7 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
         self.client = application.app.test_client()
 
     def tearDown(self):
@@ -66,9 +62,7 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
 
     def _make_user(self, email, password, business, role="owner"):
         """Crea un usuario con membresía en un negocio. Devuelve user_id."""
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -85,8 +79,7 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
     def _login(self, slug, email, password):
         token = self._login_csrf(slug)
         return self.client.post(
-            f"/b/{slug}/login",
-            data={"email": email, "password": password, "csrf_token": token},
+            f"/b/{slug}/login", data={"email": email, "password": password, "csrf_token": token}
         ), token
 
     def _session_cookie(self):
@@ -105,14 +98,13 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
             for part in header_value.split(";"):
                 part = part.strip()
                 if part.startswith("session="):
-                    return part[len("session="):]
+                    return part[len("session=") :]
         return None
 
 
 class TestLoginPorSlug(BaseMultiTenantAdminTest):
-
     def test_login_slug_owner_negocio_2_accede_a_su_admin(self):
-        uid = self._make_user("b@test.com", "secreta", 2, "owner")
+        self._make_user("b@test.com", "secreta", 2, "owner")
         response, _ = self._login("business-b", "b@test.com", "secreta")
         self.assertEqual(response.status_code, 302)
         self.assertIn("/b/business-b/admin", response.location)
@@ -145,7 +137,6 @@ class TestLoginPorSlug(BaseMultiTenantAdminTest):
 
 
 class TestRolesYAutorizacion(BaseMultiTenantAdminTest):
-
     def test_rol_owner_puede_administrar(self):
         self._make_user("b@test.com", "secreta", 2, "owner")
         self._login("business-b", "b@test.com", "secreta")
@@ -174,7 +165,6 @@ class TestRolesYAutorizacion(BaseMultiTenantAdminTest):
 
 
 class TestAdministracionPorNegocio(BaseMultiTenantAdminTest):
-
     def test_crear_servicio_solo_para_negocio_2(self):
         self._make_user("b@test.com", "secreta", 2, "owner")
         self._login("business-b", "b@test.com", "secreta")
@@ -193,15 +183,12 @@ class TestAdministracionPorNegocio(BaseMultiTenantAdminTest):
         )
         self.assertEqual(response.status_code, 302)
         nombres = {
-            r["name"] for r in self._query(
-                "SELECT name FROM services WHERE business_id = 2"
-            )
+            r["name"] for r in self._query("SELECT name FROM services WHERE business_id = 2")
         }
         self.assertIn("Servicio B nuevo", nombres)
         # El intento de inyección business_id=1 no debe crear en el negocio 1.
         nombres_a = {
-            r["name"]
-            for r in self._query("SELECT name FROM services WHERE business_id = 1")
+            r["name"] for r in self._query("SELECT name FROM services WHERE business_id = 1")
         }
         self.assertNotIn("Servicio B nuevo", nombres_a)
 
@@ -227,13 +214,15 @@ class TestAdministracionPorNegocio(BaseMultiTenantAdminTest):
 
 
 class TestAislamientoApiPublica(BaseMultiTenantAdminTest):
-
     def test_api_servicios_sigue_aislada_con_membresias(self):
         self._make_user("a@test.com", "secreta", 1, "owner")
         self._make_user("b@test.com", "secreta", 2, "owner")
 
-        with patch.object(application, "resolve_business",
-                          return_value={"id": 2, "name": "Business B", "slug": "business-b"}):
+        with patch.object(
+            application,
+            "resolve_business",
+            return_value={"id": 2, "name": "Business B", "slug": "business-b"},
+        ):
             response = self.client.get("/api/servicios")
         self.assertEqual(response.status_code, 200)
         nombres = {i["nombre"] for i in response.get_json()["servicios"]}
@@ -241,7 +230,6 @@ class TestAislamientoApiPublica(BaseMultiTenantAdminTest):
 
 
 class TestSesion(BaseMultiTenantAdminTest):
-
     def test_logout_revoca_sesion_activa(self):
         self._make_user("b@test.com", "secreta", 2, "owner")
         self._login("business-b", "b@test.com", "secreta")
@@ -253,8 +241,7 @@ class TestSesion(BaseMultiTenantAdminTest):
         self.assertEqual(logout.status_code, 302)
         # La sesión persistente quedó revocada y la cookie limpia.
         self.assertEqual(
-            self._query("SELECT COUNT(*) n FROM sessions WHERE revoked = 1")[0]["n"],
-            1,
+            self._query("SELECT COUNT(*) n FROM sessions WHERE revoked = 1")[0]["n"], 1
         )
         after = self.client.get("/b/business-b/admin")
         self.assertIn("login", after.headers.get("Location", ""))
@@ -321,17 +308,15 @@ class TestSesion(BaseMultiTenantAdminTest):
         )
         self.assertEqual(client_b.get("/b/business-b/admin").status_code, 200)
         self.assertEqual(
-            self._query("SELECT COUNT(*) n FROM sessions WHERE revoked = 0")[0]["n"],
-            2,
+            self._query("SELECT COUNT(*) n FROM sessions WHERE revoked = 0")[0]["n"], 2
         )
 
 
 class TestModeloDatos(BaseMultiTenantAdminTest):
-
     def test_tablas_auth_existen(self):
-        tablas = {r["name"] for r in self._query(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        )}
+        tablas = {
+            r["name"] for r in self._query("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
         self.assertTrue({"users", "roles", "business_users", "sessions"} <= tablas)
 
     def test_adm_no_se_usaba_como_autenticacion_normal(self):

@@ -10,15 +10,7 @@ Contiene las view functions para:
 Estas rutas manejan invitaciones para staff/admin y owner (público).
 """
 
-from flask import (
-    abort,
-    g,
-    redirect,
-    render_template,
-    request,
-    session,
-    url_for,
-)
+from flask import abort, g, redirect, render_template, request, session, url_for
 
 from extensions import valid_csrf_token
 from services import platform as platform_service
@@ -33,7 +25,9 @@ def staff_invitation(slug, token):
 
     invitation = platform_service.get_staff_invitation_for_business(business["id"], token)
     if invitation is None:
-        return render_template("staff_invitation.html", business_name=business["name"], invalid=True), 404
+        return render_template(
+            "staff_invitation.html", business_name=business["name"], invalid=True
+        ), 404
 
     if request.method == "GET":
         return render_template(
@@ -86,7 +80,9 @@ def public_invitation(slug, token):
         return render_template("invitacion.html", business=business, invalid=True), 404
 
     if request.method == "GET":
-        return render_template("invitacion.html", business=business, invitation=invitation, error=None, invalid=False)
+        return render_template(
+            "invitacion.html", business=business, invitation=invitation, error=None, invalid=False
+        )
 
     # POST: validar token antes que CSRF para que token vencido/usado devuelva 404
     if not valid_csrf_token(request.form.get("csrf_token")):
@@ -96,7 +92,12 @@ def public_invitation(slug, token):
     password2 = request.form.get("password2", "")
 
     if password != password2:
-        return render_template("invitacion.html", business=business, invitation=invitation, error="Las contraseñas no coinciden."), 200
+        return render_template(
+            "invitacion.html",
+            business=business,
+            invitation=invitation,
+            error="Las contraseñas no coinciden.",
+        ), 200
 
     result = platform_service.accept_invitation(business_id, token, password)
     if not result["success"]:
@@ -106,7 +107,9 @@ def public_invitation(slug, token):
             error = "Enlace no válido o vencido."
         else:
             error = "No se pudo aceptar la invitación."
-        return render_template("invitacion.html", business=business, invitation=invitation, error=error), 200
+        return render_template(
+            "invitacion.html", business=business, invitation=invitation, error=error
+        ), 200
 
     return redirect(f"/b/{business['slug']}/login")
 
@@ -135,7 +138,9 @@ def admin_usuarios_invitar_enlace(slug=None):
     if role_name not in ("admin", "staff"):
         return redirect(_usuarios_url(usuarios_error="Rol no permitido."))
 
-    result = platform_service.create_staff_invitation(business_id, email, role_name, actor_user_id=actor_user_id)
+    result = platform_service.create_staff_invitation(
+        business_id, email, role_name, actor_user_id=actor_user_id
+    )
     if not result["success"]:
         if result["reason"] == "forbidden":
             return redirect(_usuarios_url(usuarios_error="Solo el owner puede invitar staff."))
@@ -147,11 +152,9 @@ def admin_usuarios_invitar_enlace(slug=None):
     business = platform_service.get_business_by_id_platform(business_id)
     business_name = business["name"] if business else "tu negocio"
     invitation_link = request.url_root.rstrip("/") + url_for(
-        "staff_invitation", slug=g.current_business["slug"], token=token,
+        "staff_invitation", slug=g.current_business["slug"], token=token
     )
-    sent, reason = send_staff_invitation_email(
-        email, invitation_link, business_name, role_name,
-    )
+    sent, reason = send_staff_invitation_email(email, invitation_link, business_name, role_name)
     if not sent and reason != "disabled":
         return redirect(_usuarios_url(usuarios_error="No se pudo enviar el email de invitación."))
     return redirect(_usuarios_url(usuarios_message="Invitación enviada a " + email + "."))

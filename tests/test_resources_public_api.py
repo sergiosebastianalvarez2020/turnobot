@@ -8,22 +8,18 @@ Cubre:
 - Negocios sin recursos
 """
 
+import json
 import tempfile
 import unittest
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import app as application
 import database.database as database
 from database.database import (
-    get_connection,
     create_resource_scoped,
+    get_connection,
     update_business_settings_scoped,
-)
-from services.appointments import (
-    create_appointment,
-    get_available_times,
 )
 
 
@@ -35,7 +31,6 @@ def _next_open_day():
 
 
 class BaseResourcePublicAPITest(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
         cls._original_database_path = database.DATABASE_PATH
@@ -82,12 +77,22 @@ class BaseResourcePublicAPITest(unittest.TestCase):
             conn.close()
 
         update_business_settings_scoped(
-            1, "El Corte", "Barbería", "EC", "Corte clásico",
-            "America/Argentina/Buenos_Aires", notifications_enabled=0
+            1,
+            "El Corte",
+            "Barbería",
+            "EC",
+            "Corte clásico",
+            "America/Argentina/Buenos_Aires",
+            notifications_enabled=0,
         )
         update_business_settings_scoped(
-            2, "Padel Club", "Pádel", "PC", "Club de pádel",
-            "America/Argentina/Buenos_Aires", notifications_enabled=0
+            2,
+            "Padel Club",
+            "Pádel",
+            "PC",
+            "Club de pádel",
+            "America/Argentina/Buenos_Aires",
+            notifications_enabled=0,
         )
 
     def _create_resource(self, business_id, name, active=True):
@@ -107,6 +112,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
 
     def test_negocio_con_recursos_devuelve_sus_recursos(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -125,6 +131,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
 
     def test_negocio_sin_recursos_devuelve_lista_vacia(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -136,6 +143,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
 
     def test_recurso_inactivo_no_aparece_publicamente(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -150,6 +158,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
 
     def test_tenant_a_no_ve_recursos_de_tenant_b(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -161,6 +170,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
 
     def test_rate_limiting_recursos(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -176,13 +186,16 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_disponibilidad_sin_recurso_negocio_con_recursos(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
         self._create_resource(2, "Cancha 1")
         self._create_resource(2, "Cancha 2")
 
-        resp = client.get(f"/b/padel-club/api/disponibilidad/{self.date}?servicio=Partido%20P%C3%A1del")
+        resp = client.get(
+            f"/b/padel-club/api/disponibilidad/{self.date}?servicio=Partido%20P%C3%A1del"
+        )
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert data["success"] is True
@@ -190,6 +203,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_disponibilidad_con_resource_id_valido(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -206,6 +220,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_disponibilidad_resource_id_inexistente(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -222,12 +237,11 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_disponibilidad_resource_id_invalido(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
-        resp = client.get(
-            f"/b/padel-club/api/disponibilidad/{self.date}?resource_id=abc"
-        )
+        resp = client.get(f"/b/padel-club/api/disponibilidad/{self.date}?resource_id=abc")
         assert resp.status_code == 400
         data = json.loads(resp.data)
         assert data["success"] is False
@@ -235,6 +249,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_disponibilidad_resource_id_de_otro_tenant(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -251,6 +266,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
 
     def test_dos_canchas_diferentes_mismo_horario_disponible(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -276,6 +292,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_publica_con_recurso_valido(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -287,12 +304,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "10:00",
-            "resource_id": court1
+            "resource_id": court1,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 201
         data = json.loads(resp.data)
@@ -302,6 +317,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_publica_sin_recurso_mantiene_comportamiento_anterior(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -312,12 +328,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "telefono": "1133445566",
             "servicio": "Partido Pádel",
             "fecha": self.date,
-            "hora": "11:00"
+            "hora": "11:00",
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 201
         data = json.loads(resp.data)
@@ -326,6 +340,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_con_resource_id_inexistente_rechazada(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -335,12 +350,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "12:00",
-            "resource_id": 999
+            "resource_id": 999,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 400
         data = json.loads(resp.data)
@@ -348,6 +361,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_con_resource_id_inactivo_rechazada(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -359,12 +373,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "13:00",
-            "resource_id": court5
+            "resource_id": court5,
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 400
         data = json.loads(resp.data)
@@ -372,6 +384,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_con_resource_id_de_otro_tenant_rechazada(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -379,15 +392,17 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
         resp = client.post(
             "/b/padel-club/api/reservar",
-            data=json.dumps({
-                "nombre": "Carlos Díaz",
-                "telefono": "1166778899",
-                "servicio": "Partido Pádel",
-                "fecha": self.date,
-                "hora": "14:00",
-                "resource_id": 9999
-            }),
-            content_type="application/json"
+            data=json.dumps(
+                {
+                    "nombre": "Carlos Díaz",
+                    "telefono": "1166778899",
+                    "servicio": "Partido Pádel",
+                    "fecha": self.date,
+                    "hora": "14:00",
+                    "resource_id": 9999,
+                }
+            ),
+            content_type="application/json",
         )
         assert resp.status_code == 400
         data = json.loads(resp.data)
@@ -395,6 +410,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_misma_cancha_no_se_puede_duplicar(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -406,12 +422,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "15:00",
-            "resource_id": court1
+            "resource_id": court1,
         }
         resp1 = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload1),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload1), content_type="application/json"
         )
         assert resp1.status_code == 201
 
@@ -421,12 +435,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "15:00",
-            "resource_id": court1
+            "resource_id": court1,
         }
         resp2 = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload2),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload2), content_type="application/json"
         )
         assert resp2.status_code == 400
         data = json.loads(resp2.data)
@@ -434,36 +446,40 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_dos_canchas_diferentes_mismo_horario_permitido(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
         court1 = self._create_resource(2, "Cancha 1")
         court2 = self._create_resource(2, "Cancha 2")
 
-        base_payload = {
-            "servicio": "Partido Pádel",
-            "fecha": self.date,
-            "hora": "16:00"
-        }
+        base_payload = {"servicio": "Partido Pádel", "fecha": self.date, "hora": "16:00"}
 
-        payload1 = {**base_payload, "nombre": "Jugador 1", "telefono": "1111111111", "resource_id": court1}
+        payload1 = {
+            **base_payload,
+            "nombre": "Jugador 1",
+            "telefono": "1111111111",
+            "resource_id": court1,
+        }
         resp1 = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload1),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload1), content_type="application/json"
         )
         assert resp1.status_code == 201
 
-        payload2 = {**base_payload, "nombre": "Jugador 2", "telefono": "2222222222", "resource_id": court2}
+        payload2 = {
+            **base_payload,
+            "nombre": "Jugador 2",
+            "telefono": "2222222222",
+            "resource_id": court2,
+        }
         resp2 = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload2),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload2), content_type="application/json"
         )
         assert resp2.status_code == 201
 
     def test_bloqueo_global_sigue_bloqueando_recursos(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -474,12 +490,12 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "telefono": "9999999999",
             "servicio": "Partido Pádel",
             "fecha": self.date,
-            "hora": "17:00"
+            "hora": "17:00",
         }
         resp_global = client.post(
             "/b/padel-club/api/reservar",
             data=json.dumps(payload_global),
-            content_type="application/json"
+            content_type="application/json",
         )
         assert resp_global.status_code == 201
 
@@ -489,12 +505,12 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "17:00",
-            "resource_id": 1
+            "resource_id": 1,
         }
         resp_cancha = client.post(
             "/b/padel-club/api/reservar",
             data=json.dumps(payload_cancha),
-            content_type="application/json"
+            content_type="application/json",
         )
         assert resp_cancha.status_code == 400
         data = json.loads(resp_cancha.data)
@@ -502,6 +518,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reserva_resource_id_invalido_tipo(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -511,12 +528,10 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "18:00",
-            "resource_id": "abc"
+            "resource_id": "abc",
         }
         resp = client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 400
         data = json.loads(resp.data)
@@ -529,6 +544,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
 
     def test_api_recursos_aislada_por_tenant(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -546,6 +562,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
 
     def test_api_disponibilidad_aislada_por_tenant(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -559,6 +576,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
 
     def test_api_reserva_aislada_por_tenant(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -570,17 +588,13 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
             "servicio": "Partido Pádel",
             "fecha": self.date,
             "hora": "10:00",
-            "resource_id": court1
+            "resource_id": court1,
         }
         client.post(
-            "/b/padel-club/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/padel-club/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
 
-        resp = client.get(
-            f"/b/el-corte/api/disponibilidad/{self.date}?servicio=Corte"
-        )
+        resp = client.get(f"/b/el-corte/api/disponibilidad/{self.date}?servicio=Corte")
         data = json.loads(resp.data)
         assert len(data["horarios_disponibles"]) > 0
 
@@ -590,6 +604,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
 
     def test_reserva_sin_recursos_funciona_normal(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -598,12 +613,10 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
             "telefono": "1177889900",
             "servicio": "Corte",
             "fecha": self.date,
-            "hora": "10:00"
+            "hora": "10:00",
         }
         resp = client.post(
-            "/b/el-corte/api/reservar",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/b/el-corte/api/reservar", data=json.dumps(payload), content_type="application/json"
         )
         assert resp.status_code == 201
         data = json.loads(resp.data)
@@ -611,6 +624,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
 
     def test_disponibilidad_sin_recursos_sin_filtro(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 
@@ -622,6 +636,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
 
     def test_api_recursos_devuelve_lista_vacia(self):
         from app import app as flask_app
+
         flask_app.config["TESTING"] = True
         client = flask_app.test_client()
 

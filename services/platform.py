@@ -9,13 +9,18 @@ SUPERADMIN autenticado contra `platform_users`. Ningún owner/admin de un
 negocio llega aquí (gate en app.py + verificación de membresía nula).
 """
 
+import datetime
 import hashlib
 import os
 import secrets
-import datetime
+
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from database.database import (
+# Re-export: helpers de datos de plataforma usados desde app.py
+from database.database import (  # noqa: F401
+    consume_invitation_atomically,
+    consume_password_reset_token,
+    consume_staff_invitation_atomically,
     create_business_with_owner,
     create_invitation,
     create_membership_scoped,
@@ -23,31 +28,24 @@ from database.database import (
     create_platform_session,
     create_platform_user,
     create_user_scoped,
-    consume_invitation_atomically,
-    consume_password_reset_token,
-    consume_staff_invitation_atomically,
+    get_business_by_id_platform,
     get_invitation_by_token_hash,
     get_membership_scoped,
     get_password_reset_token,
     get_platform_user_by_email,
     get_user_by_email_scoped,
     get_user_by_id_scoped,
+    list_audit_log,
+    list_businesses_for_platform,
+    list_invitations,
     list_members_scoped,
+    list_platform_users,
+    log_platform_action,
     revoke_active_invitations,
     revoke_all_sessions_scoped,
     revoke_previous_reset_tokens,
-    set_business_pending,
-)
-
-# Re-export: helpers de datos de plataforma usados desde app.py
-from database.database import (  # noqa: F401
-    list_audit_log,
-    list_businesses_for_platform,
-    log_platform_action,
-    get_business_by_id_platform,
-    list_invitations,
     set_business_active,
-    list_platform_users,
+    set_business_pending,
 )
 
 
@@ -64,9 +62,7 @@ def hash_token(token):
 
 def _invitation_expires_iso():
     delta = datetime.timedelta(hours=invitation_lifetime_hours())
-    return (
-        datetime.datetime.now(datetime.timezone.utc) + delta
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return (datetime.datetime.now(datetime.UTC) + delta).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def authenticate_superadmin(email, password):
@@ -99,8 +95,14 @@ def create_superadmin(email, password, display_name=""):
     platform_user_id = create_platform_user(email, password_hash, display_name or "", active=True)
     if platform_user_id is None:
         return {"success": False, "reason": "email_exists", "platform_user_id": None}
-    log_platform_action(platform_user_id, email, None, "superadmin_created",
-                        f"Superadmin creado: {email}", ip_address="")
+    log_platform_action(
+        platform_user_id,
+        email,
+        None,
+        "superadmin_created",
+        f"Superadmin creado: {email}",
+        ip_address="",
+    )
     return {"success": True, "reason": None, "platform_user_id": platform_user_id}
 
 
@@ -113,6 +115,7 @@ def establish_platform_session(platform_user_id, token, expires_at_iso):
 # ============================================================
 # PROVISIÓN DE NEGOCIO + INVITACIÓN DEL OWNER
 # ============================================================
+
 
 def provision_business(name, slug, owner_email):
     """Crea un negocio PENDIENTE DE APROBACIÓN con owner pendiente (active=0).
@@ -161,9 +164,7 @@ def approve_business(business_id):
     owner_email, user_id, slug = connection_result
     token = secrets.token_urlsafe(32)
     expires_at = _invitation_expires_iso()
-    create_invitation(
-        business_id, user_id, owner_email, "owner", hash_token(token), expires_at,
-    )
+    create_invitation(business_id, user_id, owner_email, "owner", hash_token(token), expires_at)
     return {
         "success": True,
         "reason": None,
@@ -227,8 +228,7 @@ def resend_invitation(business_id, user_id, email):
     expires_at = _invitation_expires_iso()
     revoke_active_invitations(business_id, user_id)
     create_invitation(
-        business_id, user_id, (email or "").strip().lower(), "owner",
-        hash_token(token), expires_at,
+        business_id, user_id, (email or "").strip().lower(), "owner", hash_token(token), expires_at
     )
     return token, expires_at
 
@@ -242,9 +242,7 @@ PASSWORD_RESET_LIFETIME_HOURS = 1
 
 def password_reset_expires_iso():
     delta = datetime.timedelta(hours=PASSWORD_RESET_LIFETIME_HOURS)
-    return (
-        datetime.datetime.now(datetime.timezone.utc) + delta
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return (datetime.datetime.now(datetime.UTC) + delta).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def request_password_reset(email):
@@ -260,9 +258,7 @@ def request_password_reset(email):
         return {"success": True, "reason": None, "reset_token": None}
     token = secrets.token_urlsafe(32)
     expires_at = password_reset_expires_iso()
-    create_password_reset_token(
-        user["id"], hash_token(token), expires_at,
-    )
+    create_password_reset_token(user["id"], hash_token(token), expires_at)
     return {"success": True, "reason": None, "reset_token": token}
 
 
@@ -333,10 +329,7 @@ def create_staff_invitation(business_id, email, role_name, actor_user_id=None):
     expires_at = _invitation_expires_iso()
     if target_user is not None:
         revoke_active_invitations(business_id, user_id)
-    create_invitation(
-        business_id, user_id, email, role_name,
-        hash_token(token), expires_at,
-    )
+    create_invitation(business_id, user_id, email, role_name, hash_token(token), expires_at)
     return {"success": True, "reason": None, "invitation_token": token}
 
 
@@ -353,7 +346,7 @@ def accept_staff_invitation(business_id, token, password):
     if not password or len(password) < 12:
         return {"success": False, "reason": "weak_password", "user_id": None}
     result = consume_staff_invitation_atomically(
-        business_id, hash_token(token), generate_password_hash(password),
+        business_id, hash_token(token), generate_password_hash(password)
     )
     if result is None:
         return {"success": False, "reason": "invalid_token", "user_id": None}

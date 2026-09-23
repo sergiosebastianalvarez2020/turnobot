@@ -68,8 +68,9 @@ def probe(url, timeout):
         return None, sanitize(type(error).__name__)
 
 
-def check_health(url=DEFAULT_URL, attempts=DEFAULT_ATTEMPTS,
-                 timeout=DEFAULT_TIMEOUT, delay=DEFAULT_DELAY):
+def check_health(
+    url=DEFAULT_URL, attempts=DEFAULT_ATTEMPTS, timeout=DEFAULT_TIMEOUT, delay=DEFAULT_DELAY
+):
     """Realiza hasta ``attempts`` intentos separados por ``delay`` segundos.
 
     Devuelve ``(ok, intentos)`` donde ``intentos`` es una lista de códigos
@@ -87,17 +88,28 @@ def check_health(url=DEFAULT_URL, attempts=DEFAULT_ATTEMPTS,
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Healthcheck HTTP de disponibilidad de TurnoBot."
+    parser = argparse.ArgumentParser(description="Healthcheck HTTP de disponibilidad de TurnoBot.")
+    parser.add_argument(
+        "--url", default=DEFAULT_URL, help=f"URL a consultar (por defecto {DEFAULT_URL})."
     )
-    parser.add_argument("--url", default=DEFAULT_URL,
-                        help=f"URL a consultar (por defecto {DEFAULT_URL}).")
-    parser.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS,
-                        help=f"Número de intentos (por defecto {DEFAULT_ATTEMPTS}).")
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
-                        help=f"Timeout por intento en segundos (por defecto {DEFAULT_TIMEOUT}).")
-    parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
-                        help=f"Intervalo entre intentos en segundos (por defecto {DEFAULT_DELAY}).")
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=DEFAULT_ATTEMPTS,
+        help=f"Número de intentos (por defecto {DEFAULT_ATTEMPTS}).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help=f"Timeout por intento en segundos (por defecto {DEFAULT_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=DEFAULT_DELAY,
+        help=f"Intervalo entre intentos en segundos (por defecto {DEFAULT_DELAY}).",
+    )
     args = parser.parse_args(argv)
 
     if args.attempts < 1:
@@ -111,8 +123,7 @@ def main(argv=None):
         return 2
 
     ok, intentos = check_health(
-        url=args.url, attempts=args.attempts,
-        timeout=args.timeout, delay=args.delay,
+        url=args.url, attempts=args.attempts, timeout=args.timeout, delay=args.delay
     )
 
     if ok:
@@ -120,8 +131,7 @@ def main(argv=None):
         return 0
 
     print(
-        f"FALLO: {args.url} no respondio HTTP {EXPECTED_STATUS} "
-        f"tras {args.attempts} intento(s).",
+        f"FALLO: {args.url} no respondio HTTP {EXPECTED_STATUS} tras {args.attempts} intento(s).",
         file=sys.stderr,
     )
     for index, code in enumerate(intentos, start=1):

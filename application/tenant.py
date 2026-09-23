@@ -16,14 +16,13 @@ from time import monotonic
 
 from flask import abort, g, request
 
-from database.database import (
+from application.logging_config import logger
+from database.database import (  # noqa: F401 (seam standalone: consumidos vía globals() en _load_seam)
     get_active_services_scoped,
     get_business_settings,
     get_business_settings_scoped,
     get_connection,
 )
-
-from application.logging_config import logger
 
 
 def _load_seam(name):
@@ -53,8 +52,7 @@ def resolve_business(slug=None):
             ).fetchone()
         else:
             row = connection.execute(
-                "SELECT id, name, slug FROM businesses WHERE slug = ? AND active = 1",
-                (slug,),
+                "SELECT id, name, slug FROM businesses WHERE slug = ? AND active = 1", (slug,)
             ).fetchone()
         return dict(row) if row else None
     finally:
@@ -83,10 +81,7 @@ def get_active_services():
 
         services = {}
         for row in rows:
-            services[row["name"]] = {
-                "price": row["price"],
-                "duration": row["duration"],
-            }
+            services[row["name"]] = {"price": row["price"], "duration": row["duration"]}
         return services
     except Exception:
         logger.exception("Error obteniendo servicios activos")
@@ -121,12 +116,20 @@ def load_current_business():
                 delattr(g, "current_business")
             g.business_id = None
             return abort(404)
-        g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
+        g.business_id = (
+            g.current_business.get("id")
+            if isinstance(g.current_business, dict)
+            else (g.current_business["id"] if g.current_business else None)
+        )
         return None
 
     g.current_business = _load_seam("resolve_business")()
     if g.current_business:
-        g.business_id = g.current_business.get("id") if isinstance(g.current_business, dict) else (g.current_business["id"] if g.current_business else None)
+        g.business_id = (
+            g.current_business.get("id")
+            if isinstance(g.current_business, dict)
+            else (g.current_business["id"] if g.current_business else None)
+        )
     else:
         g.business_id = None
     return None

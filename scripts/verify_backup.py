@@ -31,11 +31,7 @@ DEFAULT_LIVE_DB = PROJECT_ROOT / "database" / "appointments.db"
 
 BACKUP_NAME_RE = re.compile(r"^appointments-(\d{8})-(\d{6})\.db$")
 
-TABLE_POLICIES = {
-    "businesses": "exact",
-    "business_settings": "exact",
-    "appointments": "monotonic",
-}
+TABLE_POLICIES = {"businesses": "exact", "business_settings": "exact", "appointments": "monotonic"}
 
 
 def parse_timestamp(name):
@@ -86,9 +82,7 @@ def verify_backup(backup_path, live_db_path):
             checks.append(("integrity_check", integrity == "ok", str(integrity)))
 
             fk_rows = backup_conn.execute("PRAGMA foreign_key_check").fetchall()
-            checks.append(
-                ("foreign_key_check", len(fk_rows) == 0, f"{len(fk_rows)} violaciones")
-            )
+            checks.append(("foreign_key_check", len(fk_rows) == 0, f"{len(fk_rows)} violaciones"))
 
             backup_schema = backup_conn.execute(
                 "SELECT version FROM schema_version WHERE id = 1"
@@ -149,9 +143,7 @@ def main(argv=None):
         help="Directorio de backups (por defecto database/backups).",
     )
     parser.add_argument(
-        "--live-db",
-        default=str(DEFAULT_LIVE_DB),
-        help="Base viva a comparar, en modo lectura.",
+        "--live-db", default=str(DEFAULT_LIVE_DB), help="Base viva a comparar, en modo lectura."
     )
     args = parser.parse_args(argv)
 

@@ -25,9 +25,7 @@ class MembershipManagementTests(unittest.TestCase):
         self.original_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_path
@@ -52,9 +50,7 @@ class MembershipManagementTests(unittest.TestCase):
 
     def _make_user(self, email, password, business, role="owner"):
         """Crea un usuario con membresía en un negocio. Devuelve user_id."""
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -86,10 +82,9 @@ class MembershipManagementTests(unittest.TestCase):
 
 
 class TestListMembers(MembershipManagementTests):
-
     def test_listar_miembros_de_A_no_muestra_miembros_de_B(self):
-        a1 = self._make_user("a1@test.com", "secreta1", 1, "owner")
-        a2 = self._make_user("a2@test.com", "secreta2", 1, "staff")
+        self._make_user("a1@test.com", "secreta1", 1, "owner")
+        self._make_user("a2@test.com", "secreta2", 1, "staff")
         self._make_user("b1@test.com", "secreta3", 2, "owner")
 
         members_a = database.list_members_scoped(1)
@@ -104,14 +99,11 @@ class TestListMembers(MembershipManagementTests):
 
 
 class TestChangeMembershipRole(MembershipManagementTests):
-
     def test_cambiar_rol_en_A_no_cambia_rol_en_B(self):
         user_id = self._make_user("x@test.com", "secreta", 1, "owner")
         database.create_membership_scoped(user_id, 2, "admin")
 
-        changed = database.change_membership_role_scoped(
-            user_id, 1, self._role_id("staff")
-        )
+        changed = database.change_membership_role_scoped(user_id, 1, self._role_id("staff"))
         self.assertTrue(changed)
         self.assertEqual(self._role_of(user_id, 1), self._role_id("staff"))
         self.assertEqual(self._role_of(user_id, 2), self._role_id("admin"))
@@ -121,9 +113,7 @@ class TestChangeMembershipRole(MembershipManagementTests):
         # negocio 1 no debe producir cambios (no existe membership ahí).
         user_id = self._make_user("y@test.com", "secreta", 2, "owner")
 
-        changed = database.change_membership_role_scoped(
-            user_id, 1, self._role_id("staff")
-        )
+        changed = database.change_membership_role_scoped(user_id, 1, self._role_id("staff"))
         self.assertFalse(changed)
         self.assertEqual(self._role_of(user_id, 2), self._role_id("owner"))
 
@@ -136,7 +126,6 @@ class TestChangeMembershipRole(MembershipManagementTests):
 
 
 class TestRevokeMembership(MembershipManagementTests):
-
     def test_revocar_en_A_no_elimina_membership_en_B(self):
         user_id = self._make_user("x@test.com", "secreta", 1, "owner")
         database.create_membership_scoped(user_id, 2, "admin")
@@ -160,7 +149,6 @@ class TestRevokeMembership(MembershipManagementTests):
 
 
 class TestCountOwners(MembershipManagementTests):
-
     def test_cuenta_solo_owners_del_negocio_indicado(self):
         self._make_user("a1@test.com", "secreta1", 1, "owner")
         self._make_user("a2@test.com", "secreta2", 1, "owner")

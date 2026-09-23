@@ -18,21 +18,20 @@ Reglas:
   el turno y remite a gestionar con el mail de confirmación o el asistente.
 """
 
-import hashlib
 import datetime
 import logging
 import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr, parseaddr
+from email.utils import formataddr
 
 from database.database import (
+    claim_notification_scoped,
     get_business_settings_scoped,
     get_notification_state_scoped,
     list_platform_users,
-    notification_sent_scoped,
-    claim_notification_scoped,
+    notification_sent_scoped,  # noqa: F401  (re-export público, usado por tests/callers)
     upsert_notification_log_scoped,
 )
 
@@ -50,6 +49,7 @@ _SENSITIVE_ENV_KEYS = ("SMTP_PASSWORD",)
 # Config SMTP (global, por entorno)
 # ============================================================
 
+
 def smtp_configured():
     return bool(os.getenv("SMTP_HOST"))
 
@@ -66,7 +66,7 @@ def _smtp_config():
 
 
 def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def notifications_enabled(business_id):
@@ -80,6 +80,7 @@ def notifications_enabled(business_id):
 # ============================================================
 # Higiene de valores para email y logs
 # ============================================================
+
 
 def _clean_header(value):
     """Elimina CR/LF de encabezados para impedir inyección de cabeceras SMTP."""
@@ -107,6 +108,7 @@ def _esc(value):
 
 def _fmt_hour(value):
     return str(value) if value else ""
+
 
 def _build_message(to_addr, subject, html, text, cfg):
     message = MIMEMultipart("alternative")
@@ -173,10 +175,7 @@ def _build_confirmation(appointment, business, management_url):
         text += f" a {end}"
     text += "\n"
     if management_url:
-        text += (
-            "\n¿Necesitás cancelar o reprogramar? Gestioná tu turno acá:\n"
-            f"{management_url}\n"
-        )
+        text += f"\n¿Necesitás cancelar o reprogramar? Gestioná tu turno acá:\n{management_url}\n"
     text += "\n¡Te esperamos!\n" + business_name
 
     rows = (
@@ -190,7 +189,8 @@ def _build_confirmation(appointment, business, management_url):
         f'<p><a href="{management_url}" '
         f'style="background:#1463FF;color:#fff;padding:10px 18px;'
         f'border-radius:8px;text-decoration:none;">Cancelar o reprogramar mi turno</a></p>'
-        if management_url else ""
+        if management_url
+        else ""
     )
     html = (
         f"<h2>Tu turno fue confirmado</h2>"
@@ -244,6 +244,7 @@ def _build_reminder(appointment, business):
 # Despacho
 # ============================================================
 
+
 def send_appointment_notification(
     business_id,
     appointment,
@@ -285,7 +286,9 @@ def send_appointment_notification(
         management_url = ""
         if management_token and slug:
             base = (public_base_url or "").rstrip("/")
-            management_url = f"{base}/b/{slug}/turno/{management_token}?id={appointment.get('id', '')}"
+            management_url = (
+                f"{base}/b/{slug}/turno/{management_token}?id={appointment.get('id', '')}"
+            )
         text, html = _build_confirmation(appointment, business, management_url)
     elif notif_type == REMINDER:
         subject = f"Recordatorio: tu turno mañana - {business.get('business_name') or 'Mi negocio'}"
@@ -293,35 +296,41 @@ def send_appointment_notification(
     else:
         return False, "unknown_type"
 
-    if not claim_notification_scoped(appointment["id"], business_id, notif_type,
-                                     channel, destination):
-        state = get_notification_state_scoped(
-            business_id, appointment["id"], notif_type, channel
-        )
+    if not claim_notification_scoped(
+        appointment["id"], business_id, notif_type, channel, destination
+    ):
+        state = get_notification_state_scoped(business_id, appointment["id"], notif_type, channel)
         return False, "already_sent" if state and state.get("status") == "sent" else "in_progress"
 
     ok, detail = _send_email(destination, subject, html, text)
     if not ok:
         upsert_notification_log_scoped(
-            appointment["id"], business_id, notif_type, channel, destination,
-            status="failed", error=detail, last_attempt_at=_now_iso(),
+            appointment["id"],
+            business_id,
+            notif_type,
+            channel,
+            destination,
+            status="failed",
+            error=detail,
+            last_attempt_at=_now_iso(),
         )
         return False, "send_failed"
 
     upsert_notification_log_scoped(
-        appointment["id"], business_id, notif_type, channel, destination,
-        status="sent", error="", last_attempt_at=_now_iso(),
+        appointment["id"],
+        business_id,
+        notif_type,
+        channel,
+        destination,
+        status="sent",
+        error="",
+        last_attempt_at=_now_iso(),
     )
     return True, None
 
 
 def send_confirmation_email(
-    business_id,
-    appointment,
-    management_token=None,
-    slug=None,
-    public_base_url="",
-    force=False,
+    business_id, appointment, management_token=None, slug=None, public_base_url="", force=False
 ):
     return send_appointment_notification(
         business_id,
@@ -337,17 +346,14 @@ def send_confirmation_email(
 
 def send_reminder_email(business_id, appointment, force=False):
     return send_appointment_notification(
-        business_id,
-        appointment,
-        REMINDER,
-        channel="email",
-        force=force,
+        business_id, appointment, REMINDER, channel="email", force=force
     )
 
 
 # ============================================================
 # EMAIL 5 - Aviso de reserva al negocio (by-tenant)
 # ============================================================
+
 
 def _business_destination(business):
     """Destino del EMAIL 5: business_settings.notification_email (scoped).
@@ -409,35 +415,42 @@ def send_business_confirmation_email(business_id, appointment, force=False):
     text, html = _build_business_confirmation(appointment, business)
     subject = f"Nueva reserva - {business.get('business_name') or 'Mi negocio'}"
 
-    if not claim_notification_scoped(appointment["id"], business_id,
-                                     BUSINESS_CONFIRMATION, "email", destination):
+    if not claim_notification_scoped(
+        appointment["id"], business_id, BUSINESS_CONFIRMATION, "email", destination
+    ):
         state = get_notification_state_scoped(
             business_id, appointment["id"], BUSINESS_CONFIRMATION, "email"
         )
         return False, "already_sent" if state and state.get("status") == "sent" else "in_progress"
     ok, detail = _send_email(destination, subject, html, text)
-    status = "sent" if ok else "failed"
     if not ok:
         upsert_notification_log_scoped(
-            appointment["id"], business_id, BUSINESS_CONFIRMATION, "email", destination,
-            status="failed", error=detail, last_attempt_at=_now_iso(),
+            appointment["id"],
+            business_id,
+            BUSINESS_CONFIRMATION,
+            "email",
+            destination,
+            status="failed",
+            error=detail,
+            last_attempt_at=_now_iso(),
         )
         return False, "send_failed"
 
     upsert_notification_log_scoped(
-        appointment["id"], business_id, BUSINESS_CONFIRMATION, "email", destination,
-        status="sent", error="", last_attempt_at=_now_iso(),
+        appointment["id"],
+        business_id,
+        BUSINESS_CONFIRMATION,
+        "email",
+        destination,
+        status="sent",
+        error="",
+        last_attempt_at=_now_iso(),
     )
     return True, None
 
 
 def dispatch_booking_emails(
-    business_id,
-    appointment,
-    business=None,
-    management_token=None,
-    slug=None,
-    public_base_url="",
+    business_id, appointment, business=None, management_token=None, slug=None, public_base_url=""
 ):
     """Despacha los emails de una reserva nueva (EMAIL 4 + EMAIL 5).
 
@@ -453,20 +466,18 @@ def dispatch_booking_emails(
         public_base_url=public_base_url,
     )
     business_aviso = send_business_confirmation_email(business_id, appointment)
-    return {
-        "confirmation": confirmation,
-        "business": business_aviso,
-    }
+    return {"confirmation": confirmation, "business": business_aviso}
 
 
 # ============================================================
 # EMAIL DE PLATAFORMA (alta / aprobación / invitación)
 # ============================================================
 
+
 def _list_superadmin_emails():
     """Emails de superadmins ACTIVOS (destinatarios controlados por la DB)."""
     emails = []
-    for user in (list_platform_users() or []):
+    for user in list_platform_users() or []:
         if user.get("active") and (user.get("email") or "").strip():
             emails.append(user["email"].strip())
     return emails
@@ -533,7 +544,9 @@ def send_apply_notice_to_superadmin(business_name, business_id=None):
     return sent_any, None if sent_any else "send_failed"
 
 
-def send_approved_invitation_email(owner_email, business_name, invitation_link, expires_at="", lifetime_hours=None):
+def send_approved_invitation_email(
+    owner_email, business_name, invitation_link, expires_at="", lifetime_hours=None
+):
     """EMAIL 2: envía al owner la invitación para definir su contraseña.
 
     Un solo uso y vence a las 72 h (INVITATION_LIFETIME_HOURS). El enlace
@@ -650,6 +663,7 @@ def platform_service_invitation_lifetime():
     """
     try:
         from services.platform import invitation_lifetime_hours
+
         return invitation_lifetime_hours()
     except Exception:
         return 72
@@ -662,6 +676,7 @@ def platform_service_reset_lifetime():
     """
     try:
         from services.platform import PASSWORD_RESET_LIFETIME_HOURS
+
         return PASSWORD_RESET_LIFETIME_HOURS
     except Exception:
         return 1

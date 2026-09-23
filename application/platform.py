@@ -13,10 +13,7 @@ import os
 from flask import session
 
 from application.session_crypto import _hash_session_token, _now_iso
-from database.database import (
-    get_platform_user_by_id,
-    is_platform_session_valid,
-)
+from database.database import get_platform_user_by_id, is_platform_session_valid
 
 _PLATFORM_SESSION_LIFETIME_SECONDS = int(
     os.getenv("PLATFORM_SESSION_LIFETIME_SECONDS", str(8 * 3600))
@@ -25,9 +22,7 @@ _PLATFORM_SESSION_LIFETIME_SECONDS = int(
 
 def _platform_session_expires_at():
     delta = datetime.timedelta(seconds=_PLATFORM_SESSION_LIFETIME_SECONDS)
-    return (
-        datetime.datetime.now(datetime.timezone.utc) + delta
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return (datetime.datetime.now(datetime.UTC) + delta).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _clear_platform_session():
@@ -46,9 +41,7 @@ def _platform_current_user():
     if user is None or not user["active"]:
         _clear_platform_session()
         return None, None
-    if not is_platform_session_valid(
-        platform_user_id, _hash_session_token(token), _now_iso()
-    ):
+    if not is_platform_session_valid(platform_user_id, _hash_session_token(token), _now_iso()):
         _clear_platform_session()
         return None, None
     safe_user = {

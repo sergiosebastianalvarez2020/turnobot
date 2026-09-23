@@ -5,39 +5,39 @@ usuarios, fidelización, recursos, conocimiento, conversaciones e inteligencia.
 
 from routes.admin import (
     admin,
-    admin_slug,
-    admin_save_service,
-    admin_toggle_service,
-    admin_update_business_settings,
-    admin_save_weekly_schedule,
     admin_cancel_appointment,
-    admin_update_appointment_status,
-    admin_reschedule_appointment,
-    admin_reschedule_appointment_with_resource,
-    admin_create_appointment_manual,
-    admin_usuarios,
-    admin_usuarios_invitar,
-    admin_usuarios_cambiar_rol,
-    admin_usuarios_revocar,
-    admin_fidelizacion,
-    admin_fidelizacion_configuracion,
-    admin_fidelizacion_ajustar,
-    admin_fidelizacion_recalcular,
-    admin_recompensas,
-    admin_recompensa_estado,
-    admin_recursos,
-    admin_create_resource,
-    admin_toggle_resource,
     admin_conocimiento,
     admin_conocimiento_crear,
     admin_conocimiento_editar,
     admin_conocimiento_eliminar,
     admin_conversaciones,
     admin_conversaciones_detalle,
-    admin_conversaciones_resolver,
     admin_conversaciones_estado,
+    admin_conversaciones_resolver,
+    admin_create_appointment_manual,
+    admin_create_resource,
+    admin_fidelizacion,
+    admin_fidelizacion_ajustar,
+    admin_fidelizacion_configuracion,
+    admin_fidelizacion_recalcular,
     admin_inteligencia,
     admin_inteligencia_oportunidades,
+    admin_recompensa_estado,
+    admin_recompensas,
+    admin_recursos,
+    admin_reschedule_appointment,
+    admin_reschedule_appointment_with_resource,
+    admin_save_service,
+    admin_save_weekly_schedule,
+    admin_slug,
+    admin_toggle_resource,
+    admin_toggle_service,
+    admin_update_appointment_status,
+    admin_update_business_settings,
+    admin_usuarios,
+    admin_usuarios_cambiar_rol,
+    admin_usuarios_invitar,
+    admin_usuarios_revocar,
 )
 
 
@@ -48,17 +48,9 @@ def register(app):
         app: Instancia de Flask application.
     """
     # Admin routes - panel, configuration, services, appointments
+    app.add_url_rule("/admin", endpoint="admin", view_func=admin, methods=["GET"])
     app.add_url_rule(
-        "/admin",
-        endpoint="admin",
-        view_func=admin,
-        methods=["GET"],
-    )
-    app.add_url_rule(
-        "/b/<slug>/admin",
-        endpoint="admin_slug",
-        view_func=admin_slug,
-        methods=["GET"],
+        "/b/<slug>/admin", endpoint="admin_slug", view_func=admin_slug, methods=["GET"]
     )
     app.add_url_rule(
         "/admin/servicios/guardar",
@@ -165,10 +157,7 @@ def register(app):
 
     # Admin usuarios / memberships
     app.add_url_rule(
-        "/admin/usuarios",
-        endpoint="admin_usuarios",
-        view_func=admin_usuarios,
-        methods=["GET"],
+        "/admin/usuarios", endpoint="admin_usuarios", view_func=admin_usuarios, methods=["GET"]
     )
     app.add_url_rule(
         "/b/<slug>/admin/usuarios",
@@ -289,10 +278,7 @@ def register(app):
 
     # Admin recursos
     app.add_url_rule(
-        "/admin/recursos",
-        endpoint="admin_recursos",
-        view_func=admin_recursos,
-        methods=["GET"],
+        "/admin/recursos", endpoint="admin_recursos", view_func=admin_recursos, methods=["GET"]
     )
     app.add_url_rule(
         "/b/<slug>/admin/recursos",

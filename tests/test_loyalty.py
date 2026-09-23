@@ -15,8 +15,8 @@ import re
 import sqlite3
 import tempfile
 import unittest
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 from werkzeug.security import generate_password_hash
@@ -34,7 +34,9 @@ def _next_open_day():
     return date.isoformat()
 
 
-def _insert_confirmed_appointment(business_id, date_, time_, phone="3815000001", name="Cliente", email=None):
+def _insert_confirmed_appointment(
+    business_id, date_, time_, phone="3815000001", name="Cliente", email=None
+):
     end_min = (int(time_[:2]) * 60 + int(time_[3:])) + 60
     end_hhmm = f"{end_min // 60:02d}:{end_min % 60:02d}"
     c = get_connection()
@@ -69,7 +71,9 @@ class LoyaltyBase(unittest.TestCase):
         database.init_database()
 
         # Business B para pruebas de aislamiento multi-tenant.
-        self._execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
+        self._execute(
+            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
+        )
 
         self.client = application.app.test_client()
         # Usuario real como actor de ajustes (FK points_ledger.actor_user_id -> users.id).
@@ -90,13 +94,8 @@ class LoyaltyBase(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
@@ -116,8 +115,7 @@ class LoyaltyBase(unittest.TestCase):
 
     def _create_turno(self, business_id=1, phone="3815000001", name="Cliente", email=None):
         return _insert_confirmed_appointment(
-            business_id, self.valid_date, "10:00",
-            phone=phone, name=name, email=email,
+            business_id, self.valid_date, "10:00", phone=phone, name=name, email=email
         )
 
     def _complete(self, appointment_id, business_id=1):
@@ -140,7 +138,6 @@ class LoyaltyBase(unittest.TestCase):
 
 
 class TestLoyaltyConfiguration(LoyaltyBase):
-
     def test_fidelizacion_off_por_defecto(self):
         settings = database.ensure_loyalty_settings_scoped(1)
         self.assertIsNotNone(settings)
@@ -148,24 +145,35 @@ class TestLoyaltyConfiguration(LoyaltyBase):
         self.assertEqual(settings["points_per_completed_appointment"], 1)
 
     def test_activar_y_desactivar(self):
-        ok = database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=3)
+        ok = database.update_loyalty_settings_scoped(
+            1, enabled=True, points_per_completed_appointment=3
+        )
         self.assertTrue(ok)
         self.assertEqual(database.get_loyalty_settings_scoped(1)["enabled"], 1)
-        self.assertEqual(database.get_loyalty_settings_scoped(1)["points_per_completed_appointment"], 3)
+        self.assertEqual(
+            database.get_loyalty_settings_scoped(1)["points_per_completed_appointment"], 3
+        )
 
-        ok = database.update_loyalty_settings_scoped(1, enabled=False, points_per_completed_appointment=1)
+        ok = database.update_loyalty_settings_scoped(
+            1, enabled=False, points_per_completed_appointment=1
+        )
         self.assertTrue(ok)
         self.assertEqual(database.get_loyalty_settings_scoped(1)["enabled"], 0)
 
     def test_rechazo_de_puntos_negativos(self):
-        ok = database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=-5)
+        ok = database.update_loyalty_settings_scoped(
+            1, enabled=True, points_per_completed_appointment=-5
+        )
         self.assertFalse(ok)
 
     def test_rechazo_de_valor_no_entero(self):
-        ok = database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment="abc")
+        ok = database.update_loyalty_settings_scoped(
+            1, enabled=True, points_per_completed_appointment="abc"
+        )
         self.assertFalse(ok)
-class TestLoyaltyAcreditacion(LoyaltyBase):
 
+
+class TestLoyaltyAcreditacion(LoyaltyBase):
     def test_completed_genera_puntos(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=2)
         apt = self._create_turno()
@@ -242,7 +250,6 @@ class TestLoyaltyAcreditacion(LoyaltyBase):
 
 
 class TestLoyaltyIdempotencia(LoyaltyBase):
-
     def test_mismo_turno_procesado_dos_veces(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=5)
         apt = self._create_turno()
@@ -270,7 +277,6 @@ class TestLoyaltyIdempotencia(LoyaltyBase):
 
 
 class TestLoyaltyLedger(LoyaltyBase):
-
     def test_movimiento_earn_registrado(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=3)
         apt = self._create_turno(email="Cliente@example.com")
@@ -296,23 +302,30 @@ class TestLoyaltyLedger(LoyaltyBase):
         ledger = self._ledger(1, account["id"])
         self.assertEqual(sum(m["delta"] for m in ledger), account["points_balance"])
         self.assertEqual(account["points_balance"], 4)
-class TestLoyaltyAjustes(LoyaltyBase):
 
+
+class TestLoyaltyAjustes(LoyaltyBase):
     def test_suma_manual(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=2)
         apt = self._create_turno()
         self._complete(apt, 1)
         account = self._account(1, "3815000001")
-        res = loyalty.adjust_points(1, account["id"], "+10", "cortesía", actor_user_id=self.actor_user_id)
+        res = loyalty.adjust_points(
+            1, account["id"], "+10", "cortesía", actor_user_id=self.actor_user_id
+        )
         self.assertTrue(res["success"])
         self.assertEqual(self._account(1, "3815000001")["points_balance"], 12)
 
     def test_resta_manual(self):
-        database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=10)
+        database.update_loyalty_settings_scoped(
+            1, enabled=True, points_per_completed_appointment=10
+        )
         apt = self._create_turno()
         self._complete(apt, 1)
         account = self._account(1, "3815000001")
-        res = loyalty.adjust_points(1, account["id"], -4, "reclamo", actor_user_id=self.actor_user_id)
+        res = loyalty.adjust_points(
+            1, account["id"], -4, "reclamo", actor_user_id=self.actor_user_id
+        )
         self.assertTrue(res["success"])
         self.assertEqual(self._account(1, "3815000001")["points_balance"], 6)
 
@@ -341,7 +354,9 @@ class TestLoyaltyAjustes(LoyaltyBase):
         apt = self._create_turno()
         self._complete(apt, 1)
         account = self._account(1, "3815000001")
-        res = loyalty.adjust_points(1, account["id"], -999, "reversal", actor_user_id=self.actor_user_id)
+        res = loyalty.adjust_points(
+            1, account["id"], -999, "reversal", actor_user_id=self.actor_user_id
+        )
         self.assertFalse(res["success"])
         self.assertEqual(self._account(1, "3815000001")["points_balance"], 2)
 
@@ -352,8 +367,9 @@ class TestLoyaltyAjustes(LoyaltyBase):
         account = self._account(1, "3815000001")
         res = loyalty.adjust_points(1, account["id"], 5, "cortesía", actor_user_id=None)
         self.assertFalse(res["success"])
-class TestLoyaltyMultiTenant(LoyaltyBase):
 
+
+class TestLoyaltyMultiTenant(LoyaltyBase):
     def test_business_a_no_ve_cuenta_de_b(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=2)
         database.update_loyalty_settings_scoped(2, enabled=True, points_per_completed_appointment=2)
@@ -375,7 +391,9 @@ class TestLoyaltyMultiTenant(LoyaltyBase):
         self._complete(apt_b, 2)
         account_b = self._account(2, "3815333333")
         self.assertIsNone(database.get_loyalty_account_by_id_scoped(account_b["id"], 1))
-        res = loyalty.adjust_points(1, account_b["id"], 10, "intento", actor_user_id=self.actor_user_id)
+        res = loyalty.adjust_points(
+            1, account_b["id"], 10, "intento", actor_user_id=self.actor_user_id
+        )
         self.assertFalse(res["success"])
 
     def test_mismo_phone_saldos_independientes_por_tenant(self):
@@ -390,7 +408,6 @@ class TestLoyaltyMultiTenant(LoyaltyBase):
 
 
 class TestLoyaltyEstados(LoyaltyBase):
-
     def test_completed_y_luego_cancelled_sticky(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=4)
         apt = self._create_turno()
@@ -411,7 +428,6 @@ class TestLoyaltyEstados(LoyaltyBase):
 
 
 class TestLoyaltyNormalizacion(LoyaltyBase):
-
     def test_telefonos_con_distintos_formatos_misma_cuenta(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=1)
         apt1 = self._create_turno(phone="3815-000001")
@@ -424,7 +440,6 @@ class TestLoyaltyNormalizacion(LoyaltyBase):
 
 
 class TestLoyaltyAdminPanelHTTP(LoyaltyBase):
-
     def test_pagina_fidelizacion_requiere_login(self):
         c = application.app.test_client()
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=1)
@@ -442,7 +457,9 @@ class TestLoyaltyAdminPanelHTTP(LoyaltyBase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(database.get_loyalty_settings_scoped(1)["enabled"], 1)
-        self.assertEqual(database.get_loyalty_settings_scoped(1)["points_per_completed_appointment"], 2)
+        self.assertEqual(
+            database.get_loyalty_settings_scoped(1)["points_per_completed_appointment"], 2
+        )
 
     def test_pagina_muestra_clientes_con_saldo(self):
         database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=1)
@@ -450,7 +467,7 @@ class TestLoyaltyAdminPanelHTTP(LoyaltyBase):
         self._complete(apt, 1)
         response = self.client.get("/admin/fidelizacion")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Ana".encode(), response.data)
+        self.assertIn(b"Ana", response.data)
         self.assertIn(b"Fidelizaci\xc3\xb3n", response.data)
 
 
@@ -488,6 +505,40 @@ class TestLoyaltySaveRewardErrors(LoyaltyBase):
         result = loyalty.save_reward(1, None, "Café", "", 80)
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "duplicate_name")
+
+
+class TestLoyaltyPublicContextRegresion(LoyaltyBase):
+    """Regresión: _loyalty_public_context() no debe lanzar NameError."""
+
+    def _appointment(self, appointment_id, business_id=1):
+        c = get_connection()
+        try:
+            row = c.execute(
+                "SELECT * FROM appointments WHERE id = ? AND business_id = ?",
+                (appointment_id, business_id),
+            ).fetchone()
+            return dict(row)
+        finally:
+            c.close()
+
+    def test_contexto_habilitado_incluye_idempotency_key(self):
+        from routes.public_api import _loyalty_public_context
+
+        database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=3)
+        apt = self._create_turno(phone="3815000001")
+        context = _loyalty_public_context(1, self._appointment(apt))
+        self.assertEqual(context["enabled"], True)
+        self.assertEqual(context["points_per_completed"], 3)
+        self.assertIsInstance(context["idempotency_key"], str)
+        self.assertGreater(len(context["idempotency_key"]), 0)
+
+    def test_contexto_deshabilitado_no_inventa_puntos(self):
+        from routes.public_api import _loyalty_public_context
+
+        apt = self._create_turno(phone="3815000001")
+        context = _loyalty_public_context(1, self._appointment(apt))
+        self.assertEqual(context["enabled"], False)
+        self.assertEqual(context["balance"], 0)
 
 
 if __name__ == "__main__":

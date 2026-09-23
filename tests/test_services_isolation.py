@@ -48,13 +48,8 @@ class BaseIsolationTest(unittest.TestCase):
             2: {"id": 2, "name": "Business B", "slug": "business-b"},
         }[business_id]
         login_page = self.client.get("/login")
-        token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": token},
-        )
+        token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": token})
         with patch.object(application, "resolve_business", return_value=business):
             with application.app.test_request_context("/"):
                 application.load_current_business()
@@ -82,8 +77,8 @@ class BaseIsolationTest(unittest.TestCase):
 # READ ISOLATION
 # ============================================================
 
-class TestReadIsolation(BaseIsolationTest):
 
+class TestReadIsolation(BaseIsolationTest):
     def test_business_a_solo_ve_sus_servicios(self):
         database.create_service_scoped(2, "Solo B", 9999, 45)
         nombres_a = {row["name"] for row in database.get_all_services_scoped(1)}
@@ -102,18 +97,17 @@ class TestReadIsolation(BaseIsolationTest):
 # UPDATE ISOLATION
 # ============================================================
 
-class TestUpdateIsolation(BaseIsolationTest):
 
+class TestUpdateIsolation(BaseIsolationTest):
     def test_a_no_puede_modificar_servicio_de_b(self):
         servicio_b_id = database.create_service_scoped(2, "Servicio B", 9999, 45)
         actualizado = database.update_service_scoped(
             servicio_b_id, 1, "Modificado por A", 1111, 30, True
         )
         self.assertFalse(actualizado)
-        fila = self._query(
-            "SELECT name, business_id FROM services WHERE id = ?",
-            (servicio_b_id,),
-        )[0]
+        fila = self._query("SELECT name, business_id FROM services WHERE id = ?", (servicio_b_id,))[
+            0
+        ]
         self.assertEqual(fila["name"], "Servicio B")
         self.assertEqual(fila["business_id"], 2)
 
@@ -123,10 +117,9 @@ class TestUpdateIsolation(BaseIsolationTest):
             servicio_a_id, 2, "Modificado por B", 1111, 30, True
         )
         self.assertFalse(actualizado)
-        fila = self._query(
-            "SELECT name, business_id FROM services WHERE id = ?",
-            (servicio_a_id,),
-        )[0]
+        fila = self._query("SELECT name, business_id FROM services WHERE id = ?", (servicio_a_id,))[
+            0
+        ]
         self.assertEqual(fila["name"], "Corte")
         self.assertEqual(fila["business_id"], 1)
 
@@ -135,36 +128,34 @@ class TestUpdateIsolation(BaseIsolationTest):
 # TOGGLE (ACTIVAR/DESACTIVAR) ISOLATION
 # ============================================================
 
-class TestToggleIsolation(BaseIsolationTest):
 
+class TestToggleIsolation(BaseIsolationTest):
     def test_a_no_puede_activar_desactivar_servicio_de_b(self):
         servicio_b_id = database.create_service_scoped(2, "Servicio B", 9999, 45)
         actualizado = database.update_service_scoped(
             servicio_b_id, 1, "Servicio B", 9999, 45, False
         )
         self.assertFalse(actualizado)
-        fila = self._query(
-            "SELECT active FROM services WHERE id = ?",
-            (servicio_b_id,),
-        )[0]
+        fila = self._query("SELECT active FROM services WHERE id = ?", (servicio_b_id,))[0]
         self.assertEqual(fila["active"], 1)
 
     def test_b_no_puede_activar_desactivar_servicio_de_a(self):
         servicio_a = database.get_all_services_scoped(1)[0]
-        servicios_a_ids = {row["id"] for row in database.get_all_services_scoped(1)}
+        {row["id"] for row in database.get_all_services_scoped(1)}
         # B usa su scoped: no debe encontrar el servicio de A
-        self.assertNotIn(servicio_a["id"], {
-            row["id"] for row in database.get_all_services_scoped(2)
-        })
+        self.assertNotIn(
+            servicio_a["id"], {row["id"] for row in database.get_all_services_scoped(2)}
+        )
         actualizado = database.update_service_scoped(
-            servicio_a["id"], 2, servicio_a["name"],
-            servicio_a["price"], servicio_a["duration"], False,
+            servicio_a["id"],
+            2,
+            servicio_a["name"],
+            servicio_a["price"],
+            servicio_a["duration"],
+            False,
         )
         self.assertFalse(actualizado)
-        fila = self._query(
-            "SELECT active FROM services WHERE id = ?",
-            (servicio_a["id"],),
-        )[0]
+        fila = self._query("SELECT active FROM services WHERE id = ?", (servicio_a["id"],))[0]
         self.assertEqual(fila["active"], 1)
 
 
@@ -172,20 +163,16 @@ class TestToggleIsolation(BaseIsolationTest):
 # CREATE ASSOCIATION
 # ============================================================
 
-class TestCreateAssociation(BaseIsolationTest):
 
+class TestCreateAssociation(BaseIsolationTest):
     def test_servicio_creado_por_a_queda_asociado_a_a(self):
         database.create_service_scoped(1, "Corte Premium", 15000, 40)
-        fila = self._query(
-            "SELECT name, business_id FROM services WHERE name = 'Corte Premium'"
-        )[0]
+        fila = self._query("SELECT name, business_id FROM services WHERE name = 'Corte Premium'")[0]
         self.assertEqual(fila["business_id"], 1)
 
     def test_servicio_creado_por_b_queda_asociado_a_b(self):
         database.create_service_scoped(2, "Servicio B", 12345, 50)
-        fila = self._query(
-            "SELECT name, business_id FROM services WHERE name = 'Servicio B'"
-        )[0]
+        fila = self._query("SELECT name, business_id FROM services WHERE name = 'Servicio B'")[0]
         self.assertEqual(fila["business_id"], 2)
 
 
@@ -193,8 +180,8 @@ class TestCreateAssociation(BaseIsolationTest):
 # CLIENT-INJECTED business_id CANNOT ESCAPE CONTEXT
 # ============================================================
 
-class TestNoClientEscapesContext(BaseIsolationTest):
 
+class TestNoClientEscapesContext(BaseIsolationTest):
     def test_business_id_inyectado_por_cliente_no_escapa_el_contexto(self):
         # El admin actúa como Business A. Aunque el request intente
         # inyectar business_id por form, el backend usa get_current_business_id().
@@ -216,8 +203,7 @@ class TestNoClientEscapesContext(BaseIsolationTest):
         )
         self.assertEqual(response.status_code, 302)
         fila = self._query(
-            "SELECT name, business_id FROM services WHERE id = ?",
-            (servicio_original["id"],),
+            "SELECT name, business_id FROM services WHERE id = ?", (servicio_original["id"],)
         )[0]
         self.assertEqual(fila["name"], "Hackeado")
         self.assertEqual(fila["business_id"], 1)

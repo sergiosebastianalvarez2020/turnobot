@@ -44,7 +44,9 @@ def build_db(path, schema=22, businesses=1, settings=1, appointments=3, fk_viola
         )
         conn.execute("INSERT INTO schema_version (id, version) VALUES (1, ?)", (schema,))
         for business_id in range(1, businesses + 1):
-            conn.execute("INSERT INTO businesses (id, name) VALUES (?, ?)", (business_id, f"b{business_id}"))
+            conn.execute(
+                "INSERT INTO businesses (id, name) VALUES (?, ?)", (business_id, f"b{business_id}")
+            )
         for business_id in range(1, settings + 1):
             conn.execute(
                 "INSERT INTO business_settings (business_id, notifications_enabled) VALUES (?, 0)",
@@ -130,7 +132,9 @@ class TestVerifyBackup(unittest.TestCase):
         Path(self.backup).write_bytes(b"esto no es una base sqlite")
         ok, checks = vb.verify_backup(self.backup, self.live)
         self.assertFalse(ok)
-        self.assertTrue(any(name == "backup_readable" and not passed for name, passed, _ in checks), checks)
+        self.assertTrue(
+            any(name == "backup_readable" and not passed for name, passed, _ in checks), checks
+        )
 
     def test_foreign_key_violation_fails(self):
         build_db(self.live)

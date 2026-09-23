@@ -15,7 +15,7 @@ revalida en cada request contra business_users (sin caché).
 import re
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from werkzeug.security import generate_password_hash
@@ -26,9 +26,7 @@ from database.database import get_connection
 
 
 def _expires_iso(delta_seconds):
-    return (
-        datetime.now(tz=timezone.utc) + timedelta(seconds=delta_seconds)
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    return (datetime.now(tz=UTC) + timedelta(seconds=delta_seconds)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class HardeningBase(unittest.TestCase):
@@ -40,9 +38,7 @@ class HardeningBase(unittest.TestCase):
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_database_path
@@ -58,9 +54,7 @@ class HardeningBase(unittest.TestCase):
             c.close()
 
     def _make_user(self, email, password, business, role="owner"):
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -76,8 +70,7 @@ class HardeningBase(unittest.TestCase):
     def _login(self, client, slug, email, password):
         token = self._login_csrf(client, slug)
         return client.post(
-            self._login_url(slug),
-            data={"email": email, "password": password, "csrf_token": token},
+            self._login_url(slug), data={"email": email, "password": password, "csrf_token": token}
         )
 
     def _user_csrf(self, slug, url=None):
@@ -131,7 +124,6 @@ class HardeningBase(unittest.TestCase):
 
 
 class TestCaso14DosOwners(HardeningBase):
-
     def setUp(self):
         super().setUp()
         self._client = application.app.test_client()
@@ -157,8 +149,7 @@ class TestCaso14DosOwners(HardeningBase):
             data={"csrf_token": self.token, "role_name": "admin"},
         )
         resp = self._client.post(
-            f"/admin/usuarios/{self.owner_b}/revocar",
-            data={"csrf_token": self.token},
+            f"/admin/usuarios/{self.owner_b}/revocar", data={"csrf_token": self.token}
         )
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(self._membership_exists(self.owner_b, 1))
@@ -168,16 +159,14 @@ class TestCaso14DosOwners(HardeningBase):
     def test_no_se_permite_dejar_el_negocio_sin_owners(self):
         # Con los dos owners presentes, A SÍ puede revocar a B...
         resp = self._client.post(
-            f"/admin/usuarios/{self.owner_b}/revocar",
-            data={"csrf_token": self.token},
+            f"/admin/usuarios/{self.owner_b}/revocar", data={"csrf_token": self.token}
         )
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(self._membership_exists(self.owner_b, 1))
         # ...pero al quedar A como ÚNICO owner, ya no puede revocarse ni
         # degradarse: el negocio no puede quedar sin owners.
         resp = self._client.post(
-            f"/admin/usuarios/{self.owner_a}/revocar",
-            data={"csrf_token": self.token},
+            f"/admin/usuarios/{self.owner_a}/revocar", data={"csrf_token": self.token}
         )
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(self._membership_exists(self.owner_a, 1))
@@ -191,11 +180,10 @@ class TestCaso14DosOwners(HardeningBase):
 
 
 class TestCaso15SesionTrasRevocacion(HardeningBase):
-
     def test_peticion_protegida_denegada_con_sesion_tras_revocacion(self):
         # owner A revoca la membresía de B (admin) que tiene una sesión válida.
         self._client = application.app.test_client()
-        owner_a = self._make_user("a@test.com", "secreta", 1, "owner")
+        self._make_user("a@test.com", "secreta", 1, "owner")
         b = self._make_user("b@test.com", "secreta", 1, "admin")
 
         # B ya tiene una sesión válida establecida (simula navegador ya logueado).
@@ -208,9 +196,7 @@ class TestCaso15SesionTrasRevocacion(HardeningBase):
         # A revoca la membresía de B.
         self._login(self._client, "", "a@test.com", "secreta")
         token_a = self._user_csrf("")
-        resp = self._client.post(
-            f"/admin/usuarios/{b}/revocar", data={"csrf_token": token_a}
-        )
+        resp = self._client.post(f"/admin/usuarios/{b}/revocar", data={"csrf_token": token_a})
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(self._membership_exists(b, 1))
 
@@ -226,11 +212,10 @@ class TestCaso15SesionTrasRevocacion(HardeningBase):
 
 
 class TestCaso16RolReflejadoEnSiguienteAuth(HardeningBase):
-
     def test_transicion_admin_a_staff_deniega_y_vuelta_admin_accede(self):
         # owner A controla el negocio; B es admin.
         self._client = application.app.test_client()
-        owner_a = self._make_user("a@test.com", "secreta", 1, "owner")
+        self._make_user("a@test.com", "secreta", 1, "owner")
         b = self._make_user("b@test.com", "secreta", 1, "admin")
 
         # B inicia sesión normalmente (rol admin).
@@ -243,8 +228,7 @@ class TestCaso16RolReflejadoEnSiguienteAuth(HardeningBase):
         self._login(self._client, "", "a@test.com", "secreta")
         token_a = self._user_csrf("")
         resp = self._client.post(
-            f"/admin/usuarios/{b}/rol",
-            data={"csrf_token": token_a, "role_name": "staff"},
+            f"/admin/usuarios/{b}/rol", data={"csrf_token": token_a, "role_name": "staff"}
         )
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self._role_of(b, 1), self._role_id("staff"))
@@ -260,8 +244,7 @@ class TestCaso16RolReflejadoEnSiguienteAuth(HardeningBase):
         # A vuelve a promocionar a B a admin: al reingresar, el nuevo rol
         # (leído de memberships) vuelve a otorgar acceso.
         self._client.post(
-            f"/admin/usuarios/{b}/rol",
-            data={"csrf_token": token_a, "role_name": "admin"},
+            f"/admin/usuarios/{b}/rol", data={"csrf_token": token_a, "role_name": "admin"}
         )
         self.assertEqual(self._role_of(b, 1), self._role_id("admin"))
         # El client_b perdió su sesión al ser denegado; debe re-loguearse.
@@ -271,14 +254,13 @@ class TestCaso16RolReflejadoEnSiguienteAuth(HardeningBase):
 
     def test_transicion_admin_a_customer_deniega(self):
         self._client = application.app.test_client()
-        owner_a = self._make_user("a@test.com", "secreta", 1, "owner")
+        self._make_user("a@test.com", "secreta", 1, "owner")
         b = self._make_user("b@test.com", "secreta", 1, "admin")
 
         self._login(self._client, "", "a@test.com", "secreta")
         token_a = self._user_csrf("")
         self._client.post(
-            f"/admin/usuarios/{b}/rol",
-            data={"csrf_token": token_a, "role_name": "customer"},
+            f"/admin/usuarios/{b}/rol", data={"csrf_token": token_a, "role_name": "customer"}
         )
         self.assertEqual(self._role_of(b, 1), self._role_id("customer"))
 
@@ -291,7 +273,6 @@ class TestCaso16RolReflejadoEnSiguienteAuth(HardeningBase):
 
 
 class TestCaso19NoSePuedeSaltarLaPolitica(HardeningBase):
-
     def setUp(self):
         super().setUp()
         self._client = application.app.test_client()
@@ -305,22 +286,14 @@ class TestCaso19NoSePuedeSaltarLaPolitica(HardeningBase):
         token = self._user_csrf("")
         self._client.post(
             f"/admin/usuarios/{m}/rol",
-            data={
-                "csrf_token": token,
-                "role_name": "staff",
-                "role_id": str(owner_role_id),
-            },
+            data={"csrf_token": token, "role_name": "staff", "role_id": str(owner_role_id)},
         )
         # policy_role: role_id enviado por el cliente se ignora.
         self.assertEqual(self._role_of(m, 1), self._role_id("staff"))
         # Tampoco role_name=owner es aceptado aunque se mande role_id owner.
         self._client.post(
             f"/admin/usuarios/{m}/rol",
-            data={
-                "csrf_token": token,
-                "role_name": "owner",
-                "role_id": str(owner_role_id),
-            },
+            data={"csrf_token": token, "role_name": "owner", "role_id": str(owner_role_id)},
         )
         self.assertEqual(self._role_of(m, 1), self._role_id("staff"))
 

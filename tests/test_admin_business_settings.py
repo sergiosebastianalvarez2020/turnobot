@@ -24,13 +24,9 @@ class TestAdminBusinessSettings(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"',
-            login_page.text,
-        ).group(1)
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
         response = self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
+            "/login", data={"password": "correcta", "csrf_token": self.csrf_token}
         )
         self.assertEqual(response.status_code, 302)
 

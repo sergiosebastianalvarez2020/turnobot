@@ -5,8 +5,9 @@ Se registra via app.add_url_rule() en routes/register_health.py con
 endpoint="health" (no se utiliza Blueprint).
 """
 
-from flask import jsonify
 import logging
+
+from flask import jsonify
 
 
 def health():
@@ -20,6 +21,7 @@ def health():
     connection = None
     try:
         from app import get_connection
+
         connection = get_connection()
         connection.execute("SELECT 1").fetchone()
         return jsonify({"status": "ok", "database": "ok"}), 200

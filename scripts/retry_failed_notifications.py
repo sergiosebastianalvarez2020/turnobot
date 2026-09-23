@@ -21,7 +21,6 @@ Usa la misma config SMTP que la app (env). Nunca toca la ventana de reserva.
 """
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -45,10 +44,7 @@ from services.notifications import (
     smtp_configured,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("retry_failed_notifications")
 
 
@@ -102,12 +98,14 @@ def _run_once(business_id=None, limit=100):
             ok_count += 1
             logger.info(
                 "Reenviado %s turno %s (%s) -> %s",
-                row["type"], row["appointment_id"], business_id, row["destination"],
+                row["type"],
+                row["appointment_id"],
+                business_id,
+                row["destination"],
             )
         else:
             logger.info(
-                "Sigue fallando %s turno %s: %s",
-                row["type"], row["appointment_id"], reason,
+                "Sigue fallando %s turno %s: %s", row["type"], row["appointment_id"], reason
             )
 
     logger.info("Resumen: %s reenviados de %s intentados.", ok_count, len(failed))

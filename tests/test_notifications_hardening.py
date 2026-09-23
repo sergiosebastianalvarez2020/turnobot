@@ -24,20 +24,12 @@ from unittest import mock
 
 import app as application
 import database.database as database
+import scripts.retry_failed_notifications as retry_runner
 from database.database import list_failed_notifications_scoped
 from services import appointments, notifications
-from services.notifications import (
-    BUSINESS_CONFIRMATION,
-    CONFIRMATION,
-    send_confirmation_email,
-)
-import scripts.retry_failed_notifications as retry_runner
+from services.notifications import BUSINESS_CONFIRMATION, CONFIRMATION, send_confirmation_email
 
-SMTP_ENV = {
-    "SMTP_HOST": "smtp.test",
-    "SMTP_PORT": "587",
-    "EMAIL_FROM": "no-reply@test.com",
-}
+SMTP_ENV = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587", "EMAIL_FROM": "no-reply@test.com"}
 
 
 class FakeSMTP:
@@ -138,15 +130,15 @@ class NotificationsHardeningBase(unittest.TestCase):
 
     def _make_appointment(self, phone="3838439222", time="09:00", email="ana@example.com"):
         return appointments.create_appointment(
-            "Ana Pérez", phone, "Corte", self.valid_date, time, 1, email=email,
+            "Ana Pérez", phone, "Corte", self.valid_date, time, 1, email=email
         )
 
     def _failed_confirmation(self, result, email="ana@example.com"):
         apt = self._appointment_dict(result, email=email)
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(
-                 notifications.smtplib, "SMTP", return_value=FailingSMTP()
-             ):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FailingSMTP()),
+        ):
             sent, reason = send_confirmation_email(1, apt, force=True)
         self.assertFalse(sent)
         return apt
@@ -161,13 +153,10 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
         self.assertEqual(self._log_count(aid), 0)
 
         ok = appointments.cancel_appointment(
-            aid, "3838439222", 1, result["management_token"],
-            customer_name="Ana Pérez",
+            aid, "3838439222", 1, result["management_token"], customer_name="Ana Pérez"
         )
         self.assertTrue(ok)
-        status = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (aid,)
-        )[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
         self.assertEqual(status, "cancelled")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -176,13 +165,10 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
         aid = result["appointment_id"]
         self.assertFalse(
             appointments.cancel_appointment(
-                aid, "3838439222", 1, "token-incorrecto",
-                customer_name="Ana Pérez",
+                aid, "3838439222", 1, "token-incorrecto", customer_name="Ana Pérez"
             )
         )
-        status = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (aid,)
-        )[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
         self.assertEqual(status, "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -190,20 +176,14 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
         result = self._make_appointment()
         aid = result["appointment_id"]
         self.assertFalse(
-            appointments.cancel_appointment(
-                aid, "3838439222", 1, None, customer_name="Ana Pérez",
-            )
+            appointments.cancel_appointment(aid, "3838439222", 1, None, customer_name="Ana Pérez")
         )
-        status = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (aid,)
-        )[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
         self.assertEqual(status, "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
     def test_cancelacion_turno_inexistente_no_notifica(self):
-        self.assertFalse(
-            appointments.cancel_appointment(999999, "3838439222", 1, "sometoken")
-        )
+        self.assertFalse(appointments.cancel_appointment(999999, "3838439222", 1, "sometoken"))
         self.assertEqual(self._log_count(), 0)
 
 
@@ -214,31 +194,40 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
         result = self._make_appointment()
         aid = result["appointment_id"]
         res = appointments.reschedule_appointment(
-            aid, self.valid_date, "10:00", "3838439222", 1,
-            result["management_token"], customer_name="Ana Pérez",
+            aid,
+            self.valid_date,
+            "10:00",
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
         self.assertTrue(res["success"])
-        row = self._query(
-            "SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,),
-        )[0]
+        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
+            0
+        ]
         self.assertEqual(row["appointment_time"], "10:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
     def test_reprogramacion_slot_ocupado_intacta_sin_notificacion(self):
         result = self._make_appointment()
-        self._make_appointment(phone="3838439000", time="10:00",
-                               email="otro@example.com")
+        self._make_appointment(phone="3838439000", time="10:00", email="otro@example.com")
         aid = result["appointment_id"]
         res = appointments.reschedule_appointment(
-            aid, self.valid_date, "10:00", "3838439222", 1,
-            result["management_token"], customer_name="Ana Pérez",
+            aid,
+            self.valid_date,
+            "10:00",
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "occupied")
-        row = self._query(
-            "SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,),
-        )[0]
+        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
+            0
+        ]
         self.assertEqual(row["appointment_time"], "09:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
@@ -247,14 +236,19 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
         result = self._make_appointment()
         aid = result["appointment_id"]
         res = appointments.reschedule_appointment(
-            aid, self.valid_date, "11:00", "3838439222", 1,
-            "token-incorrecto", customer_name="Ana Pérez",
+            aid,
+            self.valid_date,
+            "11:00",
+            "3838439222",
+            1,
+            "token-incorrecto",
+            customer_name="Ana Pérez",
         )
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "not_found")
-        row = self._query(
-            "SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,),
-        )[0]
+        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
+            0
+        ]
         self.assertEqual(row["appointment_time"], "09:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
@@ -263,13 +257,23 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
         result = self._make_appointment()
         aid = result["appointment_id"]
         first = appointments.reschedule_appointment(
-            aid, self.valid_date, "12:00", "3838439222", 1,
-            result["management_token"], customer_name="Ana Pérez",
+            aid,
+            self.valid_date,
+            "12:00",
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
         self.assertTrue(first["success"])
         appointments.reschedule_appointment(
-            aid, self.valid_date, "12:00", "3838439222", 1,
-            result["management_token"], customer_name="Ana Pérez",
+            aid,
+            self.valid_date,
+            "12:00",
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
         rows = self._query(
             "SELECT COUNT(*) AS n FROM appointments WHERE id = ? AND appointment_time = '12:00'",
@@ -300,48 +304,42 @@ class TestReservaNotificationLog(NotificationsHardeningBase):
     def test_reserva_exitosa_genera_confirmacion_y_aviso(self):
         self._enable_notifications("turnos@negocio.com")
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             response = self._reserve(self._payload())
 
         self.assertEqual(response.status_code, 201)
         aid = response.get_json()["appointment_id"]
         self.assertEqual(self._notification_row(aid, CONFIRMATION)["status"], "sent")
-        self.assertEqual(
-            self._notification_row(aid, BUSINESS_CONFIRMATION)["status"], "sent"
-        )
+        self.assertEqual(self._notification_row(aid, BUSINESS_CONFIRMATION)["status"], "sent")
         self.assertEqual(self._log_count(aid), 2)
 
     def test_reserva_duplicada_una_sola_confirmacion(self):
         self._enable_notifications("turnos@negocio.com")
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             first = self._reserve(self._payload())
             second = self._reserve(self._payload())
 
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 400)
         self.assertEqual(second.get_json()["reason"], "occupied")
-        self.assertEqual(
-            self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 1
-        )
+        self.assertEqual(self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 1)
         aid = first.get_json()["appointment_id"]
-        self.assertEqual(
-            self._notification_row(aid, CONFIRMATION)["status"], "sent"
-        )
-        self.assertEqual(
-            self._notification_row(aid, BUSINESS_CONFIRMATION)["status"], "sent"
-        )
+        self.assertEqual(self._notification_row(aid, CONFIRMATION)["status"], "sent")
+        self.assertEqual(self._notification_row(aid, BUSINESS_CONFIRMATION)["status"], "sent")
         self.assertEqual(self._log_count(aid), 2)
 
     def test_reserva_rechazada_horario_invalido_no_genera_confirmacion(self):
         response = self._reserve(self._payload(hora="25:00"))
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["reason"], "invalid_time")
-        self.assertEqual(
-            self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 0
-        )
+        self.assertEqual(self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 0)
         self.assertEqual(self._log_count(), 0)
 
     def test_reserva_ocupada_no_genera_confirmacion(self):
@@ -349,17 +347,13 @@ class TestReservaNotificationLog(NotificationsHardeningBase):
         response = self._reserve(self._payload())
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["reason"], "occupied")
-        self.assertEqual(
-            self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 1
-        )
+        self.assertEqual(self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 1)
         self.assertEqual(self._log_count(), 0)
 
     def test_reserva_rechazada_por_rollback_no_genera_confirmacion(self):
         response = self._reserve(self._payload(servicio="Servicio-inexistente"))
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(
-            self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 0
-        )
+        self.assertEqual(self._query("SELECT COUNT(*) AS n FROM appointments")[0]["n"], 0)
         self.assertEqual(self._log_count(), 0)
 
 
@@ -373,14 +367,15 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         self.assertEqual(self._notification_row(aid, CONFIRMATION)["status"], "failed")
 
         ok = appointments.cancel_appointment(
-            aid, "3838439222", 1, result["management_token"],
-            customer_name="Ana Pérez",
+            aid, "3838439222", 1, result["management_token"], customer_name="Ana Pérez"
         )
         self.assertTrue(ok)
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             retried = retry_runner._run_once(business_id=1)
 
         self.assertEqual(retried, 0)
@@ -394,8 +389,10 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         self.assertEqual(self._notification_row(aid, CONFIRMATION)["status"], "failed")
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             retried = retry_runner._run_once(business_id=1)
 
         self.assertEqual(retried, 1)
@@ -415,8 +412,10 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         c.close()
 
         fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake):
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
             retried = retry_runner._run_once(business_id=1)
 
         self.assertEqual(retried, 0)
@@ -428,9 +427,7 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         aid = result["appointment_id"]
 
         c = database.get_connection()
-        c.execute(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        c.execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
         c.execute(
             """INSERT INTO notification_log
                (appointment_id, business_id, type, channel, destination,
@@ -461,14 +458,11 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
             retried_counts.append(retry_runner._run_once(business_id=1))
 
         shared_fake = FakeSMTP()
-        with mock.patch.dict(os.environ, SMTP_ENV, clear=False), \
-             mock.patch.object(
-                 notifications.smtplib, "SMTP", return_value=shared_fake
-             ):
-            threads = [
-                threading.Thread(target=run),
-                threading.Thread(target=run),
-            ]
+        with (
+            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=shared_fake),
+        ):
+            threads = [threading.Thread(target=run), threading.Thread(target=run)]
             for t in threads:
                 t.start()
             for t in threads:

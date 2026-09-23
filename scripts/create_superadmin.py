@@ -6,6 +6,7 @@ Uso:
 La contraseña se solicita de forma oculta (getpass). NO se imprime.
 Devuelve el enlace de acceso: /superadmin/login
 """
+
 import argparse
 from getpass import getpass
 
@@ -16,8 +17,7 @@ def main():
     parser = argparse.ArgumentParser(description="Crear SUPERADMIN de la plataforma")
     parser.add_argument("--email", required=True, help="Email del superadmin")
     parser.add_argument(
-        "--password",
-        help="evitar en producción; si se omite se solicita de forma oculta",
+        "--password", help="evitar en producción; si se omite se solicita de forma oculta"
     )
     args = parser.parse_args()
 
@@ -30,7 +30,7 @@ def main():
     if not result["success"]:
         print(f"No se pudo crear: {result['reason']}")
         return 1
-    print(f"Superadmin creado. Login: /superadmin/login")
+    print("Superadmin creado. Login: /superadmin/login")
     return 0
 
 

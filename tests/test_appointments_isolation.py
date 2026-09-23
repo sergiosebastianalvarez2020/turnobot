@@ -66,13 +66,8 @@ class BaseAppointmentIsolationTest(unittest.TestCase):
             2: {"id": 2, "name": "Business B", "slug": "business-b"},
         }[business_id]
         login_page = self.client.get("/login")
-        token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": token},
-        )
+        token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": token})
         with patch.object(application, "resolve_business", return_value=business):
             with application.app.test_request_context("/"):
                 application.load_current_business()
@@ -98,8 +93,7 @@ class BaseAppointmentIsolationTest(unittest.TestCase):
     @staticmethod
     def _business_id_of(appointment_id):
         return BaseAppointmentIsolationTest._query(
-            "SELECT business_id FROM appointments WHERE id = ?",
-            (appointment_id,),
+            "SELECT business_id FROM appointments WHERE id = ?", (appointment_id,)
         )[0]["business_id"]
 
 
@@ -107,8 +101,8 @@ class BaseAppointmentIsolationTest(unittest.TestCase):
 # READ ISOLATION (LISTADO / BÚSQUEDA)
 # ============================================================
 
-class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
 
+class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
     def test_business_a_solo_ve_sus_turnos(self):
         appointments.create_appointment(
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
@@ -140,9 +134,7 @@ class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
         appointments.create_appointment(
             "Cliente X", "3838439333", "Corte B", self.valid_date, "10:00", business_id=2
         )
-        turnos_b = appointments.get_customer_appointments(
-            "Cliente X", "3838439333", business_id=2
-        )
+        turnos_b = appointments.get_customer_appointments("Cliente X", "3838439333", business_id=2)
         self.assertEqual(len(turnos_b), 1)
 
 
@@ -150,25 +142,21 @@ class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
 # CREATE ASSOCIATION
 # ============================================================
 
-class TestAppointmentCreateAssociation(BaseAppointmentIsolationTest):
 
+class TestAppointmentCreateAssociation(BaseAppointmentIsolationTest):
     def test_turno_creado_por_a_queda_asociado_a_a(self):
         result = appointments.create_appointment(
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )
         self.assertTrue(result["success"])
-        self.assertEqual(
-            self._business_id_of(result["appointment_id"]), 1
-        )
+        self.assertEqual(self._business_id_of(result["appointment_id"]), 1)
 
     def test_turno_creado_por_b_queda_asociado_a_b(self):
         result = appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )
         self.assertTrue(result["success"])
-        self.assertEqual(
-            self._business_id_of(result["appointment_id"]), 2
-        )
+        self.assertEqual(self._business_id_of(result["appointment_id"]), 2)
 
     def test_create_appointment_valida_servicio_del_mismo_negocio(self):
         # B intenta reservar "Corte" que pertenece a A -> invalid_service
@@ -183,32 +171,28 @@ class TestAppointmentCreateAssociation(BaseAppointmentIsolationTest):
 # CANCEL ISOLATION
 # ============================================================
 
-class TestCancelIsolation(BaseAppointmentIsolationTest):
 
+class TestCancelIsolation(BaseAppointmentIsolationTest):
     def test_a_no_puede_cancelar_turno_de_b(self):
         turno_b = appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )["appointment_id"]
-        cancelado = appointments.cancel_appointment(
-            turno_b, "3838439333", business_id=1
-        )
+        cancelado = appointments.cancel_appointment(turno_b, "3838439333", business_id=1)
         self.assertFalse(cancelado)
-        estado = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (turno_b,)
-        )[0]["status"]
+        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_b,))[0][
+            "status"
+        ]
         self.assertEqual(estado, "confirmed")
 
     def test_b_no_puede_cancelar_turno_de_a(self):
         turno_a = appointments.create_appointment(
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )["appointment_id"]
-        cancelado = appointments.cancel_appointment(
-            turno_a, "3838439222", business_id=2
-        )
+        cancelado = appointments.cancel_appointment(turno_a, "3838439222", business_id=2)
         self.assertFalse(cancelado)
-        estado = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (turno_a,)
-        )[0]["status"]
+        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_a,))[0][
+            "status"
+        ]
         self.assertEqual(estado, "confirmed")
 
 
@@ -216,14 +200,19 @@ class TestCancelIsolation(BaseAppointmentIsolationTest):
 # RESCHEDULE ISOLATION
 # ============================================================
 
-class TestRescheduleIsolation(BaseAppointmentIsolationTest):
 
+class TestRescheduleIsolation(BaseAppointmentIsolationTest):
     def test_a_no_puede_reprogramar_turno_de_b(self):
         turno_b = appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )["appointment_id"]
         result = appointments.reschedule_appointment(
-            turno_b, self.valid_date, "10:00", "3838439333", business_id=1, customer_name="Cliente B"
+            turno_b,
+            self.valid_date,
+            "10:00",
+            "3838439333",
+            business_id=1,
+            customer_name="Cliente B",
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "not_found")
@@ -233,7 +222,12 @@ class TestRescheduleIsolation(BaseAppointmentIsolationTest):
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )["appointment_id"]
         result = appointments.reschedule_appointment(
-            turno_a, self.valid_date, "10:00", "3838439222", business_id=2, customer_name="Cliente A"
+            turno_a,
+            self.valid_date,
+            "10:00",
+            "3838439222",
+            business_id=2,
+            customer_name="Cliente A",
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "not_found")
@@ -243,8 +237,8 @@ class TestRescheduleIsolation(BaseAppointmentIsolationTest):
 # AVAILABILITY ISOLATION (Ocupación por negocio)
 # ============================================================
 
-class TestAvailabilityIsolation(BaseAppointmentIsolationTest):
 
+class TestAvailabilityIsolation(BaseAppointmentIsolationTest):
     def test_ocupacion_de_a_no_afecta_disponibilidad_de_b(self):
         appointments.create_appointment(
             "Cliente A", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
@@ -271,19 +265,17 @@ class TestAvailabilityIsolation(BaseAppointmentIsolationTest):
 # ADMIN STATUS ISOLATION
 # ============================================================
 
-class TestAdminStatusIsolation(BaseAppointmentIsolationTest):
 
+class TestAdminStatusIsolation(BaseAppointmentIsolationTest):
     def test_update_status_de_a_no_afecta_turno_de_b(self):
         turno_b = appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )["appointment_id"]
-        actualizado = database.update_appointment_status_scoped(
-            turno_b, "cancelled", 1
-        )
+        actualizado = database.update_appointment_status_scoped(turno_b, "cancelled", 1)
         self.assertFalse(actualizado)
-        estado = self._query(
-            "SELECT status FROM appointments WHERE id = ?", (turno_b,)
-        )[0]["status"]
+        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_b,))[0][
+            "status"
+        ]
         self.assertEqual(estado, "confirmed")
 
 
@@ -291,19 +283,17 @@ class TestAdminStatusIsolation(BaseAppointmentIsolationTest):
 # CONFIG ISOLATION
 # ============================================================
 
-class TestConfigIsolation(BaseAppointmentIsolationTest):
 
+class TestConfigIsolation(BaseAppointmentIsolationTest):
     def test_update_business_settings_de_a_no_afecta_config_de_b(self):
         # A actúa sobre su propia config (business_id=1)
         database.update_business_settings_scoped(
             1, "El Corte Renovado", "Barberia", "EC", "desc", "UTC"
         )
-        config_b = database.get_business_settings_scoped(2)
+        database.get_business_settings_scoped(2)
         # B no tiene su propia fila de config -> devuelve None (no se crea una)
         # El punto: A no actualizó la fila de B
-        filas_b = self._query(
-            "SELECT business_name FROM business_settings WHERE business_id = 2"
-        )
+        filas_b = self._query("SELECT business_name FROM business_settings WHERE business_id = 2")
         self.assertEqual(len(filas_b), 0)
 
 
@@ -311,8 +301,8 @@ class TestConfigIsolation(BaseAppointmentIsolationTest):
 # CLIENT-INJECTED business_id CANNOT ESCAPE CONTEXT (HTTP)
 # ============================================================
 
-class TestNoClientEscapesContext(BaseAppointmentIsolationTest):
 
+class TestNoClientEscapesContext(BaseAppointmentIsolationTest):
     def test_business_id_inyectado_no_permite_ver_turnos_de_b(self):
         appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
@@ -320,7 +310,7 @@ class TestNoClientEscapesContext(BaseAppointmentIsolationTest):
         self.login(1)
         # Cliente A intenta consultar turnos con business_id=2 en query string
         response = self.client.get(
-            f"/api/turnos?nombre=Cliente+B&telefono=3838439333&business_id=2&business=2"
+            "/api/turnos?nombre=Cliente+B&telefono=3838439333&business_id=2&business=2"
         )
         self.assertEqual(response.status_code, 200)
         data = response.get_json()

@@ -19,7 +19,11 @@ def json_object():
 def _rate_limit_key(endpoint, client_ip, business_id=None, user_id=None):
     # Values come only from Flask's resolved request/session context, never
     # from request data supplied by the caller.
-    scope = f"user:{user_id}:business:{business_id}" if user_id else f"ip:{client_ip}:business:{business_id}"
+    scope = (
+        f"user:{user_id}:business:{business_id}"
+        if user_id
+        else f"ip:{client_ip}:business:{business_id}"
+    )
     return f"{endpoint}:{scope}"
 
 

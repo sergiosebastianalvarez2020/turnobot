@@ -17,7 +17,6 @@ from database.database import get_connection
 
 
 class BrandingBase(unittest.TestCase):
-
     OWNER_EMAIL = "owner@test-branding.com"
     OWNER_PASSWORD = "clave-segura-123"
 
@@ -88,7 +87,6 @@ class BrandingBase(unittest.TestCase):
 
 
 class TestBrandingValidation(BrandingBase):
-
     def setUp(self):
         super().setUp()
         self._setup()
@@ -109,9 +107,7 @@ class TestBrandingValidation(BrandingBase):
         self.assertIn("HEX", response.headers.get("Location", ""))
 
     def test_valid_hex_colors_accepted(self):
-        response = self._post_config(
-            primary_color="#FF5733", secondary_color="#123456"
-        )
+        response = self._post_config(primary_color="#FF5733", secondary_color="#123456")
         self.assertEqual(response.status_code, 302)
 
         rows = self._query(
@@ -140,8 +136,7 @@ class TestBrandingValidation(BrandingBase):
         self.assertEqual(response.status_code, 302)
 
         rows = self._query(
-            "SELECT logo_url FROM business_settings WHERE business_id = ?",
-            (self._business_id(),),
+            "SELECT logo_url FROM business_settings WHERE business_id = ?", (self._business_id(),)
         )
         self.assertEqual(rows[0]["logo_url"], "https://example.com/logo.png")
 

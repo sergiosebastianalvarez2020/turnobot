@@ -17,7 +17,6 @@ from pathlib import Path
 import database.database as database
 from scripts.backup_database import backup_database
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -65,7 +64,9 @@ class TestBackupWalConsistency(unittest.TestCase):
         marker_value = "marker-123456"
 
         conn = self._open_conn()
-        conn.execute("CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)"
+        )
         conn.execute("INSERT INTO wal_markers (id, val_test) VALUES (1, ?)", (marker_value,))
         conn.commit()
 
@@ -85,7 +86,9 @@ class TestBackupWalConsistency(unittest.TestCase):
         marker_value = "marker-abc"
 
         conn = self._open_conn()
-        conn.execute("CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)"
+        )
         conn.execute("INSERT INTO wal_markers (id, val_test) VALUES (1, ?)", (marker_value,))
         conn.commit()
 
@@ -118,7 +121,9 @@ class TestBackupWalConsistency(unittest.TestCase):
         marker_value = "marker-restore-test"
 
         conn = self._open_conn()
-        conn.execute("CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS wal_markers (id INTEGER PRIMARY KEY, val_test TEXT)"
+        )
         conn.execute("INSERT INTO wal_markers (id, val_test) VALUES (1, ?)", (marker_value,))
         conn.commit()
 
@@ -151,12 +156,12 @@ class TestBackupWalConsistency(unittest.TestCase):
 
     def test_backup_filename_unchanged(self):
         """El backup debe conservar el naming actual de la aplicación."""
-        import re
 
         backup_path = backup_database(destination=str(self.root_dir / "backups"))
         pattern = r"^appointments-\d{8}-\d{6}\.db$"
-        self.assertRegex(backup_path.name, pattern,
-                         "El nombre del backup no sigue el formato esperado")
+        self.assertRegex(
+            backup_path.name, pattern, "El nombre del backup no sigue el formato esperado"
+        )
 
     def test_backup_nonexistent_source_raises(self):
         """Si la base no existe, debe lanzar FileNotFoundError."""

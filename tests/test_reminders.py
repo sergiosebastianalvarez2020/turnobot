@@ -7,9 +7,8 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 import database.database as database
-from services import appointments
-from services import notifications
 import scripts.send_reminders as reminder_runner
+from services import appointments, notifications
 
 ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -72,17 +71,24 @@ class BaseReminderTest(unittest.TestCase):
         # El runner calcula "mañana" = _local_today(...). Para que el turno
         # (creado en self.appointment_date) sea candidato, _local_today debe
         # devolver exactamente esa fecha.
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake), \
-             mock.patch.object(reminder_runner, "_local_today", return_value=self.appointment_date):
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+            mock.patch.object(reminder_runner, "_local_today", return_value=self.appointment_date),
+        ):
             return reminder_runner._run_once()
 
 
 class TestReminderRunner(BaseReminderTest):
     def _confirmed(self, hora, email):
         result = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte",
-            self.appointment_date.isoformat(), hora, 1, email=email,
+            "Ana Pérez",
+            "3838439222",
+            "Corte",
+            self.appointment_date.isoformat(),
+            hora,
+            1,
+            email=email,
         )
         self.assertTrue(result["success"])
         return result

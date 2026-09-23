@@ -1,6 +1,5 @@
-import unittest
 import sqlite3
-from unittest import mock
+import unittest
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -10,7 +9,8 @@ import app as application
 class RateLimitingTests(unittest.TestCase):
     def test_forwarded_headers_are_ignored_without_proxyfix(self):
         with application.app.test_request_context(
-            "/", environ_base={"REMOTE_ADDR": "10.0.0.2"},
+            "/",
+            environ_base={"REMOTE_ADDR": "10.0.0.2"},
             headers={"X-Forwarded-For": "203.0.113.9", "X-Real-IP": "203.0.113.8"},
         ):
             self.assertEqual(application.get_client_ip(), "10.0.0.2")
@@ -18,15 +18,25 @@ class RateLimitingTests(unittest.TestCase):
     def test_proxyfix_uses_client_ip_when_one_proxy_is_trusted(self):
         wrapped = ProxyFix(application.app.wsgi_app, x_for=1)
         environ = {
-            "REQUEST_METHOD": "GET", "PATH_INFO": "/", "SERVER_NAME": "localhost",
-            "SERVER_PORT": "80", "wsgi.url_scheme": "http", "wsgi.version": (1, 0),
-            "wsgi.input": __import__("io").BytesIO(), "wsgi.errors": __import__("sys").stderr,
-            "wsgi.multithread": False, "wsgi.multiprocess": False, "wsgi.run_once": False,
-            "REMOTE_ADDR": "10.0.0.2", "HTTP_X_FORWARDED_FOR": "203.0.113.9",
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/",
+            "SERVER_NAME": "localhost",
+            "SERVER_PORT": "80",
+            "wsgi.url_scheme": "http",
+            "wsgi.version": (1, 0),
+            "wsgi.input": __import__("io").BytesIO(),
+            "wsgi.errors": __import__("sys").stderr,
+            "wsgi.multithread": False,
+            "wsgi.multiprocess": False,
+            "wsgi.run_once": False,
+            "REMOTE_ADDR": "10.0.0.2",
+            "HTTP_X_FORWARDED_FOR": "203.0.113.9",
         }
         captured = []
+
         def start_response(status, headers, exc_info=None):
             captured.append(status)
+
         list(wrapped(environ, start_response))
         self.assertEqual(environ["REMOTE_ADDR"], "203.0.113.9")
 
@@ -53,7 +63,9 @@ class RateLimitingTests(unittest.TestCase):
         application.rate_limit_state.clear()
         self.assertFalse(application.rate_limit_state)
         application.is_chat_request_allowed("1.2.3.4", 1)
-        self.assertIn(application._rate_limit_key("chat", "1.2.3.4", 1), application.rate_limit_state)
+        self.assertIn(
+            application._rate_limit_key("chat", "1.2.3.4", 1), application.rate_limit_state
+        )
 
 
 if __name__ == "__main__":
@@ -65,9 +77,10 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
     cuando PRAGMA foreign_keys = ON (configuración de la app)."""
 
     def setUp(self):
-        import database.database as database
         import tempfile
         from pathlib import Path
+
+        import database.database as database
 
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
@@ -76,6 +89,7 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
 
     def tearDown(self):
         import database.database as database
+
         database.DATABASE_PATH = self.original_database_path
         self.temp_dir.cleanup()
 
@@ -93,7 +107,17 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
                  appointment_time, appointment_end, duration, business_id, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("Test", "12345678", "Corte", "2025-01-01", "10:00", "11:00", 60, 99999, "confirmed"),
+                (
+                    "Test",
+                    "12345678",
+                    "Corte",
+                    "2025-01-01",
+                    "10:00",
+                    "11:00",
+                    60,
+                    99999,
+                    "confirmed",
+                ),
             )
             conn.commit()
             self.fail("Debió fallar por foreign key constraint")
@@ -106,6 +130,7 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
     def test_foreign_key_rejects_invalid_resource_id(self):
         """INSERT con resource_id inexistente debe fallar por FK."""
         import sqlite3
+
         import database.database as database
 
         # Primero crear un negocio y servicio válidos
@@ -115,7 +140,7 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
                 "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Test', 1000, 30, 1)"
             )
             conn.commit()
-            service_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
@@ -129,7 +154,18 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
                  appointment_time, appointment_end, duration, business_id, resource_id, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("Test", "12345678", "Test", "2025-01-01", "10:00", "10:30", 30, 1, 99999, "confirmed"),
+                (
+                    "Test",
+                    "12345678",
+                    "Test",
+                    "2025-01-01",
+                    "10:00",
+                    "10:30",
+                    30,
+                    1,
+                    99999,
+                    "confirmed",
+                ),
             )
             conn.commit()
             self.fail("Debió fallar por foreign key constraint")
@@ -142,6 +178,7 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
     def test_foreign_key_cascade_delete_business(self):
         """Eliminar negocio debe fallar si tiene citas (restrict)."""
         import sqlite3
+
         import database.database as database
 
         conn = database.get_connection()
@@ -158,7 +195,17 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
                  appointment_time, appointment_end, duration, business_id, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("Test", "12345678", "Corte", "2025-01-01", "10:00", "11:00", 60, biz_id, "confirmed"),
+                (
+                    "Test",
+                    "12345678",
+                    "Corte",
+                    "2025-01-01",
+                    "10:00",
+                    "11:00",
+                    60,
+                    biz_id,
+                    "confirmed",
+                ),
             )
             conn.commit()
 

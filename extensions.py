@@ -3,10 +3,11 @@ Módulo de extensiones compartidas: rate limiting, CSRF, etc.
 Estado global y helpers puros, sin dependencias de Flask app.
 """
 
-import threading
 import secrets
+import threading
 from collections import defaultdict, deque
 from time import monotonic
+
 from flask import session
 
 # ============================================================
@@ -85,6 +86,7 @@ def _is_request_allowed(key, limit):
 # ============================================================
 # CSRF - Helpers
 # ============================================================
+
 
 def csrf_token():
     """Genera y retorna un token CSRF único para la sesión actual.

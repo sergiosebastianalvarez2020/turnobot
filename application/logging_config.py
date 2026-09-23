@@ -28,7 +28,11 @@ class RequestContextFilter(logging.Filter):
                 if existing_rid and existing_rid != "-":
                     record.request_id = existing_rid
                 else:
-                    record.request_id = getattr(g, "request_id", None) or request.headers.get("X-Request-ID", "").strip() or "-"
+                    record.request_id = (
+                        getattr(g, "request_id", None)
+                        or request.headers.get("X-Request-ID", "").strip()
+                        or "-"
+                    )
             except Exception:
                 record.request_id = "-"
 
@@ -87,7 +91,7 @@ class StructuredFormatter(logging.Formatter):
 
     def format(self, record):
         try:
-            ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
             ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 

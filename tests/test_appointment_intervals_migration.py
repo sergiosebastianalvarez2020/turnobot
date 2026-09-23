@@ -6,7 +6,6 @@ from pathlib import Path
 
 import database.database as database
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -60,13 +59,15 @@ class TestAppointmentIntervalsMigration(unittest.TestCase):
         connection.close()
 
         # Aplicar la migracion 004
-        shutil.copy(ROOT / "migrations" / "004_appointment_intervals.sql", self.migrations_dir / "004_appointment_intervals.sql")
+        shutil.copy(
+            ROOT / "migrations" / "004_appointment_intervals.sql",
+            self.migrations_dir / "004_appointment_intervals.sql",
+        )
         database.init_database()
 
         connection = self.connect()
         self.assertEqual(
-            connection.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0],
-            4,
+            connection.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0], 4
         )
 
         rows = {
@@ -87,10 +88,7 @@ class TestAppointmentIntervalsMigration(unittest.TestCase):
         self.assertEqual(rows["Servicio fantasma"]["appointment_end"], "12:00")
 
         # Se conservan todos los turnos y el UNIQUE parcial sigue presente
-        self.assertEqual(
-            connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0],
-            3,
-        )
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0], 3)
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(appointments)")}
         self.assertIn("unique_confirmed_appointment_slot", indexes)
         self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")

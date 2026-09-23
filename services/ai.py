@@ -8,45 +8,38 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 from google.genai import errors as genai_errors
+from google.genai import types
 
+from database.database import (
+    get_active_services_scoped,
+    get_business_settings_scoped,
+    get_resource_scoped,
+    get_resources_scoped,
+    get_weekly_schedule_scoped,
+)
 from services.appointments import (
-    get_available_times,
-    create_appointment,
-    get_customer_appointments,
     cancel_appointment,
+    create_appointment,
+    get_available_times,
+    get_customer_appointments,
     reschedule_appointment,
 )
-from services.notifications import dispatch_booking_emails, notifications_enabled
-from database.database import (
-    get_active_services,
-    get_active_services_scoped,
-    get_business_settings,
-    get_business_settings_scoped,
-    get_weekly_schedule,
-    get_weekly_schedule_scoped,
-    get_resources_scoped,
-    get_resource_scoped,
-)
-from services.knowledge import search_knowledge_scoped
 from services.conversations import (
+    add_conversation_message_scoped,
     get_or_create_conversation_session_scoped,
     get_or_create_public_conversation_session_scoped,
-    add_conversation_message_scoped,
-    track_question_scoped,
     request_human_handoff_scoped,
+    track_question_scoped,
 )
-
+from services.knowledge import search_knowledge_scoped
+from services.notifications import dispatch_booking_emails, notifications_enabled
 
 # ============================================================
 # LOGGING
 # ============================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 logger = logging.getLogger("el_corte")
 
@@ -67,10 +60,7 @@ def get_gemini_client():
         if not API_KEY:
             raise RuntimeError("GEMINI_API_KEY no está configurada")
         timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "15000"))
-        client = genai.Client(
-            api_key=API_KEY,
-            http_options=types.HttpOptions(timeout=timeout_ms),
-        )
+        client = genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=timeout_ms))
     return client
 
 
@@ -108,12 +98,7 @@ def get_business_identity(business_id):
 # ============================================================
 
 # Status strings used by the Google API (gemini status field on APIError).
-_TRANSIENT_STATUSES = {
-    "DEADLINE_EXCEEDED",
-    "UNAVAILABLE",
-    "RESOURCE_EXHAUSTED",
-    "INTERNAL",
-}
+_TRANSIENT_STATUSES = {"DEADLINE_EXCEEDED", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"}
 
 
 def _classify_gemini_error(error):
@@ -129,6 +114,7 @@ def _classify_gemini_error(error):
 
     try:
         import httpx
+
         if isinstance(error, httpx.TimeoutException):
             return "timeout", True, "HttpTimeout"
         if isinstance(error, (httpx.ConnectError, httpx.NetworkError)):
@@ -181,30 +167,24 @@ def _gemini_error_message(category):
     """Devuelve un mensaje amigable según la categoría de error."""
     messages = {
         "timeout": (
-            "Disculpá, la consulta tardó demasiado. "
-            "Por favor, intentá nuevamente en unos momentos."
+            "Disculpá, la consulta tardó demasiado. Por favor, intentá nuevamente en unos momentos."
         ),
         "quota": (
             "Disculpá, el servicio de IA está temporalmente con limitaciones. "
             "Por favor, intentá nuevamente en unos minutos."
         ),
-        "auth": (
-            "Disculpá, en este momento estoy teniendo "
-            "un problema para procesar tu consulta."
-        ),
+        "auth": ("Disculpá, en este momento estoy teniendo un problema para procesar tu consulta."),
         "invalid_argument": (
-            "Disculpá, no pude procesar tu consulta. "
-            "Por favor, intentá formularla de otra manera."
+            "Disculpá, no pude procesar tu consulta. Por favor, intentá formularla de otra manera."
         ),
         "server": (
-            "Disculpá, en este momento estoy teniendo "
-            "un problema para procesar tu consulta."
+            "Disculpá, en este momento estoy teniendo un problema para procesar tu consulta."
         ),
     }
-    return messages.get(category, (
-        "Disculpá, en este momento estoy teniendo "
-        "un problema para procesar tu consulta."
-    ))
+    return messages.get(
+        category,
+        ("Disculpá, en este momento estoy teniendo un problema para procesar tu consulta."),
+    )
 
 
 def _call_gemini_with_retry(contents, config, request_id=None, business_id=None):
@@ -219,9 +199,7 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
         start = monotonic()
         try:
             response = get_gemini_client().models.generate_content(
-                model=MODEL,
-                contents=contents,
-                config=config,
+                model=MODEL, contents=contents, config=config
             )
             latency_ms = int((monotonic() - start) * 1000)
 
@@ -267,6 +245,7 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
                 return None, attempt, (category, error_type)
             delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
             import time as _time
+
             _time.sleep(delay)
 
     if last_error is not None:
@@ -275,9 +254,17 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
     return None, attempt, ("unknown", "UnknownError")
 
 
-def _log_gemini_call(request_id=None, business_id=None, latency_ms=0,
-                     attempt=0, status="unknown", error_type=None,
-                     prompt_tokens=None, candidate_tokens=None, total_tokens=None):
+def _log_gemini_call(
+    request_id=None,
+    business_id=None,
+    latency_ms=0,
+    attempt=0,
+    status="unknown",
+    error_type=None,
+    prompt_tokens=None,
+    candidate_tokens=None,
+    total_tokens=None,
+):
     """Registra una llamada a Gemini con contexto estructurado y métricas de tokens."""
     logger.info(
         "gemini_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s error_type=%s prompt_tokens=%s candidate_tokens=%s total_tokens=%s",
@@ -534,22 +521,16 @@ def get_resources_prompt(business_id=None):
         raise ValueError("business_id es obligatorio")
     resources = get_resources_scoped(business_id, only_active=True)
     if not resources:
-        return "No hay recursos reservables en este momento.", session_id, public_token
+        return "No hay recursos reservables en este momento."
 
-    return "\n".join(
-        f"- {resource['name']} (ID: {resource['id']})"
-        for resource in resources
-    )
+    return "\n".join(f"- {resource['name']} (ID: {resource['id']})" for resource in resources)
 
 
 def get_business_hours_prompt(business_id):
     """Genera los horarios semanales actuales desde la base de datos."""
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    day_names = [
-        "Lunes", "Martes", "Miércoles", "Jueves",
-        "Viernes", "Sábado", "Domingo",
-    ]
+    day_names = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
     lines = []
     for day, name in enumerate(day_names):
         schedule = get_weekly_schedule_scoped(day, business_id)
@@ -575,28 +556,18 @@ def get_business_hours_prompt(business_id):
 
 consultar_disponibilidad_declaration = types.FunctionDeclaration(
     name="consultar_disponibilidad",
-
     description=(
         "Consulta los horarios disponibles del negocio "
         "para una fecha determinada. "
         "Si se especifica resource_id, filtra por ese recurso."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {
-            "fecha": {
-                "type": "string",
-                "description": (
-                    "Fecha en formato YYYY-MM-DD."
-                ),
-            },
+            "fecha": {"type": "string", "description": ("Fecha en formato YYYY-MM-DD.")},
             "servicio": {
                 "type": "string",
-                "description": (
-                    "Nombre opcional del servicio para filtrar por duración."
-                ),
+                "description": ("Nombre opcional del servicio para filtrar por duración."),
             },
             "resource_id": {
                 "type": "integer",
@@ -607,11 +578,7 @@ consultar_disponibilidad_declaration = types.FunctionDeclaration(
                 ),
             },
         },
-
-        "required": [
-            "fecha"
-        ],
-
+        "required": ["fecha"],
         "additionalProperties": False,
     },
 )
@@ -624,19 +591,14 @@ consultar_disponibilidad_declaration = types.FunctionDeclaration(
 
 consultar_recursos_declaration = types.FunctionDeclaration(
     name="consultar_recursos",
-
     description=(
         "Devuelve la lista de recursos reservables activos del negocio. "
         "Útil cuando el cliente pregunta qué recursos están disponibles."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {},
-
         "required": [],
-
         "additionalProperties": False,
     },
 )
@@ -649,28 +611,16 @@ consultar_recursos_declaration = types.FunctionDeclaration(
 
 reservar_turno_declaration = types.FunctionDeclaration(
     name="reservar_turno",
-
     description=(
         "Crea una reserva real en la base de datos. "
         "Usar solamente cuando el cliente haya proporcionado "
         "todos los datos necesarios y quiera realizar la reserva."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {
-
-            "nombre": {
-                "type": "string",
-                "description": "Nombre del cliente.",
-            },
-
-            "telefono": {
-                "type": "string",
-                "description": "Teléfono del cliente.",
-            },
-
+            "nombre": {"type": "string", "description": "Nombre del cliente."},
+            "telefono": {"type": "string", "description": "Teléfono del cliente."},
             "email": {
                 "type": "string",
                 "description": (
@@ -679,26 +629,9 @@ reservar_turno_declaration = types.FunctionDeclaration(
                     "enviar la confirmación y recordatorio."
                 ),
             },
-
-            "servicio": {
-                "type": "string",
-                "description": "Nombre exacto de un servicio activo.",
-            },
-
-            "fecha": {
-                "type": "string",
-                "description": (
-                    "Fecha en formato YYYY-MM-DD."
-                ),
-            },
-
-            "hora": {
-                "type": "string",
-                "description": (
-                    "Hora en formato HH:MM."
-                ),
-            },
-
+            "servicio": {"type": "string", "description": "Nombre exacto de un servicio activo."},
+            "fecha": {"type": "string", "description": ("Fecha en formato YYYY-MM-DD.")},
+            "hora": {"type": "string", "description": ("Hora en formato HH:MM.")},
             "resource_id": {
                 "type": "integer",
                 "description": (
@@ -708,15 +641,7 @@ reservar_turno_declaration = types.FunctionDeclaration(
                 ),
             },
         },
-
-        "required": [
-            "nombre",
-            "telefono",
-            "servicio",
-            "fecha",
-            "hora",
-        ],
-
+        "required": ["nombre", "telefono", "servicio", "fecha", "hora"],
         "additionalProperties": False,
     },
 )
@@ -729,37 +654,21 @@ reservar_turno_declaration = types.FunctionDeclaration(
 
 buscar_turnos_declaration = types.FunctionDeclaration(
     name="buscar_turnos_cliente",
-
     description=(
         "Busca los turnos confirmados de un cliente. "
         "Debe utilizarse antes de cancelar o reprogramar "
         "un turno cuando sea necesario identificarlo."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {
-
-            "nombre": {
-                "type": "string",
-
-                "description": (
-                    "Nombre del cliente."
-                ),
-            },
-
+            "nombre": {"type": "string", "description": ("Nombre del cliente.")},
             "telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
             },
         },
-
-        "required": [
-            "nombre",
-            "telefono",
-        ],
-
+        "required": ["nombre", "telefono"],
         "additionalProperties": False,
     },
 )
@@ -772,32 +681,22 @@ buscar_turnos_declaration = types.FunctionDeclaration(
 
 cancelar_turno_declaration = types.FunctionDeclaration(
     name="cancelar_turno",
-
     description=(
         "Cancela un turno confirmado utilizando su ID. "
         "Usar solamente cuando el cliente haya identificado "
         "claramente cuál turno quiere cancelar."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {
-
             "appointment_id": {
                 "type": "integer",
-
-                "description": (
-                    "ID exacto del turno que el cliente "
-                    "quiere cancelar."
-                ),
+                "description": ("ID exacto del turno que el cliente quiere cancelar."),
             },
-
-"telefono": {
+            "telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
             },
-
             "nombre": {
                 "type": "string",
                 "description": (
@@ -806,12 +705,7 @@ cancelar_turno_declaration = types.FunctionDeclaration(
                 ),
             },
         },
-
-        "required": [
-            "appointment_id",
-            "telefono",
-        ],
-
+        "required": ["appointment_id", "telefono"],
         "additionalProperties": False,
     },
 )
@@ -830,32 +724,22 @@ cancelar_turno_declaration.parameters_json_schema["properties"]["management_toke
 
 reprogramar_turno_declaration = types.FunctionDeclaration(
     name="reprogramar_turno",
-
     description=(
         "Reprograma un turno confirmado a una nueva fecha "
         "y horario. La herramienta verifica que el nuevo "
         "horario esté disponible."
     ),
-
     parameters_json_schema={
         "type": "object",
-
         "properties": {
-
             "appointment_id": {
                 "type": "integer",
-
-                "description": (
-                    "ID exacto del turno que se quiere "
-                    "reprogramar."
-                ),
+                "description": ("ID exacto del turno que se quiere reprogramar."),
             },
-
-"telefono": {
+            "telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
             },
-
             "nombre": {
                 "type": "string",
                 "description": (
@@ -863,36 +747,17 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
                     "Obligatorio cuando no se dispone del management_token."
                 ),
             },
-
             "management_token": {
                 "type": "string",
                 "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
             },
-
             "nueva_fecha": {
                 "type": "string",
-
-                "description": (
-                    "Nueva fecha en formato YYYY-MM-DD."
-                ),
+                "description": ("Nueva fecha en formato YYYY-MM-DD."),
             },
-
-            "nueva_hora": {
-                "type": "string",
-
-                "description": (
-                    "Nueva hora en formato HH:MM."
-                ),
-            },
+            "nueva_hora": {"type": "string", "description": ("Nueva hora en formato HH:MM.")},
         },
-
-        "required": [
-            "appointment_id",
-            "telefono",
-            "nueva_fecha",
-            "nueva_hora",
-        ],
-
+        "required": ["appointment_id", "telefono", "nueva_fecha", "nueva_hora"],
         "additionalProperties": False,
     },
 )
@@ -917,7 +782,7 @@ solicitar_atencion_humana_declaration = types.FunctionDeclaration(
             "motivo": {
                 "type": "string",
                 "description": "Breve motivo por el que se solicita atención humana.",
-            },
+            }
         },
         "required": ["motivo"],
         "additionalProperties": False,
@@ -927,13 +792,17 @@ solicitar_atencion_humana_declaration = types.FunctionDeclaration(
 
 def _execute_solicitar_atencion_humana(arguments, business_id, session_id=None):
     """Ejecuta la herramienta de solicitud de atención humana."""
-    # La sesión se marca como needs_human en la capa de persistencia
-    if session_id:
-        request_human_handoff_scoped(session_id, business_id)
-    return {
-        "success": True,
-        "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto."
-    }
+    try:
+        # La sesión se marca como needs_human en la capa de persistencia
+        if session_id:
+            request_human_handoff_scoped(session_id, business_id)
+        return {
+            "success": True,
+            "message": "Tu solicitud ha sido registrada. Una persona del negocio te contactará pronto.",
+        }
+    except Exception:
+        logger.exception("Error solicitando atención humana.")
+        return {"success": False, "error": "No se pudo solicitar atención humana."}
 
 
 # ============================================================
@@ -957,526 +826,298 @@ BARBERIA_TOOL = types.Tool(
 # EJECUCIÓN DE HERRAMIENTAS
 # ============================================================
 
+
+def _execute_consultar_recursos(arguments, business_id, session_id=None):
+    try:
+        resources = get_resources_scoped(business_id, only_active=True)
+        recursos = [{"id": r["id"], "nombre": r["name"]} for r in resources]
+
+        return {"success": True, "recursos": recursos}
+
+    except Exception:
+        logger.exception("Error consultando recursos.")
+
+        return {"success": False, "error": "No se pudo consultar los recursos."}
+
+
+def _execute_consultar_disponibilidad(arguments, business_id, session_id=None):
+    fecha = arguments["fecha"]
+    servicio = arguments.get("servicio")
+    resource_id = arguments.get("resource_id")
+
+    try:
+        horarios = get_available_times(fecha, business_id, servicio, resource_id)
+
+        return {"success": True, "fecha": fecha, "horarios_disponibles": horarios}
+
+    except Exception:
+        logger.exception("Error consultando disponibilidad.")
+
+        return {"success": False, "error": "No se pudo consultar la disponibilidad."}
+
+
+def _execute_reservar_turno(arguments, business_id, session_id=None):
+    try:
+        active_services_a = get_active_services_scoped(business_id)
+
+        if arguments["servicio"] not in {row["name"] for row in active_services_a}:
+            return {"success": False, "message": "El servicio solicitado no está disponible."}
+
+        # Validar resource_id si se provee
+        resource_id = arguments.get("resource_id")
+        if resource_id is not None:
+            # Verificar que el recurso existe y está activo en este negocio
+            resources = get_resources_scoped(business_id, only_active=True)
+            resource_ids = {r["id"] for r in resources}
+            if resource_id not in resource_ids:
+                return {"success": False, "message": "El recurso especificado no está disponible."}
+
+        email = (arguments.get("email") or "").strip()
+        if notifications_enabled(business_id) and not email:
+            return {
+                "success": False,
+                "reason": "email_required",
+                "message": (
+                    "Para reservar necesito tu email, así te envío "
+                    "la confirmación del turno. ¿Cuál es tu email?"
+                ),
+            }
+
+        resultado = create_appointment(
+            customer_name=arguments["nombre"],
+            phone=arguments["telefono"],
+            service=arguments["servicio"],
+            appointment_date=arguments["fecha"],
+            appointment_time=arguments["hora"],
+            business_id=business_id,
+            email=email or None,
+            resource_id=resource_id,
+        )
+
+        if not resultado.get("success"):
+            return {
+                "success": False,
+                "reason": resultado.get("reason"),
+                "message": "No se pudo reservar el turno solicitado.",
+            }
+
+        try:
+            dispatch_booking_emails(
+                business_id,
+                {
+                    "id": resultado.get("appointment_id"),
+                    "customer_name": resultado.get("customer_name"),
+                    "customer_email": resultado.get("customer_email"),
+                    "service": resultado.get("service"),
+                    "appointment_date": resultado.get("appointment_date"),
+                    "appointment_time": resultado.get("appointment_time"),
+                    "appointment_end": resultado.get("appointment_end"),
+                },
+                management_token=None,
+                slug=None,
+                public_base_url=os.getenv("PUBLIC_BASE_URL", ""),
+            )
+        except Exception:
+            logger.exception("Error enviando confirmación de turno")
+
+        response = {
+            "success": True,
+            "appointment_id": resultado["appointment_id"],
+            "management_token": resultado.get("management_token"),
+            "message": ("El turno fue reservado correctamente."),
+        }
+        if resultado.get("resource_id"):
+            response["resource_id"] = resultado["resource_id"]
+            resource = get_resource_scoped(resultado["resource_id"], business_id)
+            if resource:
+                response["resource_nombre"] = resource["name"]
+
+        return response
+
+    except Exception:
+        logger.exception("Error creando reserva.")
+
+        return {"success": False, "error": "No se pudo crear la reserva."}
+
+
+def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None):
+    try:
+        nombre = arguments["nombre"]
+
+        telefono = arguments["telefono"]
+
+        turnos = get_customer_appointments(
+            customer_name=nombre, phone=telefono, business_id=business_id
+        )
+
+        return {"success": True, "turnos": turnos}
+
+    except Exception:
+        logger.exception("Error buscando turnos del cliente.")
+
+        return {"success": False, "error": "No se pudieron consultar los turnos."}
+
+
+def _execute_cancelar_turno(arguments, business_id, session_id=None):
+    try:
+        appointment_id = arguments["appointment_id"]
+
+        # El management_token es obligatorio para cancelar
+        management_token = arguments.get("management_token")
+        if not management_token:
+            return {
+                "success": False,
+                "reason": "missing_management_token",
+                "message": "El token de gestión es obligatorio para cancelar un turno.",
+            }
+
+        resultado = cancel_appointment(
+            appointment_id,
+            arguments["telefono"],
+            business_id,
+            management_token,
+            customer_name=arguments.get("nombre"),
+        )
+
+        if resultado:
+            return {
+                "success": True,
+                "appointment_id": appointment_id,
+                "message": ("El turno fue cancelado correctamente."),
+            }
+
+        return {
+            "success": False,
+            "message": (
+                "No pudimos encontrar ese turno con los datos indicados. "
+                "Verificá tu nombre y teléfono e intentá nuevamente."
+            ),
+        }
+
+    except Exception:
+        logger.exception("Error cancelando turno.")
+
+        return {"success": False, "error": "No se pudo cancelar el turno."}
+
+
+def _execute_reprogramar_turno(arguments, business_id, session_id=None):
+    try:
+        appointment_id = arguments["appointment_id"]
+
+        nueva_fecha = arguments["nueva_fecha"]
+
+        nueva_hora = arguments["nueva_hora"]
+
+        # El management_token es obligatorio para reprogramar
+        management_token = arguments.get("management_token")
+        if not management_token:
+            return {
+                "success": False,
+                "reason": "missing_management_token",
+                "message": "El token de gestión es obligatorio para reprogramar un turno.",
+            }
+
+        resultado = reschedule_appointment(
+            appointment_id=appointment_id,
+            new_date=nueva_fecha,
+            new_time=nueva_hora,
+            phone=arguments["telefono"],
+            business_id=business_id,
+            management_token=arguments.get("management_token"),
+            customer_name=arguments.get("nombre"),
+        )
+
+        if resultado["success"]:
+            return {
+                "success": True,
+                "appointment_id": appointment_id,
+                "nueva_fecha": nueva_fecha,
+                "nueva_hora": nueva_hora,
+                "message": ("El turno fue reprogramado correctamente."),
+            }
+
+        reason = resultado.get("reason")
+
+        if reason == "occupied":
+            return {
+                "success": False,
+                "reason": "occupied",
+                "message": ("El nuevo horario ya está ocupado."),
+            }
+
+        if reason == "invalid_time":
+            return {
+                "success": False,
+                "reason": "invalid_time",
+                "message": (
+                    "El horario solicitado no pertenece al horario de atención del negocio."
+                ),
+            }
+
+        if reason == "not_found":
+            return {
+                "success": False,
+                "reason": "not_found",
+                "message": (
+                    "No pudimos encontrar ese turno con los datos indicados. "
+                    "Verificá tu nombre y teléfono e intentá nuevamente."
+                ),
+            }
+
+        return {"success": False, "message": ("No se pudo reprogramar el turno.")}
+
+    except Exception:
+        logger.exception("Error reprogramando turno.")
+
+        return {"success": False, "error": "No se pudo reprogramar el turno."}
+
+
+_TOOL_HANDLERS = {
+    "consultar_recursos": _execute_consultar_recursos,
+    "consultar_disponibilidad": _execute_consultar_disponibilidad,
+    "reservar_turno": _execute_reservar_turno,
+    "buscar_turnos_cliente": _execute_buscar_turnos_cliente,
+    "cancelar_turno": _execute_cancelar_turno,
+    "reprogramar_turno": _execute_reprogramar_turno,
+    "solicitar_atencion_humana": _execute_solicitar_atencion_humana,
+}
+
+
 def execute_tool(name, arguments, business_id=None, session_id=None):
     if business_id is None:
         return {"success": False, "error": "Contexto de negocio inválido."}
 
-    # ========================================================
-    # CONSULTAR RECURSOS
-    # ========================================================
-
-    if name == "consultar_recursos":
-
-        try:
-
-            resources = get_resources_scoped(business_id, only_active=True)
-            recursos = [
-                {"id": r["id"], "nombre": r["name"]}
-                for r in resources
-            ]
-
-            return {
-                "success": True,
-                "recursos": recursos,
-            }
-
-        except Exception as error:
-
-            logger.exception(
-                "Error consultando recursos."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo consultar los recursos.",
-            }
-
-
-    # ========================================================
-    # CONSULTAR DISPONIBILIDAD
-    # ========================================================
-
-    if name == "consultar_disponibilidad":
-
-        fecha = arguments["fecha"]
-        servicio = arguments.get("servicio")
-        resource_id = arguments.get("resource_id")
-
-        try:
-
-            horarios = get_available_times(fecha, business_id, servicio, resource_id)
-
-            return {
-                "success": True,
-                "fecha": fecha,
-                "horarios_disponibles": horarios,
-            }
-
-        except Exception as error:
-
-            logger.exception(
-                "Error consultando disponibilidad."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo consultar la disponibilidad.",
-            }
-
-
-    # ========================================================
-    # RESERVAR TURNO
-    # ========================================================
-
-    if name == "reservar_turno":
-
-        try:
-
-            active_services_a = get_active_services_scoped(business_id)
-
-            if arguments["servicio"] not in {
-                row["name"] for row in active_services_a
-            }:
-                return {
-                    "success": False,
-                    "message": "El servicio solicitado no está disponible.",
-                }
-
-            # Validar resource_id si se provee
-            resource_id = arguments.get("resource_id")
-            if resource_id is not None:
-                # Verificar que el recurso existe y está activo en este negocio
-                resources = get_resources_scoped(business_id, only_active=True)
-                resource_ids = {r["id"] for r in resources}
-                if resource_id not in resource_ids:
-                    return {
-                        "success": False,
-                        "message": "El recurso especificado no está disponible.",
-                    }
-
-            email = (arguments.get("email") or "").strip()
-            if notifications_enabled(business_id) and not email:
-                return {
-                    "success": False,
-                    "reason": "email_required",
-                    "message": (
-                        "Para reservar necesito tu email, así te envío "
-                        "la confirmación del turno. ¿Cuál es tu email?"
-                    ),
-                }
-
-            resultado = create_appointment(
-
-                customer_name=arguments["nombre"],
-
-                phone=arguments["telefono"],
-
-                service=arguments["servicio"],
-
-                appointment_date=arguments["fecha"],
-
-                appointment_time=arguments["hora"],
-                business_id=business_id,
-
-                email=email or None,
-
-                resource_id=resource_id,
-            )
-
-
-            if not resultado.get("success"):
-
-                return {
-                    "success": False,
-                    "reason": resultado.get("reason"),
-                    "message": "No se pudo reservar el turno solicitado.",
-                }
-
-
-            try:
-                dispatch_booking_emails(
-                    business_id,
-                    {
-                        "id": resultado.get("appointment_id"),
-                        "customer_name": resultado.get("customer_name"),
-                        "customer_email": resultado.get("customer_email"),
-                        "service": resultado.get("service"),
-                        "appointment_date": resultado.get("appointment_date"),
-                        "appointment_time": resultado.get("appointment_time"),
-                        "appointment_end": resultado.get("appointment_end"),
-                    },
-                    management_token=None,
-                    slug=None,
-                    public_base_url=os.getenv("PUBLIC_BASE_URL", ""),
-                )
-            except Exception:
-                logger.exception("Error enviando confirmación de turno")
-
-            response = {
-                "success": True,
-
-                "appointment_id": resultado["appointment_id"],
-                "management_token": resultado.get("management_token"),
-
-                "message": (
-                    "El turno fue reservado "
-                    "correctamente."
-                ),
-            }
-            if resultado.get("resource_id"):
-                response["resource_id"] = resultado["resource_id"]
-                resource = get_resource_scoped(resultado["resource_id"], business_id)
-                if resource:
-                    response["resource_nombre"] = resource["name"]
-
-            return response
-
-
-        except Exception as error:
-
-            logger.exception(
-                "Error creando reserva."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo crear la reserva.",
-            }
-
-
-    # ========================================================
-    # BUSCAR TURNOS DEL CLIENTE
-    # ========================================================
-
-    if name == "buscar_turnos_cliente":
-
-        try:
-
-            nombre = arguments["nombre"]
-
-            telefono = arguments["telefono"]
-
-
-            turnos = get_customer_appointments(
-                customer_name=nombre,
-                phone=telefono,
-                business_id=business_id,
-            )
-
-
-            return {
-                "success": True,
-                "turnos": turnos,
-            }
-
-
-        except Exception as error:
-
-            logger.exception(
-                "Error buscando turnos del cliente."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudieron consultar los turnos.",
-            }
-
-
-    # ========================================================
-    # CANCELAR TURNO
-    # ========================================================
-
-    if name == "cancelar_turno":
-
-        try:
-
-            appointment_id = arguments[
-                "appointment_id"
-            ]
-
-            # El management_token es obligatorio para cancelar
-            management_token = arguments.get("management_token")
-            if not management_token:
-                return {
-                    "success": False,
-                    "reason": "missing_management_token",
-                    "message": "El token de gestión es obligatorio para cancelar un turno.",
-                }
-
-            resultado = cancel_appointment(
-                appointment_id,
-                arguments["telefono"],
-                business_id,
-                management_token,
-                customer_name=arguments.get("nombre"),
-            )
-
-
-            if resultado:
-
-                return {
-                    "success": True,
-
-                    "appointment_id": appointment_id,
-
-                    "message": (
-                        "El turno fue cancelado "
-                        "correctamente."
-                    ),
-                }
-
-
-            return {
-                "success": False,
-
-                "message": (
-                    "No pudimos encontrar ese turno con los datos indicados. "
-                    "Verificá tu nombre y teléfono e intentá nuevamente."
-                ),
-            }
-
-
-        except Exception as error:
-
-            logger.exception(
-                "Error cancelando turno."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo cancelar el turno.",
-            }
-
-
-    # ========================================================
-    # REPROGRAMAR TURNO
-    # ========================================================
-
-    if name == "reprogramar_turno":
-
-        try:
-
-            appointment_id = arguments[
-                "appointment_id"
-            ]
-
-            nueva_fecha = arguments[
-                "nueva_fecha"
-            ]
-
-            nueva_hora = arguments[
-                "nueva_hora"
-            ]
-
-            # El management_token es obligatorio para reprogramar
-            management_token = arguments.get("management_token")
-            if not management_token:
-                return {
-                    "success": False,
-                    "reason": "missing_management_token",
-                    "message": "El token de gestión es obligatorio para reprogramar un turno.",
-                }
-
-            resultado = reschedule_appointment(
-
-                appointment_id=appointment_id,
-
-                new_date=nueva_fecha,
-
-                new_time=nueva_hora,
-
-                phone=arguments["telefono"],
-                business_id=business_id,
-                management_token=arguments.get("management_token"),
-                customer_name=arguments.get("nombre"),
-            )
-
-
-            if resultado["success"]:
-
-                return {
-                    "success": True,
-
-                    "appointment_id": appointment_id,
-
-                    "nueva_fecha": nueva_fecha,
-
-                    "nueva_hora": nueva_hora,
-
-                    "message": (
-                        "El turno fue reprogramado "
-                        "correctamente."
-                    ),
-                }
-
-
-            reason = resultado.get(
-                "reason"
-            )
-
-
-            if reason == "occupied":
-
-                return {
-                    "success": False,
-
-                    "reason": "occupied",
-
-                    "message": (
-                        "El nuevo horario "
-                        "ya está ocupado."
-                    ),
-                }
-
-
-            if reason == "invalid_time":
-
-                return {
-                    "success": False,
-
-                    "reason": "invalid_time",
-
-                    "message": (
-                        "El horario solicitado "
-                        "no pertenece al horario "
-                        "de atención del negocio."
-                    ),
-                }
-
-
-            if reason == "not_found":
-
-                return {
-                    "success": False,
-
-                    "reason": "not_found",
-
-                "message": (
-                    "No pudimos encontrar ese turno con los datos indicados. "
-                    "Verificá tu nombre y teléfono e intentá nuevamente."
-                ),
-                }
-
-
-            return {
-                "success": False,
-
-                "message": (
-                    "No se pudo reprogramar "
-                    "el turno."
-                ),
-            }
-
-
-        except Exception as error:
-
-            logger.exception(
-                "Error reprogramando turno."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo reprogramar el turno.",
-            }
-
-
-    # ========================================================
-    # SOLICITAR ATENCIÓN HUMANA
-    # ========================================================
-
-    if name == "solicitar_atencion_humana":
-
-        motivo = arguments.get("motivo", "El cliente solicita hablar con una persona.")
-
-        try:
-            return _execute_solicitar_atencion_humana(arguments, business_id, session_id)
-
-        except Exception as error:
-
-            logger.exception(
-                "Error solicitando atención humana."
-            )
-
-            return {
-                "success": False,
-                "error": "No se pudo solicitar atención humana.",
-            }
-
-
-    # ========================================================
-    # HERRAMIENTA DESCONOCIDA
-    # ========================================================
+    handler = _TOOL_HANDLERS.get(name)
+    if handler is None:
+        return None
+    return handler(arguments, business_id, session_id)
 
 
 # ============================================================
 # CONSTRUIR HISTORIAL
 # ============================================================
 
-def build_contents(
-    conversation,
-    message,
-):
+
+def build_contents(conversation, message):
 
     contents = []
 
-
     for item in conversation:
-
         role = item.get("role")
 
-        content = item.get(
-            "content",
-            "",
-        )
-
+        content = item.get("content", "")
 
         if role == "assistant":
-
             role = "model"
 
-
-        if role not in (
-            "user",
-            "model",
-        ):
-
-            logger.warning(
-                "Rol desconocido descartado: %s",
-                role,
-            )
+        if role not in ("user", "model"):
+            logger.warning("Rol desconocido descartado: %s", role)
 
             continue
 
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=str(content))]))
 
-        contents.append(
-
-            types.Content(
-
-                role=role,
-
-                parts=[
-                    types.Part.from_text(
-                        text=str(content)
-                    )
-                ],
-            )
-        )
-
-
-    contents.append(
-
-        types.Content(
-
-            role="user",
-
-            parts=[
-                types.Part.from_text(
-                    text=message
-                )
-            ],
-        )
-    )
-
+    contents.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
 
     return contents
 
@@ -1491,7 +1132,7 @@ def truncate_history_by_total_chars(contents, max_total_chars=MAX_HISTORY_TOTAL_
     while contents:
         total = 0
         for content in contents:
-            for part in (content.parts or []):
+            for part in content.parts or []:
                 if part.text:
                     total += len(part.text)
         if total <= max_total_chars:
@@ -1505,44 +1146,30 @@ def truncate_history_by_total_chars(contents, max_total_chars=MAX_HISTORY_TOTAL_
 # FORMATEAR CONFIRMACIÓN DE RESERVA
 # ============================================================
 
+
+_DIAS_SEMANA = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def _format_fecha_humana(fecha):
+    """Devuelve (día_semana, dd/mm/aaaa) en español para una fecha ISO."""
+
+    fecha_obj = datetime.strptime(fecha, "%Y-%m-%d")
+
+    dia_semana = _DIAS_SEMANA[fecha_obj.weekday()]
+
+    fecha_formateada = fecha_obj.strftime("%d/%m/%Y")
+
+    return dia_semana, fecha_formateada
+
+
 def format_reservation_confirmation(
-    nombre,
-    servicio,
-    fecha,
-    hora,
-    business_id,
-    resource_nombre=None,
+    nombre, servicio, fecha, hora, business_id, resource_nombre=None
 ):
 
     business_name = get_business_identity(business_id)["business_name"]
 
     try:
-
-        fecha_obj = datetime.strptime(
-            fecha,
-            "%Y-%m-%d",
-        )
-
-
-        dias = [
-            "lunes",
-            "martes",
-            "miércoles",
-            "jueves",
-            "viernes",
-            "sábado",
-            "domingo",
-        ]
-
-
-        dia_semana = dias[
-            fecha_obj.weekday()
-        ]
-
-
-        fecha_formateada = fecha_obj.strftime(
-            "%d/%m/%Y"
-        )
+        dia_semana, fecha_formateada = _format_fecha_humana(fecha)
 
         resource_text = f"\n🏟️ **{resource_nombre}**" if resource_nombre else ""
 
@@ -1554,13 +1181,8 @@ def format_reservation_confirmation(
             f"¡Te esperamos en **{business_name}**!"
         )
 
-
     except Exception:
-
-        logger.exception(
-            "Error formateando confirmación."
-        )
-
+        logger.exception("Error formateando confirmación.")
 
         return (
             f"¡Listo, {nombre}! Tu turno para "
@@ -1575,10 +1197,8 @@ def format_reservation_confirmation(
 # FORMATEAR ERROR DE RESERVA
 # ============================================================
 
-def format_reservation_error(
-    arguments,
-    result,
-):
+
+def format_reservation_error(arguments, result):
 
     reason = result.get("reason")
     messages_by_reason = {
@@ -1597,83 +1217,37 @@ def format_reservation_error(
         message = result.get("message")
 
     if message:
-
-        nombre = arguments.get(
-            "nombre",
-            "",
-        )
-
+        nombre = arguments.get("nombre", "")
 
         if nombre:
-
-            return (
-                f"Disculpá, {nombre}. "
-                f"{message}"
-            )
-
+            return f"Disculpá, {nombre}. {message}"
 
         return message
 
-
-    return (
-        "Disculpá, no pude completar "
-        "la reserva. Por favor, "
-        "intentá nuevamente."
-    )
+    return "Disculpá, no pude completar la reserva. Por favor, intentá nuevamente."
 
 
 # ============================================================
 # FORMATEAR CANCELACIÓN
 # ============================================================
 
+
 def format_cancellation_confirmation():
 
-    return (
-        "Listo. Tu turno fue cancelado correctamente. "
-        "El horario quedó nuevamente disponible."
-    )
+    return "Listo. Tu turno fue cancelado correctamente. El horario quedó nuevamente disponible."
 
 
 # ============================================================
 # FORMATEAR REPROGRAMACIÓN
 # ============================================================
 
-def format_reschedule_confirmation(
-    fecha,
-    hora,
-    business_id,
-):
+
+def format_reschedule_confirmation(fecha, hora, business_id):
 
     business_name = get_business_identity(business_id)["business_name"]
 
     try:
-
-        fecha_obj = datetime.strptime(
-            fecha,
-            "%Y-%m-%d",
-        )
-
-
-        dias = [
-            "lunes",
-            "martes",
-            "miércoles",
-            "jueves",
-            "viernes",
-            "sábado",
-            "domingo",
-        ]
-
-
-        dia_semana = dias[
-            fecha_obj.weekday()
-        ]
-
-
-        fecha_formateada = fecha_obj.strftime(
-            "%d/%m/%Y"
-        )
-
+        dia_semana, fecha_formateada = _format_fecha_humana(fecha)
 
         return (
             "Listo. Tu turno fue reprogramado correctamente.\n\n"
@@ -1682,88 +1256,39 @@ def format_reschedule_confirmation(
             f"¡Te esperamos en **{business_name}**!"
         )
 
-
     except Exception:
+        logger.exception("Error formateando reprogramación.")
 
-        logger.exception(
-            "Error formateando reprogramación."
-        )
-
-
-        return (
-            "Listo. Tu turno fue reprogramado "
-            f"para **{fecha} a las {hora} hs**."
-        )
+        return f"Listo. Tu turno fue reprogramado para **{fecha} a las {hora} hs**."
 
 
 # ============================================================
 # FORMATEAR TURNOS
 # ============================================================
 
-def format_customer_appointments(
-    turnos,
-):
+
+def format_customer_appointments(turnos):
 
     if not turnos:
-
         return (
             "⚠️ No encontramos turnos con esos datos. Verificá que el "
             "nombre y el teléfono estén escritos correctamente e intentá nuevamente."
         )
 
-
-    lines = [
-        "Estos son tus turnos confirmados:"
-    ]
-
-
-    dias = [
-        "lunes",
-        "martes",
-        "miércoles",
-        "jueves",
-        "viernes",
-        "sábado",
-        "domingo",
-    ]
-
+    lines = ["Estos son tus turnos confirmados:"]
 
     for turno in turnos:
-
         try:
-
-            fecha_obj = datetime.strptime(
-                turno["appointment_date"],
-                "%Y-%m-%d",
-            )
-
-
-            dia = dias[
-                fecha_obj.weekday()
-            ]
-
-
-            fecha = fecha_obj.strftime(
-                "%d/%m/%Y"
-            )
-
+            dia, fecha = _format_fecha_humana(turno["appointment_date"])
 
         except Exception:
-
             dia = ""
 
-            fecha = turno[
-                "appointment_date"
-            ]
-
+            fecha = turno["appointment_date"]
 
         lines.append(
-
-            f"- **{turno['service']}** — "
-            f"{dia} {fecha} a las "
-            f"**{turno['appointment_time']} hs**"
+            f"- **{turno['service']}** — {dia} {fecha} a las **{turno['appointment_time']} hs**"
         )
-
 
     return "\n".join(lines)
 
@@ -1771,6 +1296,7 @@ def format_customer_appointments(
 # ============================================================
 # FUNCIÓN PRINCIPAL
 # ============================================================
+
 
 def ask_ai(
     message,
@@ -1784,6 +1310,7 @@ def ask_ai(
     request_id = None
     try:
         from flask import g
+
         request_id = getattr(g, "request_id", None)
     except Exception:
         pass
@@ -1792,9 +1319,7 @@ def ask_ai(
         return "Disculpá, no se pudo identificar el negocio solicitado.", None, None
 
     if conversation is None:
-
         conversation = []
-
 
     # ========================================================
     # PERSISTENCIA DE CONVERSACIÓN
@@ -1832,7 +1357,6 @@ def ask_ai(
                 human_intent_detected = True
                 request_human_handoff_scoped(session_id, business_id)
 
-
     # ========================================================
     # FECHA ACTUAL
     # ========================================================
@@ -1850,16 +1374,9 @@ def ask_ai(
 
     now = datetime.now(timezone)
 
+    current_date = now.strftime("%Y-%m-%d")
 
-    current_date = now.strftime(
-        "%Y-%m-%d"
-    )
-
-
-    current_day = now.strftime(
-        "%A"
-    )
-
+    current_day = now.strftime("%A")
 
     # ========================================================
     # INSTRUCCIONES
@@ -1874,7 +1391,9 @@ def ask_ai(
     if knowledge_entries:
         knowledge_lines = []
         for entry in knowledge_entries:
-            knowledge_lines.append(f"[INFO NEGOCIO] Pregunta: {entry['question']}\nRespuesta: {entry['answer']}")
+            knowledge_lines.append(
+                f"[INFO NEGOCIO] Pregunta: {entry['question']}\nRespuesta: {entry['answer']}"
+            )
         knowledge_text = "\n\n--- CONOCIMIENTO DEL NEGOCIO ---\n\n" + "\n\n".join(knowledge_lines)
 
     human_intent_note = ""
@@ -1931,41 +1450,24 @@ Utilizá esta fecha para interpretar:
 días de la semana y fechas relativas.
 """
 
-
     # ========================================================
     # CONSTRUIR HISTORIAL
     # ========================================================
 
-    contents = build_contents(
-        conversation,
-        message,
-    )
+    contents = build_contents(conversation, message)
     contents = truncate_history_by_total_chars(contents)
-
 
     # ========================================================
     # CONFIGURACIÓN GEMINI
     # ========================================================
 
     config = types.GenerateContentConfig(
-
         system_instruction=instructions,
-
-        tools=[
-            BARBERIA_TOOL
-        ],
-
+        tools=[BARBERIA_TOOL],
         temperature=0.2,
-
         max_output_tokens=MAX_OUTPUT_TOKENS,
-
-        automatic_function_calling=(
-            types.AutomaticFunctionCallingConfig(
-                disable=True
-            )
-        ),
+        automatic_function_calling=(types.AutomaticFunctionCallingConfig(disable=True)),
     )
-
 
     # ========================================================
     # PRIMERA LLAMADA
@@ -1979,7 +1481,9 @@ días de la semana y fechas relativas.
         category, error_type = error_info or ("unknown", "UnknownError")
         logger.error(
             "Gemini falló tras %d intento(s): category=%s error_type=%s",
-            attempt, category, error_type,
+            attempt,
+            category,
+            error_type,
         )
         return _gemini_error_message(category), session_id, public_token
 
@@ -1992,7 +1496,6 @@ días de la semana y fechas relativas.
     iteration = 0
 
     while True:
-
         iteration += 1
 
         logger.info(
@@ -2003,51 +1506,36 @@ días de la semana y fechas relativas.
         )
 
         if iteration > MAX_TOOL_ITERATIONS:
-
-            logger.error(
-                "Se alcanzó el límite de iteraciones."
-            )
+            logger.error("Se alcanzó el límite de iteraciones.")
 
             return (
                 "Disculpá, estoy teniendo dificultades "
                 "para resolver tu consulta. "
                 "Por favor, intentá nuevamente.",
                 session_id,
-                public_token
+                public_token,
             )
 
-
         function_calls = []
-
 
         # ----------------------------------------------------
         # DETECTAR FUNCTION CALLS
         # ----------------------------------------------------
 
         if response.candidates:
-
             candidate = response.candidates[0]
 
-
             if candidate.content:
-
                 for part in candidate.content.parts:
-
                     if part.function_call:
-
-                        function_calls.append(
-                            part.function_call
-                        )
-
+                        function_calls.append(part.function_call)
 
         # ----------------------------------------------------
         # SIN HERRAMIENTAS
         # ----------------------------------------------------
 
         if not function_calls:
-
             try:
-
                 response_text = response.text
                 safe_text = _safe_text_response(response_text, confirmed_mutations)
 
@@ -2068,29 +1556,16 @@ días de la semana y fechas relativas.
                 return safe_text, session_id, public_token
 
             except Exception:
+                logger.exception("No se pudo obtener texto de Gemini.")
 
-                logger.exception(
-                    "No se pudo obtener texto de Gemini."
-                )
-
-                return (
-                    "Disculpá, no pude generar "
-                    "una respuesta.",
-                    session_id,
-                    public_token
-                )
-
+                return ("Disculpá, no pude generar una respuesta.", session_id, public_token)
 
         # ----------------------------------------------------
         # GUARDAR RESPUESTA DEL MODELO
         # ----------------------------------------------------
 
         if response.candidates:
-
-            contents.append(
-                response.candidates[0].content
-            )
-
+            contents.append(response.candidates[0].content)
 
         # ====================================================
         # EJECUTAR HERRAMIENTAS
@@ -2098,44 +1573,27 @@ días de la semana y fechas relativas.
 
         function_response_parts = []
 
-
         for function_call in function_calls:
-
             tool_name = function_call.name
 
-
-            arguments = dict(
-                function_call.args or {}
-            )
-
+            arguments = dict(function_call.args or {})
 
             logger.info("Herramienta solicitada: %s", tool_name)
-
 
             # ------------------------------------------------
             # EJECUTAR
             # ------------------------------------------------
 
             try:
+                result = execute_tool(tool_name, arguments, business_id, session_id)
 
-                result = execute_tool(
-                    tool_name,
-                    arguments,
-                    business_id,
-                    session_id,
-                )
-
-            except Exception as error:
-
-                logger.exception(
-                    "Error ejecutando herramienta."
-                )
+            except Exception:
+                logger.exception("Error ejecutando herramienta.")
 
                 result = {
                     "success": False,
                     "error": "No se pudo procesar la respuesta del servicio de IA.",
                 }
-
 
             logger.info(
                 "Resultado de %s: success=%s reason=%s",
@@ -2151,77 +1609,52 @@ días de la semana y fechas relativas.
             ):
                 return format_customer_appointments([]), session_id, public_token
 
-
             # =================================================
             # RESERVA CONFIRMADA
             # =================================================
 
-            if (
-                tool_name == "reservar_turno"
-                and result.get("success") is True
-            ):
-
+            if tool_name == "reservar_turno" and result.get("success") is True:
                 confirmed_mutations.add("reservar_turno")
 
-                logger.info(
-                    "RESERVA CONFIRMADA. "
-                    "No se realiza una segunda llamada a Gemini."
+                logger.info("RESERVA CONFIRMADA. No se realiza una segunda llamada a Gemini.")
+
+                return (
+                    format_reservation_confirmation(
+                        nombre=arguments["nombre"],
+                        servicio=arguments["servicio"],
+                        fecha=arguments["fecha"],
+                        hora=arguments["hora"],
+                        business_id=business_id,
+                        resource_nombre=result.get("resource_nombre"),
+                    ),
+                    session_id,
+                    public_token,
                 )
-
-
-                return format_reservation_confirmation(
-                    nombre=arguments["nombre"],
-                    servicio=arguments["servicio"],
-                    fecha=arguments["fecha"],
-                    hora=arguments["hora"],
-                    business_id=business_id,
-                    resource_nombre=result.get("resource_nombre"),
-                ), session_id, public_token
-
 
             # =================================================
             # RESERVA FALLIDA
             # =================================================
 
-            if (
-                tool_name == "reservar_turno"
-                and result.get("success") is False
-            ):
-
-                return format_reservation_error(
-                    arguments,
-                    result,
-                ), session_id, public_token
-
+            if tool_name == "reservar_turno" and result.get("success") is False:
+                return format_reservation_error(arguments, result), session_id, public_token
 
             # =================================================
             # CANCELACIÓN CONFIRMADA
             # =================================================
 
-            if (
-                tool_name == "cancelar_turno"
-                and result.get("success") is True
-            ):
-
+            if tool_name == "cancelar_turno" and result.get("success") is True:
                 confirmed_mutations.add("cancelar_turno")
 
-                logger.info(
-                    "CANCELACIÓN CONFIRMADA."
-                )
-
+                logger.info("CANCELACIÓN CONFIRMADA.")
 
                 return format_cancellation_confirmation(), session_id, public_token
-
 
             if (
                 tool_name == "cancelar_turno"
                 and result.get("success") is False
                 and result.get("reason") != "missing_management_token"
             ):
-
-                logger.info(
-                    "CANCELACIÓN FALLIDA."
-                )
+                logger.info("CANCELACIÓN FALLIDA.")
 
                 msg = result.get("message")
                 if msg:
@@ -2230,42 +1663,34 @@ días de la semana y fechas relativas.
                     "Disculpá, no se pudo cancelar el turno. "
                     "Verificá los datos e intentá nuevamente.",
                     session_id,
-                    public_token
+                    public_token,
                 )
-
 
             # =================================================
             # REPROGRAMACIÓN CONFIRMADA
             # =================================================
 
-            if (
-                tool_name == "reprogramar_turno"
-                and result.get("success") is True
-            ):
-
+            if tool_name == "reprogramar_turno" and result.get("success") is True:
                 confirmed_mutations.add("reprogramar_turno")
 
-                logger.info(
-                    "REPROGRAMACIÓN CONFIRMADA."
+                logger.info("REPROGRAMACIÓN CONFIRMADA.")
+
+                return (
+                    format_reschedule_confirmation(
+                        fecha=result["nueva_fecha"],
+                        hora=result["nueva_hora"],
+                        business_id=business_id,
+                    ),
+                    session_id,
+                    public_token,
                 )
-
-
-                return format_reschedule_confirmation(
-                    fecha=result["nueva_fecha"],
-                    hora=result["nueva_hora"],
-                    business_id=business_id,
-                ), session_id, public_token
-
 
             if (
                 tool_name == "reprogramar_turno"
                 and result.get("success") is False
                 and result.get("reason") != "missing_management_token"
             ):
-
-                logger.info(
-                    "REPROGRAMACIÓN FALLIDA."
-                )
+                logger.info("REPROGRAMACIÓN FALLIDA.")
 
                 msg = result.get("message")
                 if msg:
@@ -2274,9 +1699,8 @@ días de la semana y fechas relativas.
                     "Disculpá, no se pudo reprogramar el turno. "
                     "Verificá los datos e intentá nuevamente.",
                     session_id,
-                    public_token
+                    public_token,
                 )
-
 
             # =================================================
             # RESPUESTAS DIRECTAS DE BÚSQUEDA
@@ -2285,10 +1709,7 @@ días de la semana y fechas relativas.
             # los resultados para continuar la conversación.
             # =================================================
 
-            if (
-                tool_name in _MUTATING_TOOLS
-                and not isinstance(result.get("success"), bool)
-            ):
+            if tool_name in _MUTATING_TOOLS and not isinstance(result.get("success"), bool):
                 logger.error(
                     "Herramienta mutadora %s devolvió un resultado sin "
                     "'success' booleano; no se confirma la operación ni se "
@@ -2299,38 +1720,19 @@ días de la semana y fechas relativas.
                     "Disculpá, no se pudo confirmar la operación en este momento. "
                     "Por favor, verificá los datos e intentá nuevamente.",
                     session_id,
-                    public_token
+                    public_token,
                 )
 
             function_response_parts.append(
-
-                types.Part.from_function_response(
-
-                    name=tool_name,
-
-                    response={
-                        "result": result
-                    },
-                )
+                types.Part.from_function_response(name=tool_name, response={"result": result})
             )
-
 
         # ====================================================
         # DEVOLVER RESULTADOS A GEMINI
         # ====================================================
 
         if function_response_parts:
-
-            contents.append(
-
-                types.Content(
-
-                    role="user",
-
-                    parts=function_response_parts,
-                )
-            )
-
+            contents.append(types.Content(role="user", parts=function_response_parts))
 
         # ====================================================
         # CONTINUAR CON GEMINI
@@ -2344,7 +1746,9 @@ días de la semana y fechas relativas.
             category, error_type = error_info or ("unknown", "UnknownError")
             logger.error(
                 "Gemini falló durante tool-calling loop tras %d intento(s): category=%s error_type=%s",
-                attempt, category, error_type,
+                attempt,
+                category,
+                error_type,
             )
             return _gemini_error_message(category), session_id, public_token
 
@@ -2418,42 +1822,26 @@ def _detect_human_intent(text):
 # ============================================================
 
 if __name__ == "__main__":
-
     print()
 
     print("=" * 60)
 
-    print(
-        "PRUEBA DEL RECEPCIONISTA IA"
-    )
+    print("PRUEBA DEL RECEPCIONISTA IA")
 
     print("=" * 60)
 
     print()
 
+    pregunta = input("Cliente: ")
 
-    pregunta = input(
-        "Cliente: "
-    )
-
-
-    respuesta = ask_ai(
-        pregunta
-    )
-
+    respuesta = ask_ai(pregunta)
 
     print()
 
-    print(
-        "RECEPCIONISTA:"
-    )
+    print("RECEPCIONISTA:")
 
-    print(
-        respuesta
-    )
+    print(respuesta)
 
     print()
 
-    print(
-        "=" * 60
-    )
+    print("=" * 60)

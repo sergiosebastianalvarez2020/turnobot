@@ -40,10 +40,26 @@ def build_public_frontend_config(settings=None):
             "welcome_description": "Soy el recepcionista virtual de {business_name}, {business_description}. Puedo ayudarte con servicios, horarios y turnos.",
             "initial_message": "¡Hola! 👋\n\n¿En qué puedo ayudarte hoy?",
             "quick_actions": [
-                {"label": "Servicios", "sub": "Ver todos los servicios", "message": "¿Qué servicios tienen y cuánto cuestan?"},
-                {"label": "Disponibilidad", "sub": "Ver horarios disponibles", "message": "¿Qué horarios hay disponibles?"},
-                {"label": "Reservar", "sub": "Agendar un turno", "message": "Quiero reservar un turno"},
-                {"label": "Mis turnos", "sub": "Ver mis reservas", "message": "Quiero consultar mis turnos"},
+                {
+                    "label": "Servicios",
+                    "sub": "Ver todos los servicios",
+                    "message": "¿Qué servicios tienen y cuánto cuestan?",
+                },
+                {
+                    "label": "Disponibilidad",
+                    "sub": "Ver horarios disponibles",
+                    "message": "¿Qué horarios hay disponibles?",
+                },
+                {
+                    "label": "Reservar",
+                    "sub": "Agendar un turno",
+                    "message": "Quiero reservar un turno",
+                },
+                {
+                    "label": "Mis turnos",
+                    "sub": "Ver mis reservas",
+                    "message": "Quiero consultar mis turnos",
+                },
             ],
         },
         "theme": {

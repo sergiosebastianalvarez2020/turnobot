@@ -12,11 +12,10 @@ No requiere argumentos. Usa la misma config SMTP que la app (env).
 """
 
 import logging
-import os
 import sys
 from datetime import datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Asegurar que desde cron pueda importar el paquete del proyecto.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -25,20 +24,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from database.database import (
-    list_all_businesses_scoped,
-    list_reminder_candidates_scoped,
-)
-from services.notifications import (
-    notifications_enabled,
-    send_reminder_email,
-    smtp_configured,
-)
+from database.database import list_all_businesses_scoped, list_reminder_candidates_scoped
+from services.notifications import notifications_enabled, send_reminder_email, smtp_configured
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("send_reminders")
 
 
@@ -54,9 +43,7 @@ def _local_today(timezone):
 
 def _run_once():
     if not smtp_configured():
-        logger.warning(
-            "SMTP no configurado (falta SMTP_HOST). No se enviarán recordatorios."
-        )
+        logger.warning("SMTP no configurado (falta SMTP_HOST). No se enviarán recordatorios.")
         return 0
 
     sent = 0
@@ -65,7 +52,9 @@ def _run_once():
     for business in list_all_businesses_scoped():
         business_id = business["id"]
         if not notifications_enabled(business_id):
-            logger.info("Negocio %s (%s): notificaciones deshabilitadas.", business_id, business["slug"])
+            logger.info(
+                "Negocio %s (%s): notificaciones deshabilitadas.", business_id, business["slug"]
+            )
             continue
 
         tomorrow = _local_today(business["timezone"])
@@ -88,11 +77,7 @@ def _run_once():
                 )
             else:
                 skipped += 1
-                logger.info(
-                    "Recordatorio no enviado turno %s: %s",
-                    appointment["id"],
-                    reason,
-                )
+                logger.info("Recordatorio no enviado turno %s: %s", appointment["id"], reason)
 
     logger.info("Resumen: %s enviados, %s omitidos.", sent, skipped)
     return sent

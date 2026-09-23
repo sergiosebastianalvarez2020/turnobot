@@ -1,4 +1,3 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +6,6 @@ from unittest import mock
 import database.database as database
 from app import app
 from services.conversations import (
-    get_or_create_conversation_session_scoped,
     add_conversation_message_scoped,
     get_or_create_public_conversation_session_scoped,
 )
@@ -44,10 +42,7 @@ class TestChatRecovery(unittest.TestCase):
             token = resp1.get_json()["public_token"]
 
         with mock.patch("app.ask_ai", return_value=("Todo bien", 1, token)):
-            resp2 = self.client.post(
-                "/chat",
-                json={"message": "como estas", "session_id": token}
-            )
+            resp2 = self.client.post("/chat", json={"message": "como estas", "session_id": token})
             data = resp2.get_json()
             self.assertTrue(data["success"])
             self.assertEqual(data["public_token"], token)
@@ -74,7 +69,7 @@ class TestChatRecovery(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "other", "other")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "other", "other")'
             )
             connection.commit()
         finally:

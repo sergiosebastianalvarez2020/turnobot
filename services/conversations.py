@@ -10,14 +10,15 @@ Proporciona helpers para:
 import hashlib
 import re
 import uuid
+
 from database.database import get_connection
 
 
 def _normalize_question(text):
     """Normaliza una pregunta para agrupación: minúsculas, sin puntuación, espacios."""
     text = text.strip().lower()
-    text = re.sub(r'[¿?¡!.,;:]', '', text)
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"[¿?¡!.,;:]", "", text)
+    text = re.sub(r"\s+", " ", text)
     return text
 
 
@@ -27,13 +28,9 @@ def _question_hash(text):
     return hashlib.md5(normalized.encode()).hexdigest()[:16]
 
 
-def _row_to_dict(row):
-    if row is None:
-        return None
-    return dict(row)
-
-
-def get_or_create_conversation_session_scoped(business_id, customer_phone, customer_name=None, customer_email=None):
+def get_or_create_conversation_session_scoped(
+    business_id, customer_phone, customer_name=None, customer_email=None
+):
     """Obtiene o crea una sesión de conversación para un cliente en un negocio.
 
     La sesión se identifica por (business_id, customer_phone).
@@ -58,10 +55,18 @@ def get_or_create_conversation_session_scoped(business_id, customer_phone, custo
             # Actualizar nombre/email si se proporcionaron y son nuevos
             updates = []
             params = []
-            if customer_name and customer_name.strip() and row["customer_name"] != customer_name.strip():
+            if (
+                customer_name
+                and customer_name.strip()
+                and row["customer_name"] != customer_name.strip()
+            ):
                 updates.append("customer_name = ?")
                 params.append(customer_name.strip())
-            if customer_email and customer_email.strip() and row["customer_email"] != customer_email.strip():
+            if (
+                customer_email
+                and customer_email.strip()
+                and row["customer_email"] != customer_email.strip()
+            ):
                 updates.append("customer_email = ?")
                 params.append(customer_email.strip().lower())
 
@@ -250,7 +255,7 @@ def resolve_human_handoff_scoped(session_id, business_id, admin_user_id=None):
 
 def get_needs_human_sessions_scoped(business_id):
     """Obtiene sesiones que requieren atención humana."""
-    return list_conversation_sessions_scoped(business_id, status='needs_human')
+    return list_conversation_sessions_scoped(business_id, status="needs_human")
 
 
 def update_session_status_scoped(session_id, business_id, status):
@@ -275,6 +280,7 @@ def update_session_status_scoped(session_id, business_id, status):
 # ============================================================
 # ANALYTICS: PREGUNTAS FRECUENTES Y SIN RESPUESTA
 # ============================================================
+
 
 def track_question_scoped(business_id, question_text, needs_human=0):
     """Registra una pregunta para analytics (agrupación simple por hash)."""
@@ -347,16 +353,21 @@ def get_conversation_stats_scoped(business_id):
             "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ?", (business_id,)
         ).fetchone()[0]
         total_messages = connection.execute(
-            "SELECT COUNT(*) FROM conversation_messages cm JOIN conversation_sessions cs ON cm.session_id = cs.id WHERE cs.business_id = ?", (business_id,)
+            "SELECT COUNT(*) FROM conversation_messages cm JOIN conversation_sessions cs ON cm.session_id = cs.id WHERE cs.business_id = ?",
+            (business_id,),
         ).fetchone()[0]
         needs_human = connection.execute(
-            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND needs_human = 1", (business_id,)
+            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND needs_human = 1",
+            (business_id,),
         ).fetchone()[0]
         resolved = connection.execute(
-            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND status = 'human_resolved'", (business_id,)
+            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND status = 'human_resolved'",
+            (business_id,),
         ).fetchone()[0]
         answered_by_ai = total_sessions - needs_human
-        resolution_rate = round((answered_by_ai / total_sessions * 100) if total_sessions > 0 else 0, 1)
+        resolution_rate = round(
+            (answered_by_ai / total_sessions * 100) if total_sessions > 0 else 0, 1
+        )
         return {
             "total_sessions": total_sessions,
             "total_messages": total_messages,
@@ -383,7 +394,7 @@ def get_opportunities_scoped(business_id, limit=20):
             LEFT JOIN business_knowledge bk
                 ON bk.business_id = ca.business_id
                 AND bk.active = 1
-                AND (bk.question LIKE '%' || ca.question_text || '%' 
+                AND (bk.question LIKE '%' || ca.question_text || '%'
                      OR ca.question_text LIKE '%' || bk.question || '%')
             WHERE ca.business_id = ?
                 AND bk.id IS NULL

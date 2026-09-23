@@ -4,9 +4,7 @@ Proporciona helpers scoped para gestionar y consultar la base de conocimiento
 específica de cada negocio. Todas las operaciones están aisladas por business_id.
 """
 
-from database.database import (
-    get_connection,
-)
+from database.database import get_connection
 
 TYPE_FAQ = "faq"
 TYPE_INSTRUCTION = "instruction"

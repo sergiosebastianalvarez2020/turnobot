@@ -37,10 +37,7 @@ class TestAdminSecurity(unittest.TestCase):
     def test_login_con_hash_y_csrf(self):
         login_page = self.client.get("/login")
         token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        response = self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": token},
-        )
+        response = self.client.post("/login", data={"password": "correcta", "csrf_token": token})
         self.assertEqual(response.status_code, 302)
         self.assertIn("/admin", response.location)
 
@@ -51,7 +48,12 @@ class TestAdminSecurity(unittest.TestCase):
         self.assertEqual(login.status_code, 302)
         response = self.client.post(
             "/admin/configuracion",
-            data={"business_name": "atacante", "business_type": "x", "business_initials": "X", "timezone": "UTC"},
+            data={
+                "business_name": "atacante",
+                "business_type": "x",
+                "business_initials": "X",
+                "timezone": "UTC",
+            },
         )
         self.assertEqual(response.status_code, 400)
 

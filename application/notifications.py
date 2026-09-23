@@ -7,7 +7,9 @@ de app.py, delegando en services.notifications con lógica idéntica.
 from services import notifications as notifications_service
 
 
-def send_approved_invitation_email(owner_email, business_name, invitation_link, expires_at="", lifetime_hours=None):
+def send_approved_invitation_email(
+    owner_email, business_name, invitation_link, expires_at="", lifetime_hours=None
+):
     """Wrapper para EMAIL 2: invitación aprobada al owner."""
     return notifications_service.send_approved_invitation_email(
         owner_email, business_name, invitation_link, expires_at, lifetime_hours

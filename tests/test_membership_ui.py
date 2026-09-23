@@ -26,9 +26,7 @@ class MembershipUIBase(unittest.TestCase):
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
         self.client = application.app.test_client()
 
     def tearDown(self):
@@ -45,9 +43,7 @@ class MembershipUIBase(unittest.TestCase):
             c.close()
 
     def _make_user(self, email, password, business, role="owner"):
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -62,13 +58,11 @@ class MembershipUIBase(unittest.TestCase):
     def _login(self, slug, email, password):
         token = self._login_csrf(slug)
         return self.client.post(
-            self._login_url(slug),
-            data={"email": email, "password": password, "csrf_token": token},
+            self._login_url(slug), data={"email": email, "password": password, "csrf_token": token}
         )
 
 
 class TestVisibilidadSeccion(MembershipUIBase):
-
     def test_owner_ve_la_seccion_usuarios(self):
         self._make_user("o@test.com", "secreta", 1, "owner")
         self._make_user("m1@test.com", "secreta", 1, "staff")
@@ -111,7 +105,6 @@ class TestVisibilidadSeccion(MembershipUIBase):
 
 
 class TestFormulariosUI(MembershipUIBase):
-
     def setUp(self):
         super().setUp()
         self._make_user("o@test.com", "secreta", 1, "owner")
@@ -122,16 +115,12 @@ class TestFormulariosUI(MembershipUIBase):
 
     def test_formulario_invitacion_contiene_csrf(self):
         # El form de invitación (action .../invitar) incluye csrf_token.
-        invite_form = re.search(
-            r'action="/admin/usuarios/invitar".*?</form>', self.text, re.DOTALL
-        )
+        invite_form = re.search(r'action="/admin/usuarios/invitar".*?</form>', self.text, re.DOTALL)
         self.assertIsNotNone(invite_form)
         self.assertIn('name="csrf_token"', invite_form.group(0))
 
     def test_formulario_cambio_rol_contiene_csrf(self):
-        change_form = re.search(
-            r'action="/admin/usuarios/\d+/rol".*?</form>', self.text, re.DOTALL
-        )
+        change_form = re.search(r'action="/admin/usuarios/\d+/rol".*?</form>', self.text, re.DOTALL)
         self.assertIsNotNone(change_form)
         self.assertIn('name="csrf_token"', change_form.group(0))
 
@@ -168,9 +157,8 @@ class TestFormulariosUI(MembershipUIBase):
 
 
 class TestRutasPrefijo(MembershipUIBase):
-
     def test_ui_funciona_con_ruta_b_slug(self):
-        owner = self._make_user("o@test.com", "secreta", 2, "owner")
+        self._make_user("o@test.com", "secreta", 2, "owner")
         self._make_user("m1@test.com", "secreta", 2, "staff")
         self._login("business-b", "o@test.com", "secreta")
 
@@ -181,12 +169,8 @@ class TestRutasPrefijo(MembershipUIBase):
         # Los formularios apuntan al prefijo /b/business-b/admin/usuarios/...
         self.assertIn('action="/b/business-b/admin/usuarios/invitar"', page.text)
         # Al menos una acción de cambio de rol y una de revocación (no-propia).
-        self.assertTrue(
-            re.search(r'action="/b/business-b/admin/usuarios/\d+/rol"', page.text)
-        )
-        self.assertTrue(
-            re.search(r'action="/b/business-b/admin/usuarios/\d+/revocar"', page.text)
-        )
+        self.assertTrue(re.search(r'action="/b/business-b/admin/usuarios/\d+/rol"', page.text))
+        self.assertTrue(re.search(r'action="/b/business-b/admin/usuarios/\d+/revocar"', page.text))
 
     def test_nav_usuarios_en_panel_owner(self):
         self._make_user("o@test.com", "secreta", 2, "owner")

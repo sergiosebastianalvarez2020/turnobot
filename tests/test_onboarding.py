@@ -16,7 +16,6 @@ from services import product
 
 
 class OnboardingBase(unittest.TestCase):
-
     OWNER_EMAIL = "owner@test-onboarding.com"
     OWNER_PASSWORD = "clave-segura-123"
 
@@ -49,6 +48,7 @@ class OnboardingBase(unittest.TestCase):
 
         page = self.client.get("/b/onboarding-biz/login")
         import re
+
         match = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
         csrf = match.group(1) if match else None
         self.client.post(
@@ -63,7 +63,6 @@ class OnboardingBase(unittest.TestCase):
 
 
 class TestOnboardingState(OnboardingBase):
-
     def test_new_business_has_partial_steps_completed(self):
         self._provision_and_login()
         settings = database.get_business_settings_scoped(self._business_id())
@@ -93,9 +92,7 @@ class TestOnboardingState(OnboardingBase):
         business_step = next(s for s in state["steps"] if s["key"] == "business_data")
         self.assertTrue(business_step["completed"])
 
-        database.update_business_settings_scoped(
-            business_id, "", "", "", "", "UTC"
-        )
+        database.update_business_settings_scoped(business_id, "", "", "", "", "UTC")
         settings = database.get_business_settings_scoped(business_id)
         state = product.get_onboarding_state(business_id, settings, services)
         business_step = next(s for s in state["steps"] if s["key"] == "business_data")
@@ -129,9 +126,13 @@ class TestOnboardingState(OnboardingBase):
 
         for day in range(7):
             database.update_weekly_schedule_scoped(
-                business_id, day, is_open=False,
-                morning_start="", morning_end="",
-                afternoon_start="", afternoon_end="",
+                business_id,
+                day,
+                is_open=False,
+                morning_start="",
+                morning_end="",
+                afternoon_start="",
+                afternoon_end="",
             )
         state = product.get_onboarding_state(business_id, settings, services)
         schedules_step = next(s for s in state["steps"] if s["key"] == "schedules")
@@ -156,16 +157,22 @@ class TestOnboardingState(OnboardingBase):
         )
         database.create_service_scoped(business_id, "Corte", 1000, 30, True)
         database.update_weekly_schedule_scoped(
-            business_id, 0, is_open=True,
-            morning_start="09:00", morning_end="12:00",
-            afternoon_start="14:00", afternoon_end="18:00",
+            business_id,
+            0,
+            is_open=True,
+            morning_start="09:00",
+            morning_end="12:00",
+            afternoon_start="14:00",
+            afternoon_end="18:00",
         )
         from services.knowledge import create_knowledge_scoped
+
         create_knowledge_scoped(
             business_id, "faq", "¿Qué horarios tenés?", "De lunes a viernes.", "horarios", 1
         )
 
         import os
+
         os.environ["SMTP_HOST"] = "smtp.test.com"
         try:
             settings = database.get_business_settings_scoped(business_id)

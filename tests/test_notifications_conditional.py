@@ -7,8 +7,7 @@ from unittest import mock
 
 import app as application
 import database.database as database
-from services import appointments
-from services import notifications
+from services import appointments, notifications
 from services.ai import execute_tool
 
 
@@ -59,9 +58,7 @@ class TestAPIConditionalEmail(ConditionalEmailBase):
     def test_reserva_sin_email_con_notificaciones_deshabilitadas(self):
         self.set_notifications(1, False)
         response = self.client.post(
-            "/api/reservar",
-            json=self.reservar_payload(),
-            content_type="application/json",
+            "/api/reservar", json=self.reservar_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         self.assertTrue(response.get_json()["success"])
@@ -69,9 +66,7 @@ class TestAPIConditionalEmail(ConditionalEmailBase):
     def test_reserva_sin_email_con_notificaciones_habilitadas_rechazada(self):
         self.set_notifications(1, True)
         response = self.client.post(
-            "/api/reservar",
-            json=self.reservar_payload(),
-            content_type="application/json",
+            "/api/reservar", json=self.reservar_payload(), content_type="application/json"
         )
         self.assertEqual(response.status_code, 400)
         body = response.get_json()
@@ -156,50 +151,68 @@ class NotificationLogIsolationBase(ConditionalEmailBase):
 class TestNotificationLogIsolation(NotificationLogIsolationBase):
     def _send_confirmation(self, business_id, apt, token, slug):
         """Envía confirmación con SMTP mockeado para que se registre el log."""
+
         class FakeSMTP:
             def __enter__(self):
                 return self
+
             def __exit__(self, *args, **kwargs):
                 return False
+
             def ehlo(self):
                 return (250, b"ok")
+
             def starttls(self):
                 return (220, b"ok")
+
             def login(self, user, password):
                 return
+
             def sendmail(self, from_addr, to_addrs, msg):
                 return
 
         env = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587"}
-        with mock.patch.dict(os.environ, env, clear=False), \
-             mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()):
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=FakeSMTP()),
+        ):
             return notifications.send_confirmation_email(
-                business_id, apt, management_token=token, slug=slug,
-                public_base_url="https://example.com", force=False,
+                business_id,
+                apt,
+                management_token=token,
+                slug=slug,
+                public_base_url="https://example.com",
+                force=False,
             )
 
     def test_dos_negocios_no_interfieren(self):
         a = appointments.create_appointment(
-            "Ana Pérez", "3838439222", "Corte", self.date, "09:00", 1,
-            email="ana@example.com",
+            "Ana Pérez", "3838439222", "Corte", self.date, "09:00", 1, email="ana@example.com"
         )
         self.assertTrue(a["success"])
 
         b = appointments.create_appointment(
-            "Bruno López", "3838439555", "Corte B", self.date, "09:00", 2,
-            email="bruno@example.com",
+            "Bruno López", "3838439555", "Corte B", self.date, "09:00", 2, email="bruno@example.com"
         )
         self.assertTrue(b["success"])
 
         apt_a = {
-            "id": a["appointment_id"], "customer_name": "Ana", "customer_email": "ana@example.com",
-            "service": "Corte", "appointment_date": self.date,
-            "appointment_time": "09:00", "appointment_end": "09:30",
+            "id": a["appointment_id"],
+            "customer_name": "Ana",
+            "customer_email": "ana@example.com",
+            "service": "Corte",
+            "appointment_date": self.date,
+            "appointment_time": "09:00",
+            "appointment_end": "09:30",
         }
         apt_b = {
-            "id": b["appointment_id"], "customer_name": "Bruno", "customer_email": "bruno@example.com",
-            "service": "Corte B", "appointment_date": self.date,
-            "appointment_time": "09:00", "appointment_end": "09:30",
+            "id": b["appointment_id"],
+            "customer_name": "Bruno",
+            "customer_email": "bruno@example.com",
+            "service": "Corte B",
+            "appointment_date": self.date,
+            "appointment_time": "09:00",
+            "appointment_end": "09:30",
         }
 
         sent_a, reason_a = self._send_confirmation(1, apt_a, "tok_a", "business-a")

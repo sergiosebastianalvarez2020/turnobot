@@ -6,7 +6,6 @@ from pathlib import Path
 
 import database.database as database
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -17,10 +16,16 @@ class TestMigrationAudit(unittest.TestCase):
         self.database_path = self.root / "appointments.db"
         self.migrations_dir = self.root / "migrations"
         self.migrations_dir.mkdir()
-        for name in ("001_initial.sql", "002_business_configuration.sql", "003_businesses.sql",
-                     "004_appointment_intervals.sql", "005_users_roles_sessions.sql",
-                     "006_appointment_management_tokens.sql", "007_multitenant_business_settings.sql",
-                     "008_notifications.sql"):
+        for name in (
+            "001_initial.sql",
+            "002_business_configuration.sql",
+            "003_businesses.sql",
+            "004_appointment_intervals.sql",
+            "005_users_roles_sessions.sql",
+            "006_appointment_management_tokens.sql",
+            "007_multitenant_business_settings.sql",
+            "008_notifications.sql",
+        ):
             shutil.copy(ROOT / "migrations" / name, self.migrations_dir / name)
         self.original_database_path = database.DATABASE_PATH
         self.original_migrations_dir = database.MIGRATIONS_DIR
@@ -44,16 +49,10 @@ class TestMigrationAudit(unittest.TestCase):
             "SELECT version, name, applied_at FROM migration_log ORDER BY version"
         ).fetchall()
         connection.close()
-        self.assertEqual(
-            [row["version"] for row in rows],
-            [1, 2, 3, 4, 5, 6, 7, 8],
-        )
+        self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5, 6, 7, 8])
         self.assertEqual(rows[0]["name"], "001_initial.sql")
         self.assertEqual(rows[-1]["name"], "008_notifications.sql")
-        self.assertEqual(
-            database.get_applied_migrations(),
-            [dict(r) for r in rows],
-        )
+        self.assertEqual(database.get_applied_migrations(), [dict(r) for r in rows])
 
     def test_migration_log_has_schema_and_is_idempotent(self):
         database.init_database()
@@ -96,9 +95,13 @@ class TestMigrationAudit(unittest.TestCase):
 
         # Se vuelven a exponer todas las migraciones. El registro debe reconciliar
         # las ya aplicadas (1..3) y luego aplicar las pendientes (4..8).
-        for name in ("004_appointment_intervals.sql", "005_users_roles_sessions.sql",
-                     "006_appointment_management_tokens.sql", "007_multitenant_business_settings.sql",
-                     "008_notifications.sql"):
+        for name in (
+            "004_appointment_intervals.sql",
+            "005_users_roles_sessions.sql",
+            "006_appointment_management_tokens.sql",
+            "007_multitenant_business_settings.sql",
+            "008_notifications.sql",
+        ):
             shutil.copy(ROOT / "migrations" / name, self.migrations_dir / name)
         database.init_database()
 

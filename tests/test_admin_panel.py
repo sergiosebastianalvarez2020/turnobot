@@ -17,12 +17,13 @@ from unittest import mock
 from werkzeug.security import generate_password_hash
 
 import app as application
-from app import rate_limit_state
 import database.database as database
 from database.database import get_connection
 from services import appointments
 
-FROZEN_NOW = datetime(2027, 1, 24, 10, 0)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
+FROZEN_NOW = datetime(
+    2027, 1, 24, 10, 0
+)  # domingo fijo: next_open_day() cae en lunes con turno de tarde
 
 
 class _FrozenDatetime(datetime):
@@ -70,16 +71,7 @@ def _insert_confirmed_appointment(business_id, date_, time_, duration=60):
             "(customer_name, phone, service, appointment_date, appointment_time, "
             " appointment_end, duration, status, business_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)",
-            (
-                "Cliente B",
-                "3838439000",
-                "Corte",
-                date_,
-                time_,
-                end_hhmm,
-                duration,
-                business_id,
-            ),
+            ("Cliente B", "3838439000", "Corte", date_, time_, end_hhmm, duration, business_id),
         )
         c.commit()
         return cur.lastrowid
@@ -109,13 +101,8 @@ class AdminPanelBase(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
@@ -153,7 +140,6 @@ class AdminPanelBase(unittest.TestCase):
 
 
 class TestAdminStatus(AdminPanelBase):
-
     def _cambiar_estado(self, appointment_id, status):
         return self.client.post(
             f"/admin/turnos/{appointment_id}/estado",
@@ -208,15 +194,12 @@ class TestAdminStatus(AdminPanelBase):
 
 
 class TestAdminReschedule(AdminPanelBase):
-
     def setUp(self):
         super().setUp()
         self._datetime_patch = mock.patch(f"{__name__}.datetime", _FrozenDatetime)
         self._datetime_patch.start()
         self.addCleanup(self._datetime_patch.stop)
-        self._service_datetime_patch = mock.patch(
-            "services.appointments.datetime", _FrozenDatetime
-        )
+        self._service_datetime_patch = mock.patch("services.appointments.datetime", _FrozenDatetime)
         self._service_datetime_patch.start()
         self.addCleanup(self._service_datetime_patch.stop)
 
@@ -224,11 +207,7 @@ class TestAdminReschedule(AdminPanelBase):
         appointment_id, date_ = self._create_turno(time_="09:00")
         response = self.client.post(
             f"/admin/turnos/{appointment_id}/reprogramar",
-            data={
-                "csrf_token": self.csrf_token,
-                "new_date": date_,
-                "new_time": "15:00",
-            },
+            data={"csrf_token": self.csrf_token, "new_date": date_, "new_time": "15:00"},
         )
         self.assertEqual(response.status_code, 302)
         new_date, new_time = self._date_time_of(appointment_id)
@@ -241,11 +220,7 @@ class TestAdminReschedule(AdminPanelBase):
         before = self._date_time_of(appointment_b)
         response = self.client.post(
             f"/admin/turnos/{appointment_b}/reprogramar",
-            data={
-                "csrf_token": self.csrf_token,
-                "new_date": date_,
-                "new_time": "09:00",
-            },
+            data={"csrf_token": self.csrf_token, "new_date": date_, "new_time": "09:00"},
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self._date_time_of(appointment_b), before)
@@ -269,11 +244,7 @@ class TestAdminReschedule(AdminPanelBase):
         before = self._date_time_of(appointment_id)
         response = self.client.post(
             f"/admin/turnos/{appointment_id}/reprogramar",
-            data={
-                "csrf_token": self.csrf_token,
-                "new_date": past,
-                "new_time": "09:00",
-            },
+            data={"csrf_token": self.csrf_token, "new_date": past, "new_time": "09:00"},
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self._date_time_of(appointment_id), before)
@@ -362,25 +333,22 @@ class TestAppointmentCounts(unittest.TestCase):
     def _set_status(self, appointment_id, status):
         c = get_connection()
         try:
-            c.execute(
-                "UPDATE appointments SET status = ? WHERE id = ?",
-                (status, appointment_id),
-            )
+            c.execute("UPDATE appointments SET status = ? WHERE id = ?", (status, appointment_id))
             c.commit()
         finally:
             c.close()
 
     def test_metricas_separadas_por_estado(self):
         date_ = _next_open_day()
-        a_conf = appointments.create_appointment(
-            "Ana", "3838439222", "Corte", date_, "09:00", 1
-        )["appointment_id"]
-        a_can = appointments.create_appointment(
-            "Bea", "3838439223", "Corte", date_, "10:00", 1
-        )["appointment_id"]
-        a_comp = appointments.create_appointment(
-            "Ce", "3838439224", "Corte", date_, "11:00", 1
-        )["appointment_id"]
+        appointments.create_appointment("Ana", "3838439222", "Corte", date_, "09:00", 1)[
+            "appointment_id"
+        ]
+        a_can = appointments.create_appointment("Bea", "3838439223", "Corte", date_, "10:00", 1)[
+            "appointment_id"
+        ]
+        a_comp = appointments.create_appointment("Ce", "3838439224", "Corte", date_, "11:00", 1)[
+            "appointment_id"
+        ]
         a_noshow = appointments.create_appointment(
             "Dani", "3838439225", "Corte", date_, "12:00", 1
         )["appointment_id"]
@@ -397,11 +365,11 @@ class TestAppointmentCounts(unittest.TestCase):
 
     def test_upcoming_no_cuenta_turnos_pasados(self):
         # Turno de hoy en el futuro cuenta como próximos.
-        today = datetime.now().date().isoformat()
+        datetime.now().date().isoformat()
         future_open = _next_open_day()
-        apt_futuro = appointments.create_appointment(
-            "Ana", "3838439222", "Corte", future_open, "09:00", 1
-        )["appointment_id"]
+        appointments.create_appointment("Ana", "3838439222", "Corte", future_open, "09:00", 1)[
+            "appointment_id"
+        ]
         counts = appointments.get_appointment_counts(1)
         self.assertEqual(counts["upcoming"], 1)
         self.assertEqual(counts["confirmed"], 1)
@@ -424,32 +392,31 @@ class TestAdminPagination(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
         # Crear 16 turnos (8 por día en 2 días hábiles consecutivos con horario de tarde, solo horas en punto)
         date_ = _next_open_weekday_with_afternoon()
         date2 = (datetime.fromisoformat(date_) + timedelta(days=1)).date().isoformat()
         # Si date2 cae en sábado, saltar al lunes
         if datetime.fromisoformat(date2).weekday() >= 5:
-            date2 = (datetime.fromisoformat(date2) + timedelta(days=(7 - datetime.fromisoformat(date2).weekday()))).date().isoformat()
+            date2 = (
+                (
+                    datetime.fromisoformat(date2)
+                    + timedelta(days=(7 - datetime.fromisoformat(date2).weekday()))
+                )
+                .date()
+                .isoformat()
+            )
         # Horarios válidos según schedule por defecto con slot_duration=60 (horas en punto)
-        valid_times = [
-            "09:00", "10:00", "11:00", "12:00",
-            "15:00", "16:00", "17:00", "18:00"
-        ]
+        valid_times = ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00", "18:00"]
         for i, time in enumerate(valid_times):
             appointments.create_appointment(
                 f"Cliente {i}", f"3838439{i:03d}", "Corte", date_, time, 1
             )
         for i, time in enumerate(valid_times):
             appointments.create_appointment(
-                f"Cliente {i+8}", f"3838439{i+8:03d}", "Corte", date2, time, 1
+                f"Cliente {i + 8}", f"3838439{i + 8:03d}", "Corte", date2, time, 1
             )
 
     def tearDown(self):
@@ -526,13 +493,8 @@ class TestAdminAJAX(unittest.TestCase):
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(
-            r'name="csrf_token" value="([^"]+)"', login_page.text
-        ).group(1)
-        login_response = self.client.post(
-            "/login",
-            data={"password": "correcta", "csrf_token": self.csrf_token},
-        )
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash

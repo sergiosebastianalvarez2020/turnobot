@@ -3,16 +3,16 @@ Registro de rutas de superadmin - nivel plataforma.
 """
 
 from routes.superadmin import (
+    superadmin_audit,
     superadmin_login,
     superadmin_logout,
-    superadmin_panel,
-    superadmin_audit,
-    superadmin_negocios_crear,
-    superadmin_negocios_detalle,
-    superadmin_negocios_aprobar,
-    superadmin_negocios_desactivar,
     superadmin_negocios_activar,
+    superadmin_negocios_aprobar,
+    superadmin_negocios_crear,
+    superadmin_negocios_desactivar,
+    superadmin_negocios_detalle,
     superadmin_negocios_reinviar,
+    superadmin_panel,
 )
 
 
@@ -36,10 +36,7 @@ def register(app):
         methods=["POST"],
     )
     app.add_url_rule(
-        "/superadmin",
-        endpoint="superadmin_panel",
-        view_func=superadmin_panel,
-        methods=["GET"],
+        "/superadmin", endpoint="superadmin_panel", view_func=superadmin_panel, methods=["GET"]
     )
     app.add_url_rule(
         "/superadmin/auditoria",

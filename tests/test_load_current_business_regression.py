@@ -10,7 +10,6 @@ La corrección retorna 404 de forma segura en ese caso, sin fallback cross-tenan
 """
 
 import unittest
-from unittest.mock import patch
 
 import app as application
 
@@ -53,9 +52,7 @@ class TestLoadCurrentBusinessRegression(unittest.TestCase):
             # Puede ser 404 o 405 dependiendo de cómo Flask haga el routing,
             # pero NUNCA debe ser 500.
             self.assertNotEqual(
-                response.status_code,
-                500,
-                "Ninguna ruta bajo /b/ sin match debe devolver 500",
+                response.status_code, 500, "Ninguna ruta bajo /b/ sin match debe devolver 500"
             )
 
     def test_ruta_b_slug_existente_login_funciona_correctamente(self):
@@ -96,14 +93,12 @@ class TestLoadCurrentBusinessRegression(unittest.TestCase):
             application.request.view_args = None
             try:
                 # Debe retornar un Response (abort 404), no lanzar excepción
-                result = application.load_current_business()
+                application.load_current_business()
                 # Si llegamos acá sin excepción, el fix funciona correctamente.
                 # El resultado puede ser None (si el path no empieza con /b/)
                 # o un Response 404.
             except AttributeError as exc:
-                self.fail(
-                    f"load_current_business propagó AttributeError con view_args=None: {exc}"
-                )
+                self.fail(f"load_current_business propagó AttributeError con view_args=None: {exc}")
             except Exception:
                 # Abort lanza werkzeug.exceptions.NotFound, que es el comportamiento correcto.
                 pass

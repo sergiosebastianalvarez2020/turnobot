@@ -37,9 +37,7 @@ class BaseIntervalTest(unittest.TestCase):
             "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '12:00', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
             (weekday,),
         )
-        self._execute(
-            "UPDATE services SET business_id = 1 WHERE id IN (1, 2, 3)"
-        )
+        self._execute("UPDATE services SET business_id = 1 WHERE id IN (1, 2, 3)")
         # Servicios con duraciones variadas (misma empresa, negocio 1)
         self.services = {
             "S15": self._insert_service("S15", 15),
@@ -91,38 +89,48 @@ class BaseIntervalTest(unittest.TestCase):
 
 
 class TestDurationAndEnd(BaseIntervalTest):
-
     def test_duracion_20(self):
         result = self._book("S20", "09:00")
         self.assertTrue(result["success"])
-        row = self._query("SELECT duration, appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],))[0]
+        row = self._query(
+            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            (result["appointment_id"],),
+        )[0]
         self.assertEqual(row["duration"], 20)
         self.assertEqual(row["appointment_end"], "09:20")
 
     def test_duracion_30(self):
         result = self._book("S30", "09:00")
         self.assertTrue(result["success"])
-        row = self._query("SELECT duration, appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],))[0]
+        row = self._query(
+            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            (result["appointment_id"],),
+        )[0]
         self.assertEqual(row["duration"], 30)
         self.assertEqual(row["appointment_end"], "09:30")
 
     def test_duracion_50(self):
         result = self._book("S50", "09:00")
         self.assertTrue(result["success"])
-        row = self._query("SELECT duration, appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],))[0]
+        row = self._query(
+            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            (result["appointment_id"],),
+        )[0]
         self.assertEqual(row["duration"], 50)
         self.assertEqual(row["appointment_end"], "09:50")
 
     def test_duracion_60(self):
         result = self._book("S60", "09:00")
         self.assertTrue(result["success"])
-        row = self._query("SELECT duration, appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],))[0]
+        row = self._query(
+            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            (result["appointment_id"],),
+        )[0]
         self.assertEqual(row["duration"], 60)
         self.assertEqual(row["appointment_end"], "10:00")
 
 
 class TestOverlap(BaseIntervalTest):
-
     def setUp(self):
         super().setUp()
         self._book("S60", "09:00")  # ocupa 09:00-10:00
@@ -143,9 +151,10 @@ class TestOverlap(BaseIntervalTest):
 
 
 class TestCrossBusiness(BaseIntervalTest):
-
     def test_mismo_horario_distinto_negocio_permitido(self):
-        self._execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
+        self._execute(
+            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
+        )
         for day in range(7):
             self._execute(
                 "INSERT INTO weekly_schedules (business_id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end) "
@@ -173,25 +182,22 @@ class TestCrossBusiness(BaseIntervalTest):
 
 
 class TestHistoricalDuration(BaseIntervalTest):
-
     def test_cambio_de_duracion_conserva_historia(self):
         result = self._book("S30", "09:00")
         self.assertTrue(result["success"])
         appointment_id = result["appointment_id"]
 
         # El admin aumenta la duración del servicio a 60
-        self._execute(
-            "UPDATE services SET duration = 60 WHERE id = ?",
-            (self.services["S30"],),
-        )
+        self._execute("UPDATE services SET duration = 60 WHERE id = ?", (self.services["S30"],))
 
-        row = self._query("SELECT duration, appointment_end FROM appointments WHERE id = ?", (appointment_id,))[0]
+        row = self._query(
+            "SELECT duration, appointment_end FROM appointments WHERE id = ?", (appointment_id,)
+        )[0]
         self.assertEqual(row["duration"], 30)
         self.assertEqual(row["appointment_end"], "09:30")
 
 
 class TestClosingTime(BaseIntervalTest):
-
     def test_termina_exacto_al_cierre_permitido(self):
         # Reconfigurar día: 09:00-10:00. Un servicio de 60 min que inicia 09:00
         # termina exactamente al cierre -> permitido.
@@ -201,7 +207,9 @@ class TestClosingTime(BaseIntervalTest):
         )
         result = self._book("S60", "09:00")
         self.assertTrue(result["success"])
-        row = self._query("SELECT appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],))[0]
+        row = self._query(
+            "SELECT appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],)
+        )[0]
         self.assertEqual(row["appointment_end"], "10:00")
 
     def test_excede_el_cierre_rechazado(self):
@@ -216,7 +224,6 @@ class TestClosingTime(BaseIntervalTest):
 
 
 class TestConcurrency(BaseIntervalTest):
-
     def test_dos_reservas_solapadas_simultaneas_solo_una_confirmada(self):
         barrier = threading.Barrier(2)
         results = []
@@ -247,7 +254,6 @@ class TestConcurrency(BaseIntervalTest):
         appointment_id_b = result_b["appointment_id"]
 
         # Ambos intentan moverse a 10:30
-        target_time = "10:30"
 
         def reschedule(appointment_id, management_token):
             barrier.wait()
@@ -291,21 +297,14 @@ class TestConcurrency(BaseIntervalTest):
 
 
 class TestInvalidDuration(BaseIntervalTest):
-
     def test_duracion_cero_rechazada(self):
-        self._execute(
-            "UPDATE services SET duration = 0 WHERE id = ?",
-            (self.services["S30"],),
-        )
+        self._execute("UPDATE services SET duration = 0 WHERE id = ?", (self.services["S30"],))
         result = self._book("S30", "09:00")
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "invalid_duration")
 
     def test_duracion_negativa_rechazada(self):
-        self._execute(
-            "UPDATE services SET duration = -1 WHERE id = ?",
-            (self.services["S30"],),
-        )
+        self._execute("UPDATE services SET duration = -1 WHERE id = ?", (self.services["S30"],))
         result = self._book("S30", "09:00")
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "invalid_duration")

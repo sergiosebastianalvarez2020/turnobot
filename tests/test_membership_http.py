@@ -25,9 +25,7 @@ class MembershipHTTPBase(unittest.TestCase):
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
         self.client = application.app.test_client()
 
     def tearDown(self):
@@ -44,9 +42,7 @@ class MembershipHTTPBase(unittest.TestCase):
             c.close()
 
     def _make_user(self, email, password, business, role="owner"):
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -61,8 +57,7 @@ class MembershipHTTPBase(unittest.TestCase):
     def _login(self, slug, email, password):
         token = self._login_csrf(slug)
         return self.client.post(
-            self._login_url(slug),
-            data={"email": email, "password": password, "csrf_token": token},
+            self._login_url(slug), data={"email": email, "password": password, "csrf_token": token}
         )
 
     def _page_csrf(self, url):
@@ -109,9 +104,8 @@ class MembershipHTTPBase(unittest.TestCase):
 
 
 class TestTenantIsolation(MembershipHTTPBase):
-
     def test_owner_de_A_gestiona_miembros_de_A(self):
-        owner = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         token, page = self._page_csrf("/admin/usuarios")
         self.assertEqual(page.status_code, 200)
@@ -123,12 +117,10 @@ class TestTenantIsolation(MembershipHTTPBase):
         )
         nuevo = database.get_user_by_email_scoped("nuevo@test.com")
         self.assertIsNotNone(nuevo)
-        self.assertEqual(
-            self._role_of(nuevo["id"], 1), database.get_role_id_scoped("staff")
-        )
+        self.assertEqual(self._role_of(nuevo["id"], 1), database.get_role_id_scoped("staff"))
 
     def test_owner_de_A_no_gestiona_miembros_de_B(self):
-        owner_a = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         self._make_user("b@test.com", "secreta", 2, "owner")
         self._login("", "o@test.com", "secreta")
         # GET en el tenant B se rechaza en el gate administrativo (no es miembro).
@@ -144,7 +136,7 @@ class TestTenantIsolation(MembershipHTTPBase):
         self.assertIsNone(database.get_user_by_email_scoped("x@test.com"))
 
     def test_url_b_slug_usa_B_como_tenant(self):
-        b_owner = self._make_user("o@test.com", "secreta", 2, "owner")
+        self._make_user("o@test.com", "secreta", 2, "owner")
         self._make_user("b1@test.com", "secreta", 2, "staff")
         self._make_user("a1@test.com", "secreta", 1, "owner")
         self._login("business-b", "o@test.com", "secreta")
@@ -156,7 +148,7 @@ class TestTenantIsolation(MembershipHTTPBase):
     def test_manipular_business_id_no_cambia_tenant_en_el_POST(self):
         # Owner de B revoca a un miembro de B inyectando business_id=1:
         # la operación sigue apuntando a B, no a A.
-        owner_b = self._make_user("o@test.com", "secreta", 2, "owner")
+        self._make_user("o@test.com", "secreta", 2, "owner")
         b_member = self._make_user("b1@test.com", "secreta", 2, "staff")
         self._login("business-b", "o@test.com", "secreta")
         token = self._user_csrf("business-b")
@@ -167,23 +159,20 @@ class TestTenantIsolation(MembershipHTTPBase):
         self.assertFalse(self._membership_exists(b_member, 2))
 
     def test_user_id_de_otro_tenant_no_modifica_ese_usuario(self):
-        owner_a = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         b_member = self._make_user("b1@test.com", "secreta", 2, "admin")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
         # Owner de A intenta cambiar el rol de un miembro de B en A.
         self.client.post(
-            f"/admin/usuarios/{b_member}/rol",
-            data={"csrf_token": token, "role_name": "staff"},
+            f"/admin/usuarios/{b_member}/rol", data={"csrf_token": token, "role_name": "staff"}
         )
         # Sin efecto: el miembro pertenece a B y no es miembro de A.
-        self.assertEqual(
-            self._role_of(b_member, 2), database.get_role_id_scoped("admin")
-        )
+        self.assertEqual(self._role_of(b_member, 2), database.get_role_id_scoped("admin"))
 
     def test_no_hay_ruta_para_seleccionar_business_id_arbitrario(self):
         # Las rutas admin/usuarios no aceptan business_id como parámetro de URL.
-        owner_a = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         self.assertEqual(self.client.get("/admin/usuarios").status_code, 200)
         self.assertEqual(self.client.get("/admin/usuarios?business_id=2").status_code, 200)
@@ -191,24 +180,20 @@ class TestTenantIsolation(MembershipHTTPBase):
 
 
 class TestAutorizacionHTTP(MembershipHTTPBase):
-
     def test_owner_puede_listar(self):
         self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         self.assertEqual(self.client.get("/admin/usuarios").status_code, 200)
 
     def test_admin_no_puede_mutar_memberships(self):
-        admin = self._make_user("a@test.com", "secreta", 1, "admin")
+        self._make_user("a@test.com", "secreta", 1, "admin")
         member = self._make_user("m@test.com", "secreta", 1, "staff")
         self._login("", "a@test.com", "secreta")
         token = self._user_csrf("")
         self.client.post(
-            f"/admin/usuarios/{member}/rol",
-            data={"csrf_token": token, "role_name": "customer"},
+            f"/admin/usuarios/{member}/rol", data={"csrf_token": token, "role_name": "customer"}
         )
-        self.assertEqual(
-            self._role_of(member, 1), database.get_role_id_scoped("staff")
-        )
+        self.assertEqual(self._role_of(member, 1), database.get_role_id_scoped("staff"))
 
     def test_staff_no_administra(self):
         self._make_user("s@test.com", "secreta", 1, "staff")
@@ -228,7 +213,7 @@ class TestAutorizacionHTTP(MembershipHTTPBase):
         self.assertIn("login", resp.headers.get("Location", ""))
 
     def test_owner_puede_invitar_staff_customer_admin(self):
-        owner = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
         for role in ("staff", "customer", "admin"):
@@ -237,12 +222,10 @@ class TestAutorizacionHTTP(MembershipHTTPBase):
                 data={"csrf_token": token, "email": f"{role}@test.com", "role_name": role},
             )
             uid = database.get_user_by_email_scoped(f"{role}@test.com")["id"]
-            self.assertEqual(
-                self._role_of(uid, 1), database.get_role_id_scoped(role)
-            )
+            self.assertEqual(self._role_of(uid, 1), database.get_role_id_scoped(role))
 
     def test_owner_no_puede_asignar_owner(self):
-        owner = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
         self.client.post(
@@ -255,38 +238,30 @@ class TestAutorizacionHTTP(MembershipHTTPBase):
         self.assertFalse(self._membership_exists(uid["id"], 1))
 
     def test_admin_no_puede_asignar_owner_ni_admin(self):
-        admin = self._make_user("a@test.com", "secreta", 1, "admin")
+        self._make_user("a@test.com", "secreta", 1, "admin")
         staff = self._make_user("s@test.com", "secreta", 1, "staff")
         self._login("", "a@test.com", "secreta")
         token = self._user_csrf("")
         self.client.post(
-            f"/admin/usuarios/{staff}/rol",
-            data={"csrf_token": token, "role_name": "owner"},
+            f"/admin/usuarios/{staff}/rol", data={"csrf_token": token, "role_name": "owner"}
         )
         self.client.post(
-            f"/admin/usuarios/{staff}/rol",
-            data={"csrf_token": token, "role_name": "admin"},
+            f"/admin/usuarios/{staff}/rol", data={"csrf_token": token, "role_name": "admin"}
         )
-        self.assertEqual(
-            self._role_of(staff, 1), database.get_role_id_scoped("staff")
-        )
+        self.assertEqual(self._role_of(staff, 1), database.get_role_id_scoped("staff"))
 
     def test_owner_no_puede_revocarse(self):
         owner = self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
-        self.client.post(
-            f"/admin/usuarios/{owner}/revocar", data={"csrf_token": token}
-        )
+        self.client.post(f"/admin/usuarios/{owner}/revocar", data={"csrf_token": token})
         self.assertTrue(self._membership_exists(owner, 1))
 
     def test_owner_no_puede_revocar_al_ultimo_owner(self):
         owner = self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
-        self.client.post(
-            f"/admin/usuarios/{owner}/revocar", data={"csrf_token": token}
-        )
+        self.client.post(f"/admin/usuarios/{owner}/revocar", data={"csrf_token": token})
         self.assertTrue(self._membership_exists(owner, 1))
 
     def test_owner_puede_revocar_un_miembro_permitido(self):
@@ -294,42 +269,32 @@ class TestAutorizacionHTTP(MembershipHTTPBase):
         member = self._make_user("m@test.com", "secreta", 1, "staff")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
-        self.client.post(
-            f"/admin/usuarios/{member}/revocar", data={"csrf_token": token}
-        )
+        self.client.post(f"/admin/usuarios/{member}/revocar", data={"csrf_token": token})
         self.assertFalse(self._membership_exists(member, 1))
         self.assertTrue(self._membership_exists(owner, 1))
 
     def test_owner_cambia_roles_segun_politica(self):
-        owner = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         member = self._make_user("m@test.com", "secreta", 1, "staff")
         self._login("", "o@test.com", "secreta")
         token = self._user_csrf("")
         self.client.post(
-            f"/admin/usuarios/{member}/rol",
-            data={"csrf_token": token, "role_name": "admin"},
+            f"/admin/usuarios/{member}/rol", data={"csrf_token": token, "role_name": "admin"}
         )
-        self.assertEqual(
-            self._role_of(member, 1), database.get_role_id_scoped("admin")
-        )
+        self.assertEqual(self._role_of(member, 1), database.get_role_id_scoped("admin"))
         # intento de promover a owner: sin efecto
         self.client.post(
-            f"/admin/usuarios/{member}/rol",
-            data={"csrf_token": token, "role_name": "owner"},
+            f"/admin/usuarios/{member}/rol", data={"csrf_token": token, "role_name": "owner"}
         )
-        self.assertEqual(
-            self._role_of(member, 1), database.get_role_id_scoped("admin")
-        )
+        self.assertEqual(self._role_of(member, 1), database.get_role_id_scoped("admin"))
 
 
 class TestCSRF(MembershipHTTPBase):
-
     def test_post_sin_csrf_devuelve_400(self):
         self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         resp = self.client.post(
-            "/admin/usuarios/invitar",
-            data={"email": "n@test.com", "role_name": "staff"},
+            "/admin/usuarios/invitar", data={"email": "n@test.com", "role_name": "staff"}
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIsNone(database.get_user_by_email_scoped("n@test.com"))
@@ -349,9 +314,7 @@ class TestCSRF(MembershipHTTPBase):
         self._make_user("o@test.com", "secreta", 1, "owner")
         self._login("", "o@test.com", "secreta")
         self.client.get("/admin/usuarios")
-        self.assertEqual(
-            self._query_count("SELECT COUNT(*) n FROM business_users")["n"], 1
-        )
+        self.assertEqual(self._query_count("SELECT COUNT(*) n FROM business_users")["n"], 1)
 
     def _query_count(self, sql):
         c = get_connection()
@@ -362,10 +325,9 @@ class TestCSRF(MembershipHTTPBase):
 
 
 class TestAislamientoRevocacionNoCreaHuecos(MembershipHTTPBase):
-
     def test_revocar_en_A_no_quita_membership_en_B(self):
         # Un usuario miembro de A y B; al revocarlo en A queda en B.
-        owner_a = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._make_user("o@test.com", "secreta", 1, "owner")
         user = self._make_user("u@test.com", "secreta", 1, "staff")
         database.create_membership_scoped(user, 2, "admin")
         self._login("", "o@test.com", "secreta")

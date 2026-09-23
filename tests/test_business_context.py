@@ -1,4 +1,3 @@
-import sqlite3
 import unittest
 from unittest.mock import patch
 
@@ -79,10 +78,11 @@ class TestBusinessContext(unittest.TestCase):
 
     def test_dos_requests_no_comparten_estado(self):
         second_business = {"id": 2, "name": "Business B", "slug": "business-b"}
-        with patch.object(application, "resolve_business", side_effect=[
-            {"id": 1, "name": "El Corte", "slug": "el-corte"},
-            second_business,
-        ]):
+        with patch.object(
+            application,
+            "resolve_business",
+            side_effect=[{"id": 1, "name": "El Corte", "slug": "el-corte"}, second_business],
+        ):
             with application.app.test_request_context("/"):
                 application.load_current_business()
                 self.assertEqual(application.get_current_business_id(), 1)

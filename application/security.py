@@ -34,20 +34,19 @@ def _is_json_request():
 
 
 def _json_error(code, message):
-    return jsonify({
-        "success": False,
-        "error": message,
-        "code": code,
-        "request_id": getattr(g, "request_id", None) or "-",
-    })
+    return jsonify(
+        {
+            "success": False,
+            "error": message,
+            "code": code,
+            "request_id": getattr(g, "request_id", None) or "-",
+        }
+    )
 
 
 def _html_error(code, message):
     return render_template(
-        "error.html",
-        code=code,
-        message=message,
-        request_id=getattr(g, "request_id", None) or "-",
+        "error.html", code=code, message=message, request_id=getattr(g, "request_id", None) or "-"
     ), code
 
 
@@ -104,7 +103,9 @@ def add_security_headers(response):
     if request_id:
         response.headers.setdefault("X-Request-ID", request_id)
     if os.getenv("FLASK_ENV") == "production":
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
 
     # Correlación de petición HTTP (omitir /static/ para evitar ruido)
     if not request.path.startswith("/static/"):
@@ -116,10 +117,7 @@ def add_security_headers(response):
             request.path,
             response.status_code,
             latency_ms,
-            extra={
-                "status_code": response.status_code,
-                "latency_ms": latency_ms,
-            },
+            extra={"status_code": response.status_code, "latency_ms": latency_ms},
         )
     return response
 

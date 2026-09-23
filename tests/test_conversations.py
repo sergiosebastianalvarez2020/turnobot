@@ -4,25 +4,23 @@ from pathlib import Path
 
 import database.database as database
 from services.conversations import (
-    get_or_create_conversation_session_scoped,
     add_conversation_message_scoped,
-    get_conversation_session_by_id_scoped,
-    list_conversation_sessions_scoped,
     count_conversation_sessions_scoped,
-    get_conversation_messages_scoped,
-    get_or_create_public_conversation_session_scoped,
     get_conversation_messages_by_public_token_scoped,
+    get_conversation_messages_scoped,
+    get_conversation_session_by_id_scoped,
+    get_conversation_stats_scoped,
+    get_frequent_questions_scoped,
+    get_needs_human_sessions_scoped,
+    get_or_create_conversation_session_scoped,
+    get_or_create_public_conversation_session_scoped,
+    get_unanswered_questions_scoped,
+    list_conversation_sessions_scoped,
     request_human_handoff_scoped,
     resolve_human_handoff_scoped,
-    update_session_status_scoped,
-    get_needs_human_sessions_scoped,
-    get_frequent_questions_scoped,
-    get_unanswered_questions_scoped,
-    get_conversation_stats_scoped,
     track_question_scoped,
+    update_session_status_scoped,
 )
-from database.database import create_user_scoped
-from werkzeug.security import generate_password_hash
 
 
 class TestConversations(unittest.TestCase):
@@ -32,7 +30,9 @@ class TestConversations(unittest.TestCase):
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
         # Crear usuario owner para tests
-        self.owner_id = database.create_user_scoped("owner@test.com", database.generate_password_hash("testpass"), active=True)
+        self.owner_id = database.create_user_scoped(
+            "owner@test.com", database.generate_password_hash("testpass"), active=True
+        )
         # Asignar rol owner al negocio 1
         connection = database.get_connection()
         try:
@@ -51,7 +51,9 @@ class TestConversations(unittest.TestCase):
 
     def test_conversation_session_creation(self):
         """Crear sesión de conversación para un cliente."""
-        session = get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan Pérez", "juan@test.com")
+        session = get_or_create_conversation_session_scoped(
+            1, "+5491112345678", "Juan Pérez", "juan@test.com"
+        )
         self.assertIsNotNone(session)
         self.assertEqual(session["customer_phone"], "+5491112345678")
         self.assertEqual(session["customer_name"], "Juan Pérez")
@@ -65,7 +67,7 @@ class TestConversations(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
@@ -136,7 +138,7 @@ class TestConversations(unittest.TestCase):
 
     def test_list_sessions_with_filter(self):
         """Listar sesiones con filtro de estado."""
-        session1 = get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
+        get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
         session2 = get_or_create_conversation_session_scoped(1, "+5491123456789", "Pedro", "")
         session3 = get_or_create_conversation_session_scoped(1, "+5491134567890", "Maria", "")
 
@@ -167,7 +169,7 @@ class TestConversations(unittest.TestCase):
 
     def test_needs_human_sessions(self):
         """Obtener sesiones que requieren atención humana."""
-        session1 = get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
+        get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
         session2 = get_or_create_conversation_session_scoped(1, "+5491123456789", "Pedro", "")
         request_human_handoff_scoped(session2["id"], 1)
 
@@ -211,7 +213,7 @@ class TestConversations(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
@@ -235,7 +237,7 @@ class TestConversations(unittest.TestCase):
 
     def test_get_needs_human_sessions(self):
         """Obtener sesiones que requieren atención."""
-        session1 = get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
+        get_or_create_conversation_session_scoped(1, "+5491112345678", "Juan", "")
         session2 = get_or_create_conversation_session_scoped(1, "+5491123456789", "Pedro", "")
         request_human_handoff_scoped(session2["id"], 1)
 
@@ -263,7 +265,7 @@ class TestConversations(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             connection.commit()
         finally:
@@ -281,7 +283,9 @@ class TestConversations(unittest.TestCase):
         public_token = session["public_token"]
 
         add_conversation_message_scoped(session_id, 1, "user", "Hola")
-        add_conversation_message_scoped(session_id, 1, "assistant", "¡Hola! ¿En qué puedo ayudarte?")
+        add_conversation_message_scoped(
+            session_id, 1, "assistant", "¡Hola! ¿En qué puedo ayudarte?"
+        )
 
         messages = get_conversation_messages_by_public_token_scoped(public_token, 1)
         self.assertIsNotNone(messages)
@@ -295,7 +299,7 @@ class TestConversations(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")',
+                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
             )
             connection.commit()
         finally:

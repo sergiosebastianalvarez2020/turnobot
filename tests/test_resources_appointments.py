@@ -33,7 +33,6 @@ def _next_open_day():
 
 
 class BaseResourceBookingTest(unittest.TestCase):
-
     @classmethod
     def setUpClass(cls):
         cls._original_database_path = database.DATABASE_PATH
@@ -49,11 +48,11 @@ class BaseResourceBookingTest(unittest.TestCase):
         database.DATABASE_PATH = self.original_database_path
         self.temp_dir.cleanup()
 
-    def _create(self, business_id=1, time="09:00", resource_id=None,
-                service="Corte", name="Cliente Test"):
+    def _create(
+        self, business_id=1, time="09:00", resource_id=None, service="Corte", name="Cliente Test"
+    ):
         return create_appointment(
-            name, "111111111", service, self.date, time, business_id,
-            resource_id=resource_id,
+            name, "111111111", service, self.date, time, business_id, resource_id=resource_id
         )
 
     @staticmethod
@@ -87,7 +86,6 @@ class TestBusinessWithoutResources(BaseResourceBookingTest):
 
 
 class TestBusinessWithResources(BaseResourceBookingTest):
-
     def setUp(self):
         super().setUp()
         self.court1 = database.create_resource_scoped(1, "Cancha 1")
@@ -103,16 +101,14 @@ class TestBusinessWithResources(BaseResourceBookingTest):
         # "Corte" dura 30 min: dos reservas a la misma hora solapan en el
         # mismo recurso.
         r1 = self._create(resource_id=self.court1, time="09:00")
-        r2 = self._create(resource_id=self.court1, time="09:00",
-                          name="Otro Cliente")
+        r2 = self._create(resource_id=self.court1, time="09:00", name="Otro Cliente")
         self.assertTrue(r1["success"])
         self.assertFalse(r2["success"])
         self.assertEqual(r2["reason"], "occupied")
 
     def test_reserva_global_bloquea_los_recursos(self):
         r_global = self._create(resource_id=None, time="09:00")
-        r_recurso = self._create(resource_id=self.court1, time="09:00",
-                                 name="Otro Cliente")
+        r_recurso = self._create(resource_id=self.court1, time="09:00", name="Otro Cliente")
         self.assertTrue(r_global["success"])
         self.assertFalse(r_recurso["success"])
         self.assertEqual(r_recurso["reason"], "occupied")
@@ -127,28 +123,25 @@ class TestBusinessWithResources(BaseResourceBookingTest):
 
     def test_disponibilidad_por_recurso_excluye_bloqueo_global(self):
         self._create(resource_id=None, time="09:00")
-        slots = get_available_times(self.date, 1, service="Corte",
-                                    resource_id=self.court2)
+        slots = get_available_times(self.date, 1, service="Corte", resource_id=self.court2)
         self.assertNotIn("09:00", slots)
 
     def test_disponibilidad_por_recurso_excluye_solo_su_recurso(self):
         self._create(resource_id=self.court1, time="09:00")
-        slots_c2 = get_available_times(self.date, 1, service="Corte",
-                                       resource_id=self.court2)
-        slots_c1 = get_available_times(self.date, 1, service="Corte",
-                                       resource_id=self.court1)
+        slots_c2 = get_available_times(self.date, 1, service="Corte", resource_id=self.court2)
+        slots_c1 = get_available_times(self.date, 1, service="Corte", resource_id=self.court1)
         self.assertIn("09:00", slots_c2)
         self.assertNotIn("09:00", slots_c1)
 
     def test_resource_id_de_otro_negocio_rechazado(self):
         from services.appointments import _validate_resource
+
         validated, reason = _validate_resource(self.court1, 2)
         self.assertIsNone(validated)
         self.assertEqual(reason, "invalid_resource")
 
 
 class TestResourceLifecycle(BaseResourceBookingTest):
-
     def setUp(self):
         super().setUp()
         self.court1 = database.create_resource_scoped(1, "Cancha 1")
@@ -166,8 +159,7 @@ class TestResourceLifecycle(BaseResourceBookingTest):
         )
         self.assertTrue(cancelado)
         fila = self._query(
-            "SELECT resource_id, status FROM appointments WHERE id = ?",
-            (result["appointment_id"],),
+            "SELECT resource_id, status FROM appointments WHERE id = ?", (result["appointment_id"],)
         )[0]
         self.assertEqual(fila["resource_id"], self.court1)
         self.assertEqual(fila["status"], "cancelled")
@@ -177,7 +169,7 @@ class TestResourceLifecycle(BaseResourceBookingTest):
         self.assertTrue(result["success"])
         nuevo_dia = _next_open_day()
         reschedule = reschedule_appointment_admin(
-            result["appointment_id"], nuevo_dia, "11:00", business_id=1,
+            result["appointment_id"], nuevo_dia, "11:00", business_id=1
         )
         self.assertTrue(reschedule["success"])
         self.assertEqual(reschedule["resource_id"], self.court1)
@@ -190,13 +182,12 @@ class TestResourceLifecycle(BaseResourceBookingTest):
 
     def test_reprogramacion_de_recurso_respeta_solapamiento(self):
         r1 = self._create(resource_id=self.court1, time="09:00")
-        r2 = self._create(resource_id=self.court1, time="11:00",
-                          name="Otro Cliente")
+        r2 = self._create(resource_id=self.court1, time="11:00", name="Otro Cliente")
         self.assertTrue(r1["success"])
         self.assertTrue(r2["success"])
         # Mover r1 a las 11:00 debe chocar con r2 (mismo recurso).
         moved = reschedule_appointment_admin(
-            r1["appointment_id"], self.date, "11:00", business_id=1,
+            r1["appointment_id"], self.date, "11:00", business_id=1
         )
         self.assertFalse(moved["success"])
         self.assertEqual(moved["reason"], "occupied")

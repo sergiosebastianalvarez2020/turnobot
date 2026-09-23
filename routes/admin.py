@@ -6,83 +6,73 @@ registran vía app.add_url_rule() en routes/__init__.py preservando
 los endpoint names globales (admin, admin_save_service, etc.).
 """
 
-import re
 import math
+import re
 import secrets
 from functools import wraps
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import (
-    abort,
-    g,
-    jsonify,
-    redirect,
-    render_template,
-    request,
-    session,
-    url_for,
-)
+from flask import abort, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import generate_password_hash
 
 from application.requests import _human_reschedule_error
 from application.security import _is_json_request, _json_error
-
-from extensions import valid_csrf_token
-from services.notifications import smtp_configured
-from services import memberships, loyalty, product
-from services.appointments import (
-    create_appointment,
-    reschedule_appointment_admin,
-    get_appointments,
-    get_appointment_counts,
-)
-from services.knowledge import (
-    get_knowledge_scoped,
-    create_knowledge_scoped,
-    update_knowledge_scoped,
-    delete_knowledge_scoped,
-)
-from services.conversations import (
-    list_conversation_sessions_scoped,
-    get_conversation_session_by_id_scoped,
-    get_conversation_messages_scoped,
-    resolve_human_handoff_scoped,
-    update_session_status_scoped,
-    get_conversation_stats_scoped,
-    get_frequent_questions_scoped,
-    get_unanswered_questions_scoped,
-    get_opportunities_scoped,
-)
 from database.database import (
+    create_resource_scoped,
+    create_service_scoped,
+    create_user_scoped,
+    ensure_loyalty_settings_scoped,
+    get_all_services_scoped,
+    get_all_weekly_schedules_scoped,
     get_business_settings_scoped,
     get_connection,
-    get_all_services_scoped,
-    create_service_scoped,
-    update_service_scoped,
-    get_resources_scoped,
-    get_resource_scoped,
-    create_resource_scoped,
-    set_resource_active_scoped,
-    get_all_weekly_schedules_scoped,
-    update_weekly_schedule_scoped,
-    update_business_settings_scoped,
-    get_user_by_email_scoped,
-    get_membership_scoped,
-    create_user_scoped,
-    update_appointment_status_scoped,
-    ensure_loyalty_settings_scoped,
-    update_loyalty_settings_scoped,
     get_loyalty_account_by_id_scoped,
-    recalculate_all_balances_scoped,
-    list_points_ledger_scoped,
+    get_membership_scoped,
+    get_resource_scoped,
+    get_resources_scoped,
+    get_user_by_email_scoped,
     list_loyalty_accounts_scoped,
+    list_points_ledger_scoped,
+    recalculate_all_balances_scoped,
+    set_resource_active_scoped,
+    update_appointment_status_scoped,
+    update_business_settings_scoped,
+    update_loyalty_settings_scoped,
+    update_service_scoped,
+    update_weekly_schedule_scoped,
 )
+from extensions import valid_csrf_token
 from routes.auth import _is_authenticated, _login_url, get_current_business_id
-
+from services import loyalty, memberships, product
+from services.appointments import (
+    create_appointment,
+    get_appointment_counts,
+    get_appointments,
+    reschedule_appointment_admin,
+)
+from services.conversations import (
+    get_conversation_messages_scoped,
+    get_conversation_session_by_id_scoped,
+    get_conversation_stats_scoped,
+    get_frequent_questions_scoped,
+    get_opportunities_scoped,
+    get_unanswered_questions_scoped,
+    list_conversation_sessions_scoped,
+    resolve_human_handoff_scoped,
+    update_session_status_scoped,
+)
+from services.knowledge import (
+    create_knowledge_scoped,
+    delete_knowledge_scoped,
+    get_knowledge_scoped,
+    update_knowledge_scoped,
+)
+from services.notifications import smtp_configured
 
 # ============================================================
 # ADMIN HELPERS
 # ============================================================
+
 
 def _require_admin_membership():
     """Valida sesión + membresía administrativa (owner/admin) del negocio actual."""
@@ -116,7 +106,9 @@ def membership_required(*role_names):
                 session.clear()
                 return redirect(_login_url())
             return f(*args, **kwargs)
+
         return decorated
+
     return decorator
 
 
@@ -146,6 +138,18 @@ def _service_form_data(form):
         return None, "La duración debe ser un entero mayor que cero."
 
     return (name, price, duration, active), None
+
+
+def _business_identity(business_id):
+    """Devuelve (business_name, business_initials) para las plantillas admin."""
+    settings = get_business_settings_scoped(business_id)
+    business_name = (
+        settings["business_name"] if settings and settings["business_name"] else "Mi negocio"
+    )
+    business_initials = (
+        settings["business_initials"] if settings and settings["business_initials"] else ""
+    )
+    return business_name, business_initials
 
 
 def _admin_url(**kwargs):
@@ -254,7 +258,9 @@ def _render_admin():
     page = max(1, min(int(request.args.get("page", "1")), total_pages))
     offset = (page - 1) * per_page
     actor_user_id = session.get("user_id")
-    membership = get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
+    membership = (
+        get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
+    )
     is_owner = bool(membership and membership["role_name"] == "owner")
     can_manage_memberships = bool(
         actor_user_id
@@ -310,6 +316,7 @@ def _render_admin():
 # ADMIN VIEW FUNCTIONS
 # ============================================================
 
+
 def admin():
     denied = _require_admin_membership()
     if denied:
@@ -341,9 +348,7 @@ def admin_save_service(slug=None):
     service_id = request.form.get("service_id", "").strip()
     try:
         if service_id:
-            if not update_service_scoped(
-                int(service_id), get_current_business_id(), *values
-            ):
+            if not update_service_scoped(int(service_id), get_current_business_id(), *values):
                 return redirect(_admin_url(service_error="No se encontró el servicio."))
         else:
             create_service_scoped(get_current_business_id(), *values)
@@ -363,19 +368,13 @@ def admin_toggle_service(service_id, slug=None):
     active = request.form.get("active") == "1"
     business_id = get_current_business_id()
     service = next(
-        (row for row in get_all_services_scoped(business_id) if row["id"] == service_id),
-        None,
+        (row for row in get_all_services_scoped(business_id) if row["id"] == service_id), None
     )
     if not service:
         return redirect(_admin_url(service_error="No se encontró el servicio."))
 
     update_service_scoped(
-        service_id,
-        business_id,
-        service["name"],
-        service["price"],
-        service["duration"],
-        active,
+        service_id, business_id, service["name"], service["price"], service["duration"], active
     )
     return redirect(_admin_url(service_message="El estado del servicio se actualizó."))
 
@@ -401,16 +400,12 @@ def admin_update_business_settings(slug=None):
     secondary_color = request.form.get("secondary_color", "").strip()
 
     if not business_name or not business_type or not business_initials:
-        return redirect(_admin_url(
-            config_error="Nombre, tipo e iniciales son obligatorios.",
-        ))
+        return redirect(_admin_url(config_error="Nombre, tipo e iniciales son obligatorios."))
 
     try:
         ZoneInfo(timezone)
     except (TypeError, ValueError, ZoneInfoNotFoundError):
-        return redirect(_admin_url(
-            config_error="La zona horaria indicada no es válida.",
-        ))
+        return redirect(_admin_url(config_error="La zona horaria indicada no es válida."))
 
     slot_duration = None
     break_between_slots = None
@@ -418,44 +413,42 @@ def admin_update_business_settings(slug=None):
         try:
             slot_duration = int(slot_duration_raw)
         except (TypeError, ValueError):
-            return redirect(_admin_url(
-                config_error="La duración de slot debe ser un número entero.",
-            ))
+            return redirect(
+                _admin_url(config_error="La duración de slot debe ser un número entero.")
+            )
         if slot_duration < 1:
-            return redirect(_admin_url(
-                config_error="La duración de slot debe ser al menos 1 minuto.",
-            ))
+            return redirect(
+                _admin_url(config_error="La duración de slot debe ser al menos 1 minuto.")
+            )
     if break_between_slots_raw:
         try:
             break_between_slots = int(break_between_slots_raw)
         except (TypeError, ValueError):
-            return redirect(_admin_url(
-                config_error="El intervalo entre turnos debe ser un número entero.",
-            ))
+            return redirect(
+                _admin_url(config_error="El intervalo entre turnos debe ser un número entero.")
+            )
         if break_between_slots < 0:
-            return redirect(_admin_url(
-                config_error="El intervalo entre turnos no puede ser negativo.",
-            ))
+            return redirect(
+                _admin_url(config_error="El intervalo entre turnos no puede ser negativo.")
+            )
 
-    _HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
+    _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
     if primary_color and not _HEX_COLOR_RE.match(primary_color):
-        return redirect(_admin_url(
-            config_error="El color primario debe ser un HEX válido (#RRGGBB).",
-        ))
+        return redirect(
+            _admin_url(config_error="El color primario debe ser un HEX válido (#RRGGBB).")
+        )
     if secondary_color and not _HEX_COLOR_RE.match(secondary_color):
-        return redirect(_admin_url(
-            config_error="El color secundario debe ser un HEX válido (#RRGGBB).",
-        ))
+        return redirect(
+            _admin_url(config_error="El color secundario debe ser un HEX válido (#RRGGBB).")
+        )
     if logo_url:
         logo_lower = logo_url.lower()
         if not (logo_lower.startswith("http://") or logo_lower.startswith("https://")):
-            return redirect(_admin_url(
-                config_error="El logo debe ser una URL válida (http/https).",
-            ))
+            return redirect(
+                _admin_url(config_error="El logo debe ser una URL válida (http/https).")
+            )
         if " " in logo_url:
-            return redirect(_admin_url(
-                config_error="El logo no debe contener espacios.",
-            ))
+            return redirect(_admin_url(config_error="El logo no debe contener espacios."))
 
     business_id = get_current_business_id()
     if business_id is None:
@@ -476,9 +469,9 @@ def admin_update_business_settings(slug=None):
         secondary_color=secondary_color,
     )
 
-    return redirect(_admin_url(
-        config_message="La configuración del negocio se guardó correctamente.",
-    ))
+    return redirect(
+        _admin_url(config_message="La configuración del negocio se guardó correctamente.")
+    )
 
 
 def admin_save_weekly_schedule(slug=None):
@@ -506,13 +499,12 @@ def admin_save_weekly_schedule(slug=None):
             afternoon_end = None
 
         update_weekly_schedule_scoped(
-            business_id, day, is_open, morning_start, morning_end,
-            afternoon_start, afternoon_end,
+            business_id, day, is_open, morning_start, morning_end, afternoon_start, afternoon_end
         )
 
-    return redirect(_admin_url(
-        schedule_message="Los horarios semanales se guardaron correctamente.",
-    ))
+    return redirect(
+        _admin_url(schedule_message="Los horarios semanales se guardaron correctamente.")
+    )
 
 
 def admin_cancel_appointment(appointment_id, slug=None):
@@ -585,10 +577,7 @@ def admin_reschedule_appointment(appointment_id, slug=None):
             return _json_error("REPROGRAMAR_ERROR", error), 400
         return jsonify({"success": True, "message": "Turno reprogramado"})
 
-    return redirect(_admin_url(
-        status="confirmed",
-        error_message=error,
-    ))
+    return redirect(_admin_url(status="confirmed", error_message=error))
 
 
 def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
@@ -618,11 +607,7 @@ def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
         error = "Completá la fecha y la hora para reprogramar."
     else:
         res = reschedule_appointment_admin(
-            appointment_id,
-            new_date,
-            new_time,
-            business_id=business_id,
-            resource_id=resource_id,
+            appointment_id, new_date, new_time, business_id=business_id, resource_id=resource_id
         )
         if not res["success"]:
             error = "No se pudo reprogramar el turno: " + _human_reschedule_error(res.get("reason"))
@@ -632,10 +617,7 @@ def admin_reschedule_appointment_with_resource(appointment_id, slug=None):
             return _json_error("REPROGRAMAR_ERROR", error), 400
         return jsonify({"success": True, "message": "Turno reprogramado"})
 
-    return redirect(_admin_url(
-        status="confirmed",
-        error_message=error,
-    ))
+    return redirect(_admin_url(status="confirmed", error_message=error))
 
 
 def admin_create_appointment_manual(slug=None):
@@ -655,7 +637,6 @@ def admin_create_appointment_manual(slug=None):
     service_name = request.form.get("service_name", "").strip()
     appointment_date = request.form.get("appointment_date", "").strip()
     appointment_time = request.form.get("appointment_time", "").strip()
-    notes = request.form.get("notes", "").strip()
     resource_id_raw = request.form.get("resource_id", "").strip()
 
     resource_id = None
@@ -681,7 +662,6 @@ def admin_create_appointment_manual(slug=None):
     if not appointment_time:
         return _error("El horario es obligatorio.")
 
-    duration = None
     service = None
     for s in get_all_services_scoped(business_id):
         if s["name"] == service_name:
@@ -689,7 +669,6 @@ def admin_create_appointment_manual(slug=None):
             break
     if service is None:
         return _error("El servicio seleccionado no existe.")
-    duration = service["duration"]
 
     if resource_id is not None:
         resource = get_resource_scoped(resource_id, business_id)
@@ -711,12 +690,13 @@ def admin_create_appointment_manual(slug=None):
         reason = res.get("reason") or "No se pudo crear la reserva."
         return _error("No se pudo crear la reserva: " + _human_appointment_error(reason))
 
-    return jsonify({"success": True, "message": f"Turno creado: {customer_name} - {appointment_date} {appointment_time}", "appointment_id": res.get("appointment_id")})
-
-    return redirect(_admin_url(
-        status="confirmed",
-        message=f"Turno creado: {customer_name} - {appointment_date} {appointment_time}",
-    ))
+    return jsonify(
+        {
+            "success": True,
+            "message": f"Turno creado: {customer_name} - {appointment_date} {appointment_time}",
+            "appointment_id": res.get("appointment_id"),
+        }
+    )
 
 
 def admin_usuarios(slug=None):
@@ -730,14 +710,10 @@ def admin_usuarios(slug=None):
     result = memberships.list_members(actor_user_id, business_id)
     if not result["success"]:
         return redirect(_admin_url(usuarios_error=result["reason"]))
-    settings = get_business_settings_scoped(business_id)
-    business_name = (
-        settings["business_name"] if settings and settings["business_name"] else "Mi negocio"
+    business_name, business_initials = _business_identity(business_id)
+    membership = (
+        get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
     )
-    business_initials = (
-        settings["business_initials"] if settings and settings["business_initials"] else ""
-    )
-    membership = get_membership_scoped(actor_user_id, business_id) if actor_user_id and business_id else None
     is_owner = bool(membership and membership["role_name"] == "owner")
     return render_template(
         "usuarios.html",
@@ -779,9 +755,7 @@ def admin_usuarios_invitar(slug=None):
     else:
         target_user_id = user["id"]
 
-    result = memberships.invite_member(
-        actor_user_id, business_id, target_user_id, role_name
-    )
+    result = memberships.invite_member(actor_user_id, business_id, target_user_id, role_name)
     if not result["success"]:
         return redirect(_usuarios_url(usuarios_error=result["reason"]))
     return redirect(_usuarios_url(usuarios_message="Usuario agregado correctamente."))
@@ -800,9 +774,7 @@ def admin_usuarios_cambiar_rol(user_id, slug=None):
         abort(404)
 
     role_name = request.form.get("role_name", "").strip()
-    result = memberships.change_role(
-        actor_user_id, business_id, user_id, role_name
-    )
+    result = memberships.change_role(actor_user_id, business_id, user_id, role_name)
     if not result["success"]:
         return redirect(_usuarios_url(usuarios_error=result["reason"]))
     return redirect(_usuarios_url(usuarios_message="Rol actualizado correctamente."))
@@ -830,6 +802,7 @@ def admin_usuarios_revocar(user_id, slug=None):
 # FIDELIZACIÓN (MVP Etapa 10.1)
 # ============================================================
 
+
 def admin_fidelizacion(slug=None):
     denied = _require_admin_membership()
     if denied:
@@ -838,7 +811,6 @@ def admin_fidelizacion(slug=None):
     if business_id is None:
         abort(404)
 
-    settings = get_business_settings_scoped(business_id)
     loyalty_settings = ensure_loyalty_settings_scoped(business_id)
     accounts = list_loyalty_accounts_scoped(business_id)
     selected_account_id = request.args.get("account_id", type=int)
@@ -850,8 +822,7 @@ def admin_fidelizacion(slug=None):
         if selected_account is not None:
             movements = list_points_ledger_scoped(business_id, selected_account_id)
 
-    business_name = settings["business_name"] if settings and settings["business_name"] else "Mi negocio"
-    business_initials = settings["business_initials"] if settings and settings["business_initials"] else ""
+    business_name, business_initials = _business_identity(business_id)
 
     return render_template(
         "admin_fidelizacion.html",
@@ -882,16 +853,24 @@ def admin_fidelizacion_configuracion(slug=None):
     try:
         points = int(points_raw)
     except (TypeError, ValueError):
-        return redirect(_fidelizacion_url(loyalty_error="El valor de puntos debe ser un número entero."))
+        return redirect(
+            _fidelizacion_url(loyalty_error="El valor de puntos debe ser un número entero.")
+        )
     if points < 0:
-        return redirect(_fidelizacion_url(loyalty_error="Los puntos por turno completado no pueden ser negativos."))
+        return redirect(
+            _fidelizacion_url(
+                loyalty_error="Los puntos por turno completado no pueden ser negativos."
+            )
+        )
 
     result = update_loyalty_settings_scoped(business_id, enabled, points)
     if not result:
-        return redirect(_fidelizacion_url(loyalty_error="No se pudo guardar la configuración de fidelización."))
-    return redirect(_fidelizacion_url(
-        loyalty_message="Configuración de fidelización guardada correctamente."
-    ))
+        return redirect(
+            _fidelizacion_url(loyalty_error="No se pudo guardar la configuración de fidelización.")
+        )
+    return redirect(
+        _fidelizacion_url(loyalty_message="Configuración de fidelización guardada correctamente.")
+    )
 
 
 def admin_fidelizacion_ajustar(account_id, slug=None):
@@ -909,14 +888,16 @@ def admin_fidelizacion_ajustar(account_id, slug=None):
     reason = request.form.get("reason", "").strip()
     result = loyalty.adjust_points(business_id, account_id, delta_raw, reason, actor_user_id)
     if not result["success"]:
-        return redirect(_fidelizacion_url(
-            loyalty_error="Ajuste rechazado: " + str(result["reason"]),
-            account_id=account_id,
-        ))
-    return redirect(_fidelizacion_url(
-        loyalty_message="Ajuste de puntos aplicado correctamente.",
-        account_id=account_id,
-    ))
+        return redirect(
+            _fidelizacion_url(
+                loyalty_error="Ajuste rechazado: " + str(result["reason"]), account_id=account_id
+            )
+        )
+    return redirect(
+        _fidelizacion_url(
+            loyalty_message="Ajuste de puntos aplicado correctamente.", account_id=account_id
+        )
+    )
 
 
 def admin_fidelizacion_recalcular(slug=None):
@@ -940,19 +921,41 @@ def admin_recompensas(slug=None):
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
             return "Solicitud no válida", 400
-        result = loyalty.save_reward(business_id, request.form.get("reward_id"), request.form.get("name"), request.form.get("description"), request.form.get("points_cost"), request.form.get("active") == "1")
+        result = loyalty.save_reward(
+            business_id,
+            request.form.get("reward_id"),
+            request.form.get("name"),
+            request.form.get("description"),
+            request.form.get("points_cost"),
+            request.form.get("active") == "1",
+        )
         if not result["success"]:
             return redirect(_fidelizacion_url(loyalty_error="No se pudo guardar la recompensa."))
         return redirect(_fidelizacion_url(loyalty_message="Recompensa guardada."))
     connection = get_connection()
     try:
-        redemptions = [dict(row) for row in connection.execute("""SELECT r.*, a.customer_name, a.customer_phone, w.name reward_name FROM redemptions r JOIN loyalty_accounts a ON a.id=r.account_id AND a.business_id=r.business_id JOIN rewards w ON w.id=r.reward_id AND w.business_id=r.business_id WHERE r.business_id=? ORDER BY r.id DESC""", (business_id,)).fetchall()]
+        redemptions = [
+            dict(row)
+            for row in connection.execute(
+                """SELECT r.*, a.customer_name, a.customer_phone, w.name reward_name FROM redemptions r JOIN loyalty_accounts a ON a.id=r.account_id AND a.business_id=r.business_id JOIN rewards w ON w.id=r.reward_id AND w.business_id=r.business_id WHERE r.business_id=? ORDER BY r.id DESC""",
+                (business_id,),
+            ).fetchall()
+        ]
     finally:
         connection.close()
     reward_id = request.args.get("edit", type=int)
-    editing = next((reward for reward in loyalty.list_rewards(business_id) if reward["id"] == reward_id), None)
+    editing = next(
+        (reward for reward in loyalty.list_rewards(business_id) if reward["id"] == reward_id), None
+    )
     loyalty_enabled = bool(ensure_loyalty_settings_scoped(business_id).get("enabled"))
-    return render_template("admin_recompensas.html", rewards=loyalty.list_rewards(business_id), retention=loyalty.retention_candidates(business_id) if loyalty_enabled else [], redemptions=redemptions, editing=editing, loyalty_enabled=loyalty_enabled)
+    return render_template(
+        "admin_recompensas.html",
+        rewards=loyalty.list_rewards(business_id),
+        retention=loyalty.retention_candidates(business_id) if loyalty_enabled else [],
+        redemptions=redemptions,
+        editing=editing,
+        loyalty_enabled=loyalty_enabled,
+    )
 
 
 def admin_recompensa_estado(reward_id, slug=None):
@@ -961,16 +964,26 @@ def admin_recompensa_estado(reward_id, slug=None):
         return denied
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
-    reward = next((r for r in loyalty.list_rewards(get_current_business_id()) if r["id"] == reward_id), None)
+    reward = next(
+        (r for r in loyalty.list_rewards(get_current_business_id()) if r["id"] == reward_id), None
+    )
     if reward is None:
         abort(404)
-    loyalty.save_reward(get_current_business_id(), reward_id, reward["name"], reward["description"], reward["points_cost"], request.form.get("active") == "1")
+    loyalty.save_reward(
+        get_current_business_id(),
+        reward_id,
+        reward["name"],
+        reward["description"],
+        reward["points_cost"],
+        request.form.get("active") == "1",
+    )
     return redirect(_fidelizacion_url())
 
 
 # ============================================================
 # RECURSOS ADMIN
 # ============================================================
+
 
 def admin_recursos(slug=None):
     denied = _require_admin_membership()
@@ -996,7 +1009,9 @@ def admin_create_resource(slug=None):
     result = create_resource_scoped(business_id, name)
     if not result.get("success"):
         if result.get("reason") == "duplicate_name":
-            return redirect(_admin_url(resource_error="Ya existe un recurso con ese nombre en este negocio."))
+            return redirect(
+                _admin_url(resource_error="Ya existe un recurso con ese nombre en este negocio.")
+            )
         return redirect(_admin_url(resource_error="No se pudo crear el recurso."))
     return redirect(_admin_url(resource_message="El recurso se creó correctamente."))
 
@@ -1022,6 +1037,7 @@ def admin_toggle_resource(resource_id, slug=None):
 # CONOCIMIENTO ADMIN
 # ============================================================
 
+
 def admin_conocimiento(slug=None):
     denied = _require_admin_membership()
     if denied:
@@ -1030,9 +1046,7 @@ def admin_conocimiento(slug=None):
     if business_id is None:
         abort(404)
     knowledge = get_knowledge_scoped(business_id)
-    settings = get_business_settings_scoped(business_id)
-    business_name = settings["business_name"] if settings else "Mi negocio"
-    business_initials = settings["business_initials"] if settings else ""
+    business_name, business_initials = _business_identity(business_id)
     return render_template(
         "admin_conocimiento.html",
         business_name=business_name,
@@ -1057,10 +1071,14 @@ def admin_conocimiento_crear(slug=None):
     answer = request.form.get("answer", "").strip()
     tags = request.form.get("tags", "").strip()
     if not type_ or not question or not answer:
-        return redirect(_conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios."))
+        return redirect(
+            _conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios.")
+        )
     actor_user_id = session.get("user_id")
     create_knowledge_scoped(business_id, type_, question, answer, tags, actor_user_id)
-    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento creada correctamente."))
+    return redirect(
+        _conocimiento_url(conocimiento_message="Entrada de conocimiento creada correctamente.")
+    )
 
 
 def admin_conocimiento_editar(knowledge_id, slug=None):
@@ -1078,10 +1096,16 @@ def admin_conocimiento_editar(knowledge_id, slug=None):
     tags = request.form.get("tags", "").strip()
     active = request.form.get("active") == "1"
     if not type_ or not question or not answer:
-        return redirect(_conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios."))
-    if not update_knowledge_scoped(knowledge_id, business_id, type_, question, answer, tags, active):
+        return redirect(
+            _conocimiento_url(conocimiento_error="Tipo, pregunta y respuesta son obligatorios.")
+        )
+    if not update_knowledge_scoped(
+        knowledge_id, business_id, type_, question, answer, tags, active
+    ):
         return redirect(_conocimiento_url(conocimiento_error="No se pudo actualizar la entrada."))
-    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento actualizada correctamente."))
+    return redirect(
+        _conocimiento_url(conocimiento_message="Entrada de conocimiento actualizada correctamente.")
+    )
 
 
 def admin_conocimiento_eliminar(knowledge_id, slug=None):
@@ -1095,12 +1119,15 @@ def admin_conocimiento_eliminar(knowledge_id, slug=None):
         abort(404)
     if not delete_knowledge_scoped(knowledge_id, business_id):
         return redirect(_conocimiento_url(conocimiento_error="No se pudo eliminar la entrada."))
-    return redirect(_conocimiento_url(conocimiento_message="Entrada de conocimiento eliminada correctamente."))
+    return redirect(
+        _conocimiento_url(conocimiento_message="Entrada de conocimiento eliminada correctamente.")
+    )
 
 
 # ============================================================
 # CONVERSACIONES ADMIN
 # ============================================================
+
 
 def admin_conversaciones(slug=None):
     denied = _require_admin_membership()
@@ -1115,11 +1142,11 @@ def admin_conversaciones(slug=None):
         status_filter = "all"
 
     status_filter_db = None if status_filter == "all" else status_filter
-    conversations = list_conversation_sessions_scoped(business_id, status=status_filter_db, limit=100)
+    conversations = list_conversation_sessions_scoped(
+        business_id, status=status_filter_db, limit=100
+    )
 
-    settings = get_business_settings_scoped(business_id)
-    business_name = settings["business_name"] if settings else "Mi negocio"
-    business_initials = settings["business_initials"] if settings else ""
+    business_name, business_initials = _business_identity(business_id)
 
     stats = get_conversation_stats_scoped(business_id)
 
@@ -1149,9 +1176,7 @@ def admin_conversaciones_detalle(session_id, slug=None):
 
     messages = get_conversation_messages_scoped(session_id, business_id)
 
-    settings = get_business_settings_scoped(business_id)
-    business_name = settings["business_name"] if settings else "Mi negocio"
-    business_initials = settings["business_initials"] if settings else ""
+    business_name, business_initials = _business_identity(business_id)
 
     return render_template(
         "admin_conversaciones_detalle.html",
@@ -1175,9 +1200,13 @@ def admin_conversaciones_resolver(session_id, slug=None):
         abort(404)
 
     if not resolve_human_handoff_scoped(session_id, business_id):
-        return redirect(_conversaciones_url(conversaciones_error="No se pudo resolver la conversación."))
+        return redirect(
+            _conversaciones_url(conversaciones_error="No se pudo resolver la conversación.")
+        )
 
-    return redirect(_conversaciones_url(conversaciones_message="Conversación marcada como resuelta."))
+    return redirect(
+        _conversaciones_url(conversaciones_message="Conversación marcada como resuelta.")
+    )
 
 
 def admin_conversaciones_estado(session_id, slug=None):
@@ -1195,7 +1224,9 @@ def admin_conversaciones_estado(session_id, slug=None):
         return redirect(_conversaciones_url(conversaciones_error="Estado inválido."))
 
     if not update_session_status_scoped(session_id, business_id, new_status):
-        return redirect(_conversaciones_url(conversaciones_error="No se pudo actualizar el estado."))
+        return redirect(
+            _conversaciones_url(conversaciones_error="No se pudo actualizar el estado.")
+        )
 
     return redirect(_conversaciones_url(conversaciones_message="Estado actualizado correctamente."))
 
@@ -1203,6 +1234,7 @@ def admin_conversaciones_estado(session_id, slug=None):
 # ============================================================
 # ANALYTICS: INTELIGENCIA
 # ============================================================
+
 
 def admin_inteligencia(slug=None):
     denied = _require_admin_membership()
@@ -1217,9 +1249,7 @@ def admin_inteligencia(slug=None):
     opportunities = get_opportunities_scoped(business_id, limit=20)
     stats = get_conversation_stats_scoped(business_id)
 
-    settings = get_business_settings_scoped(business_id)
-    business_name = settings["business_name"] if settings else "Mi negocio"
-    business_initials = settings["business_initials"] if settings else ""
+    business_name, business_initials = _business_identity(business_id)
 
     return render_template(
         "admin_inteligencia.html",
@@ -1245,9 +1275,7 @@ def admin_inteligencia_oportunidades(slug=None):
     opportunities = get_opportunities_scoped(business_id, limit=50)
     stats = get_conversation_stats_scoped(business_id)
 
-    settings = get_business_settings_scoped(business_id)
-    business_name = settings["business_name"] if settings else "Mi negocio"
-    business_initials = settings["business_initials"] if settings else ""
+    business_name, business_initials = _business_identity(business_id)
 
     return render_template(
         "admin_inteligencia_oportunidades.html",

@@ -8,12 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from services import memberships
-
 from werkzeug.security import generate_password_hash
 
 import database.database as database
 from database.database import get_connection
+from services import memberships
 
 
 class MembershipAuthBase(unittest.TestCase):
@@ -24,9 +23,7 @@ class MembershipAuthBase(unittest.TestCase):
         self.original_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
         database.init_database()
-        self._exec(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
-        )
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_path
@@ -42,9 +39,7 @@ class MembershipAuthBase(unittest.TestCase):
             c.close()
 
     def _make_user(self, email, password, business, role="owner"):
-        user_id = database.create_user_scoped(
-            email, generate_password_hash(password), active=True
-        )
+        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
         database.create_membership_scoped(user_id, business, role)
         return user_id
@@ -73,7 +68,6 @@ class MembershipAuthBase(unittest.TestCase):
 
 
 class TestAislamiento(MembershipAuthBase):
-
     def test_owner_de_A_no_lista_miembros_de_B(self):
         owner_a = self._make_user("a@test.com", "secret", 1, "owner")
         self._make_user("b1@test.com", "secret", 2, "owner")
@@ -118,7 +112,6 @@ class TestAislamiento(MembershipAuthBase):
 
 
 class TestJerarquia(MembershipAuthBase):
-
     def test_owner_puede_asignar_admin_staff_customer(self):
         owner = self._make_user("o@test.com", "secret", 1, "owner")
         # Los usuarios destino existen globalmente (miembros de otro negocio)
@@ -172,7 +165,6 @@ class TestJerarquia(MembershipAuthBase):
 
 
 class TestOwners(MembershipAuthBase):
-
     def test_owner_no_puede_revocarse_a_si_mismo(self):
         owner = self._make_user("o@test.com", "secret", 1, "owner")
         result = memberships.revoke_membership(owner, 1, owner)
@@ -210,7 +202,6 @@ class TestOwners(MembershipAuthBase):
 
 
 class TestCambioDeRol(MembershipAuthBase):
-
     def test_cambio_valido_dentro_del_mismo_negocio(self):
         owner = self._make_user("o@test.com", "secret", 1, "owner")
         staff = self._make_user("s@test.com", "secret", 1, "staff")
@@ -239,7 +230,6 @@ class TestCambioDeRol(MembershipAuthBase):
 
 
 class TestRevocacion(MembershipAuthBase):
-
     def test_owner_puede_revocar_staff_admin_customer(self):
         owner = self._make_user("o@test.com", "secret", 1, "owner")
         for role in ("staff", "admin", "customer"):

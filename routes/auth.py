@@ -23,39 +23,30 @@ La migración es estructural: la lógica de negocio permanece idéntica;
 
 import datetime
 import secrets
-import os
-
 from functools import wraps
-from flask import (
-    abort,
-    current_app,
-    g,
-    redirect,
-    render_template,
-    request,
-    session,
-    url_for,
-)
+
+from flask import abort, current_app, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
-from application.session_crypto import _hash_session_token, _now_iso
 from application.rate_limit import is_login_request_allowed
 from application.requests import get_client_ip
-from extensions import csrf_token, valid_csrf_token
+from application.session_crypto import _hash_session_token, _now_iso
 from database.database import (
+    create_session_scoped,
     get_user_by_email_scoped,
     get_user_by_id_scoped,
-    create_session_scoped,
-    revoke_all_sessions_scoped,
     is_session_valid_scoped,
+    revoke_all_sessions_scoped,
 )
 from database.seed_auth import migrate_owner_from_module_hash
+from extensions import csrf_token, valid_csrf_token
 
 
 def _get_admin_password_hash():
     """Lee ADMIN_PASSWORD_HASH dinámicamente desde app para permitir
     hot-reload en tests que mutan application.ADMIN_PASSWORD_HASH."""
     from app import ADMIN_PASSWORD_HASH
+
     return ADMIN_PASSWORD_HASH
 
 
@@ -63,6 +54,7 @@ def _get_admin_password():
     """Lee ADMIN_PASSWORD dinámicamente desde app para permitir
     hot-reload en tests que mutan application.ADMIN_PASSWORD."""
     from app import ADMIN_PASSWORD
+
     return ADMIN_PASSWORD
 
 
@@ -101,9 +93,7 @@ def _establish_session(user_id):
     session["session_token"] = token
     session.permanent = True
     lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
-    expires_at = (
-        datetime.datetime.now(datetime.timezone.utc) + lifetime
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    expires_at = (datetime.datetime.now(datetime.UTC) + lifetime).strftime("%Y-%m-%d %H:%M:%S")
     create_session_scoped(user_id, _hash_session_token(token), expires_at)
     session["csrf_token"] = old_csrf or csrf_token()
     if platform_user_id is not None:
@@ -117,7 +107,7 @@ def _authenticate_login(business, email, password):
     Autentica email+password contra users/business_users para el negocio dado.
     Retorna (user_id, None) o (None, mensaje_error).
     """
-    from services.memberships import get_membership_scoped, ROLE_CUSTOMER
+    from services.memberships import ROLE_CUSTOMER, get_membership_scoped
 
     if not is_login_request_allowed(_get_client_ip()):
         return None, "Demasiados intentos. Esperá unos minutos."
@@ -142,9 +132,7 @@ def _authenticate_login(business, email, password):
     admin_hash = _get_admin_password_hash()
     if business["id"] == 1 and admin_hash:
         if password and check_password_hash(admin_hash, password):
-            user_id = migrate_owner_from_module_hash(
-                1, email or "admin@turnobot.local", admin_hash
-            )
+            user_id = migrate_owner_from_module_hash(1, email or "admin@turnobot.local", admin_hash)
             if user_id is not None:
                 return user_id, None
     return None, "Credenciales inválidas."
@@ -180,17 +168,18 @@ def login_required(f):
             session.clear()
             return redirect(_login_url())
         return f(*args, **kwargs)
+
     return decorated
 
 
 def login():
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
-            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
+            return render_template(
+                "login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."
+            ), 400
         user_id, error = _authenticate_login(
-            g.current_business,
-            request.form.get("email", ""),
-            request.form.get("password", ""),
+            g.current_business, request.form.get("email", ""), request.form.get("password", "")
         )
         if user_id is None:
             return render_template("login.html", error=True, error_message=error), (
@@ -211,11 +200,11 @@ def login_slug(slug):
 
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
-            return render_template("login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."), 400
+            return render_template(
+                "login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."
+            ), 400
         user_id, error = _authenticate_login(
-            business,
-            request.form.get("email", ""),
-            request.form.get("password", ""),
+            business, request.form.get("email", ""), request.form.get("password", "")
         )
         if user_id is None:
             return render_template("login.html", error=True, error_message=error), (

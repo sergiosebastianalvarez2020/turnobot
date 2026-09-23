@@ -1,13 +1,13 @@
+import datetime
+import hashlib
 import logging
 import os
+import re
 import secrets
 import sqlite3
-import re
-import hashlib
-import datetime
 from pathlib import Path
-from werkzeug.security import generate_password_hash
 
+from werkzeug.security import generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,9 +20,7 @@ logger = logging.getLogger("turnobot.db")
 
 def get_connection():
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(
-        DATABASE_PATH, timeout=10, check_same_thread=False
-    )
+    connection = sqlite3.connect(DATABASE_PATH, timeout=10, check_same_thread=False)
     connection.execute("PRAGMA busy_timeout = 10000")
     connection.execute("PRAGMA journal_mode = WAL")
     connection.execute("PRAGMA foreign_keys = ON")
@@ -35,11 +33,10 @@ def get_connection():
 # SISTEMA DE MIGRACIONES
 # ============================================================
 
+
 def _get_current_version(connection):
     try:
-        row = connection.execute(
-            "SELECT version FROM schema_version WHERE id = 1"
-        ).fetchone()
+        row = connection.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
         return row["version"] if row else 0
     except sqlite3.OperationalError:
         return 0
@@ -47,8 +44,7 @@ def _get_current_version(connection):
 
 def _set_version(connection, version):
     connection.execute(
-        "INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, ?)",
-        (version,),
+        "INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, ?)", (version,)
     )
 
 
@@ -233,9 +229,7 @@ def create_business_with_owner(name, email, password=None, slug=None):
             (email, password_hash, active),
         )
         user_id = user_cursor.lastrowid
-        owner_role = connection.execute(
-            "SELECT id FROM roles WHERE name = 'owner'"
-        ).fetchone()
+        owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
         connection.execute(
             "INSERT INTO business_users (user_id, business_id, role_id) VALUES (?, ?, ?)",
             (user_id, business_id, owner_role["id"]),
@@ -292,6 +286,7 @@ def create_business_with_owner(name, email, password=None, slug=None):
 # *_scoped variants instead, which always scope by business_id.
 # ============================================================
 
+
 def get_active_services(business_id=None, connection=None):
     """Devuelve los servicios activos de un negocio específico."""
     if business_id is None:
@@ -306,10 +301,10 @@ def get_active_services(business_id=None, connection=None):
                 raise ValueError("business_id es obligatorio")
         finally:
             fallback_connection.close()
-    
+
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    
+
     owns_connection = connection is None
     if owns_connection:
         connection = get_connection()
@@ -381,10 +376,10 @@ def get_business_settings(business_id=None, connection=None):
                 raise ValueError("business_id es obligatorio")
         finally:
             fallback_connection.close()
-    
+
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    
+
     owns_connection = connection is None
     if owns_connection:
         connection = get_connection()
@@ -407,11 +402,7 @@ def get_business_settings(business_id=None, connection=None):
 
 
 def update_business_settings(
-    business_name,
-    business_type,
-    business_initials,
-    business_description,
-    timezone,
+    business_name, business_type, business_initials, business_description, timezone
 ):
     connection = get_connection()
     try:
@@ -425,13 +416,7 @@ def update_business_settings(
                 timezone = ?
             WHERE id = 1
             """,
-            (
-                business_name,
-                business_type,
-                business_initials,
-                business_description,
-                timezone,
-            ),
+            (business_name, business_type, business_initials, business_description, timezone),
         )
         connection.commit()
     finally:
@@ -450,10 +435,10 @@ def get_weekly_schedule(day_of_week, business_id=None, connection=None):
                 raise ValueError("business_id es obligatorio")
         finally:
             fallback_connection.close()
-    
+
     if business_id is None:
         raise ValueError("business_id es obligatorio")
-    
+
     owns_connection = connection is None
     if owns_connection:
         connection = get_connection()
@@ -473,8 +458,7 @@ def update_appointment_status(appointment_id, status):
     connection = get_connection()
     try:
         cursor = connection.execute(
-            "UPDATE appointments SET status = ? WHERE id = ?",
-            (status, appointment_id),
+            "UPDATE appointments SET status = ? WHERE id = ?", (status, appointment_id)
         )
         connection.commit()
         return cursor.rowcount == 1
@@ -485,6 +469,7 @@ def update_appointment_status(appointment_id, status):
 # ============================================================
 # SERVICIOS — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
+
 
 def get_active_services_scoped(business_id, connection=None):
     """Devuelve los servicios activos de un negocio específico."""
@@ -546,6 +531,7 @@ def update_service_scoped(service_id, business_id, name, price, duration, active
 # ============================================================
 # RECURSOS RESERVABLES — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
+
 
 def get_resources_scoped(business_id, only_active=False):
     """Devuelve los recursos de un negocio específico.
@@ -631,6 +617,7 @@ def set_resource_active_scoped(resource_id, business_id, active):
 # ============================================================
 # CONFIGURACIÓN / HORARIOS / TURNOS — CAPA MULTI-NEGOCIO (SCOPED)
 # ============================================================
+
 
 def list_all_businesses_scoped():
     """Lista negocios con su zona horaria y flag de notificaciones.
@@ -740,13 +727,7 @@ def get_all_weekly_schedules_scoped(business_id):
 
 
 def update_weekly_schedule_scoped(
-    business_id,
-    day_of_week,
-    is_open,
-    morning_start,
-    morning_end,
-    afternoon_start,
-    afternoon_end,
+    business_id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end
 ):
     """Actualiza el horario semanal de un día específico para un negocio.
 
@@ -862,8 +843,14 @@ def get_notification_state_scoped(business_id, appointment_id, type_, channel):
 
 
 def upsert_notification_log_scoped(
-    appointment_id, business_id, type_, channel, destination,
-    status="sent", error="", last_attempt_at="",
+    appointment_id,
+    business_id,
+    type_,
+    channel,
+    destination,
+    status="sent",
+    error="",
+    last_attempt_at="",
 ):
     """Registra/actualiza una notificación de forma idempotente.
 
@@ -885,8 +872,16 @@ def upsert_notification_log_scoped(
                 error = excluded.error,
                 last_attempt_at = excluded.last_attempt_at
             """,
-            (appointment_id, business_id, type_, channel, destination,
-             status, error[:1000], last_attempt_at),
+            (
+                appointment_id,
+                business_id,
+                type_,
+                channel,
+                destination,
+                status,
+                error[:1000],
+                last_attempt_at,
+            ),
         )
         connection.commit()
         return True
@@ -897,12 +892,13 @@ def upsert_notification_log_scoped(
         connection.close()
 
 
-def claim_notification_scoped(appointment_id, business_id, type_, channel,
-                              destination, stale_after_seconds=900):
+def claim_notification_scoped(
+    appointment_id, business_id, type_, channel, destination, stale_after_seconds=900
+):
     """Claim DB atómico antes de SMTP; recupera claims abandonados."""
     connection = get_connection()
     try:
-        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             """INSERT INTO notification_log
@@ -918,8 +914,15 @@ def claim_notification_scoped(appointment_id, business_id, type_, channel,
                WHERE business_id=? AND appointment_id=? AND type=? AND channel=?
                  AND (status IN ('pending','failed')
                       OR (status='processing' AND last_attempt_at < datetime('now', ?)))""",
-            (destination, now, business_id, appointment_id, type_, channel,
-             f'-{int(stale_after_seconds)} seconds'),
+            (
+                destination,
+                now,
+                business_id,
+                appointment_id,
+                type_,
+                channel,
+                f"-{int(stale_after_seconds)} seconds",
+            ),
         )
         connection.commit()
         return cursor.rowcount == 1
@@ -973,6 +976,7 @@ def list_failed_notifications_scoped(business_id=None, limit=100):
 # - El saldo es la SUM(delta) del ledger; points_balance es un cache reconstructible.
 # - Todo acceso está scoped por business_id (tenant derivado del slug en la capa HTTP).
 # ============================================================
+
 
 def ensure_loyalty_settings_scoped(business_id):
     """Asegura que exista una fila de configuración de fidelización para el negocio.
@@ -1043,7 +1047,9 @@ def update_loyalty_settings_scoped(business_id, enabled, points_per_completed_ap
         connection.close()
 
 
-def get_or_create_loyalty_account_scoped(business_id, customer_phone, customer_name=None, customer_email=None):
+def get_or_create_loyalty_account_scoped(
+    business_id, customer_phone, customer_name=None, customer_email=None
+):
     """Devuelve (account, created) para un cliente, creándola si no existe.
 
     La identidad es business_id + phone normalizado (ANCLA ÚNICA). El email y el
@@ -1064,8 +1070,14 @@ def get_or_create_loyalty_account_scoped(business_id, customer_phone, customer_n
         ).fetchone()
         if row is not None:
             # Actualizar auxiliares (email/name) sin tocar la identidad.
-            new_email = email if (email and (row["customer_email"] or None) != email) else row["customer_email"]
-            new_name = name if (name and (row["customer_name"] or None) != name) else row["customer_name"]
+            new_email = (
+                email
+                if (email and (row["customer_email"] or None) != email)
+                else row["customer_email"]
+            )
+            new_name = (
+                name if (name and (row["customer_name"] or None) != name) else row["customer_name"]
+            )
             if new_email != row["customer_email"] or new_name != row["customer_name"]:
                 connection.execute(
                     """UPDATE loyalty_accounts
@@ -1155,6 +1167,8 @@ def list_points_ledger_scoped(business_id, account_id):
         return [dict(r) for r in rows]
     finally:
         connection.close()
+
+
 def insert_earn_scoped(business_id, account_id, appointment_id, points, snapshot):
     """Inserta un movimiento EARN de forma idempotente por appointment y tenant.
 
@@ -1196,7 +1210,7 @@ def insert_adjust_scoped(business_id, account_id, delta, reason, actor_user_id):
     try:
         delta_int = int(delta)
     except (TypeError, ValueError):
-        raise ValueError("cantidad de puntos inválida")
+        raise ValueError("cantidad de puntos inválida") from None
     if delta_int == 0:
         raise ValueError("la cantidad de puntos no puede ser cero")
 
@@ -1274,6 +1288,8 @@ def recalculate_all_balances_scoped(business_id):
         return len(accounts)
     finally:
         connection.close()
+
+
 def list_reminder_candidates_scoped(remind_date):
     """Turnos confirmados para recordar (misma fecha de turno en todas las
     zonas horarias se aproxima por fecha). Independiente de tenant para que el
@@ -1378,6 +1394,7 @@ def update_appointment_status_scoped(appointment_id, status, business_id):
 # business_id/role provenientes del cliente.
 # ============================================================
 
+
 def get_user_by_email_scoped(email):
     """Devuelve un usuario por email (con su id y estado)."""
     if not email:
@@ -1385,8 +1402,7 @@ def get_user_by_email_scoped(email):
     connection = get_connection()
     try:
         return connection.execute(
-            "SELECT id, email, password_hash, active FROM users WHERE email = ?",
-            (email,),
+            "SELECT id, email, password_hash, active FROM users WHERE email = ?", (email,)
         ).fetchone()
     finally:
         connection.close()
@@ -1397,8 +1413,7 @@ def get_user_by_id_scoped(user_id):
     connection = get_connection()
     try:
         return connection.execute(
-            "SELECT id, email, password_hash, active FROM users WHERE id = ?",
-            (user_id,),
+            "SELECT id, email, password_hash, active FROM users WHERE id = ?", (user_id,)
         ).fetchone()
     finally:
         connection.close()
@@ -1409,8 +1424,7 @@ def set_user_password_scoped(user_id, password_hash):
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (password_hash, user_id),
+            "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id)
         )
         connection.commit()
     finally:
@@ -1438,9 +1452,7 @@ def get_role_id_scoped(role_name):
     """Devuelve el id del rol por nombre."""
     connection = get_connection()
     try:
-        row = connection.execute(
-            "SELECT id FROM roles WHERE name = ?", (role_name,)
-        ).fetchone()
+        row = connection.execute("SELECT id FROM roles WHERE name = ?", (role_name,)).fetchone()
         return row["id"] if row else None
     finally:
         connection.close()
@@ -1587,8 +1599,7 @@ def revoke_all_sessions_scoped(user_id):
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0",
-            (user_id,),
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0", (user_id,)
         )
         connection.commit()
     finally:
@@ -1622,6 +1633,7 @@ def is_session_valid_scoped(user_id, token_hash, now_iso):
 # para dejar explícito que NO son tenant-scoped: operan sobre la
 # plataforma completa y solo las invoca el SUPERADMIN.
 # ============================================================
+
 
 def get_platform_user_by_email(email):
     """Devuelve un SUPERADMIN por email (sin exponer el hash puro)."""
@@ -1770,7 +1782,9 @@ def is_platform_session_valid(platform_user_id, token_hash, now_iso):
         connection.close()
 
 
-def log_platform_action(platform_user_id, actor_email, business_id, action, detail="", ip_address=""):
+def log_platform_action(
+    platform_user_id, actor_email, business_id, action, detail="", ip_address=""
+):
     """Registra una acción de plataforma en audit_log (nunca secretos)."""
     connection = get_connection()
     try:
@@ -1860,8 +1874,7 @@ def set_business_active(business_id, active):
     connection = get_connection()
     try:
         cursor = connection.execute(
-            "UPDATE businesses SET active = ? WHERE id = ?",
-            (1 if active else 0, business_id),
+            "UPDATE businesses SET active = ? WHERE id = ?", (1 if active else 0, business_id)
         )
         connection.commit()
         return cursor.rowcount > 0
@@ -1879,8 +1892,7 @@ def set_business_pending(business_id, pending):
     connection = get_connection()
     try:
         cursor = connection.execute(
-            "UPDATE businesses SET pending = ? WHERE id = ?",
-            (1 if pending else 0, business_id),
+            "UPDATE businesses SET pending = ? WHERE id = ?", (1 if pending else 0, business_id)
         )
         connection.commit()
         return cursor.rowcount > 0
@@ -1894,6 +1906,7 @@ def set_business_pending(business_id, pending):
 # El token SIEMPRE se guarda con hash SHA-256; el plaintext solo existe en
 # el email/enlace que se le muestra al SUPERADMIN en la respuesta de alta.
 # ============================================================
+
 
 def create_invitation(business_id, user_id, email, role_name, token_hash, expires_at):
     """Crea una invitación pendiente. Devuelve el id creado."""
@@ -1970,8 +1983,7 @@ def mark_invitation_used(invitation_id):
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE invitations SET used_at = datetime('now') WHERE id = ?",
-            (invitation_id,),
+            "UPDATE invitations SET used_at = datetime('now') WHERE id = ?", (invitation_id,)
         )
         connection.commit()
     finally:
@@ -2062,8 +2074,7 @@ def set_user_active(user_id, active):
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE users SET active = ? WHERE id = ?",
-            (1 if active else 0, user_id),
+            "UPDATE users SET active = ? WHERE id = ?", (1 if active else 0, user_id)
         )
         connection.commit()
     finally:
@@ -2228,7 +2239,7 @@ def consume_staff_invitation_atomically(business_id, token_hash, password_hash):
             (password_hash, row["user_id"]),
         )
         role_id = connection.execute(
-            "SELECT id FROM roles WHERE name = ?", (row["role_name"],),
+            "SELECT id FROM roles WHERE name = ?", (row["role_name"],)
         ).fetchone()
         if role_id is None:
             connection.rollback()
