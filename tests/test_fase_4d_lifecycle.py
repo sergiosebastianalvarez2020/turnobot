@@ -96,6 +96,8 @@ def test_sqlite_unchanged(monkeypatch):
 # 6) proxy delega execute/commit/rollback al psycopg real
 def test_proxy_delegates_methods(monkeypatch):
     fake_conn = mock.MagicMock(name="psycopg_conn")
+    fake_cursor = mock.MagicMock(name="psycopg_cursor")
+    fake_conn.cursor.return_value = fake_cursor
     fake_pool = mock.MagicMock(name="pool")
     fake_pool.getconn.return_value = fake_conn
 
@@ -107,7 +109,7 @@ def test_proxy_delegates_methods(monkeypatch):
             conn.execute("SELECT 1")
             conn.commit()
             conn.rollback()
-            fake_conn.execute.assert_called_once_with("SELECT 1")
+            fake_cursor.execute.assert_called_once_with("SELECT 1")
             fake_conn.commit.assert_called_once()
             fake_conn.rollback.assert_called_once()
 
