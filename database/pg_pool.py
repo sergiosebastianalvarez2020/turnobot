@@ -177,3 +177,60 @@ def close_pg_pool(
             target_pool.close(timeout=timeout)
         except Exception as err:
             logger.warning("Error al cerrar pool PostgreSQL: %s", err)
+
+
+# ============================================================
+# CONNECTION LIFECYCLE PROXY (Fase 4D.1)
+# ============================================================
+# TurnoGo asume el contrato sqlite3.Connection: abrir con get_connection()
+# y finalizar con connection.close(). En psycopg_pool, getconn()/putconn()
+# son asimétricos: connection.close() NO devuelve la conexión al pool (la
+# termina en el backend). Este proxy pequeño traduce close() -> putconn()
+# de forma idempotente, evitando fuga o agotamiento del pool.
+#
+# Sólo administra el LIFECYCLE. NO emulate row_factory ni row["col"]; el acceso
+# por nombre de columna y los placeholders `?` dependen de la migración SQL
+# (FASE 4E), fuera del alcance de 4D.1.
+
+
+class PgConnectionProxy:
+    """Envoltura mínima de psycopg_connection para adapter con el contrato
+    sqlite3.Connection usado por TurnoGo (close -> putconn)."""
+
+    __slots__ = ("_conn", "_pool", "_returned")
+
+    def __init__(self, conn: Any, pool: psycopg_pool.ConnectionPool) -> None:
+        self._conn = conn
+        self._pool = pool
+        self._returned = False
+
+    def close(self) -> None:
+        if self._returned:
+            return
+        self._returned = True
+        try:
+            self._pool.putconn(self._conn)
+        except Exception as err:
+            logger.warning("putconn falló, cerrando conexion: %s", err)
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+
+def get_pg_pool_connection(app: Flask | None = None) -> PgConnectionProxy:
+    """Checkout seguro de una conexión del pool existente.
+
+    Retorna un PgConnectionProxy que devolverá la conexión al pool al cerrar.
+    Requiere que init_pg_pool() haya sido invocado (o app con extension 'pg_pool').
+    """
+    pool = get_pg_pool(app)
+    if pool is None:
+        raise RuntimeError(
+            "El pool PostgreSQL no está inicializado. "
+            "create_app() debe invocar init_pg_pool() antes de get_connection()."
+        )
+    return PgConnectionProxy(pool.getconn(), pool)

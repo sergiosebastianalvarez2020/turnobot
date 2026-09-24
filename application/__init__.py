@@ -42,6 +42,17 @@ def create_app():
     app.ADMIN_PASSWORD = config["ADMIN_PASSWORD"]
     app.TRUSTED_PROXY_COUNT = config["TRUSTED_PROXY_COUNT"]
 
+    # Inicialización del pool PostgreSQL: únicamente cuando DB_BACKEND lo requiere.
+    # SQLite (default) nunca activa pg_pool (Fase 4D: seam de preparación).
+    if config["DB_BACKEND"] == "postgresql":
+        from database.pg_pool import init_pg_pool
+
+        pool = init_pg_pool(app)
+        if pool is None:
+            raise RuntimeError(
+                "DB_BACKEND=postgresql pero no se pudo inicializar el pool de conexiones"
+            )
+
     from database.database import init_database
 
     init_database()

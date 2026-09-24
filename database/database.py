@@ -18,7 +18,42 @@ MIGRATIONS_DIR = BASE_DIR / "migrations"
 logger = logging.getLogger("turnobot.db")
 
 
+def get_backend():
+    """Resuelve el backend de base de datos activo.
+
+    Fuente única de verdad: `database.pg_pool.get_database_backend()`, que deriva
+    del entorno (`DATABASE_URL`) — coherente con `app.config["DB_BACKEND"]` que
+    `build_config` expone. Se importa perezosamente para evitar ciclos.
+    """
+    from database.pg_pool import get_database_backend
+
+    return get_database_backend(os.getenv("DATABASE_URL"))
+
+
 def get_connection():
+    """Devuelve una conexión al backend activo.
+
+    SQLite (default): comportamiento actual intacto — sqlite3 con row_factory,
+    busy_timeout, journal_mode WAL y foreign_keys ON.
+
+    PostgreSQL (preparado, no activo por defecto): delega en el pool existente
+    de `database/pg_pool.get_pg_pool(...).getconn()`. El pool se inicializa en
+    `create_app()` únicamente cuando `DB_BACKEND == "postgresql"`.
+
+    NOTA DE COMPATIBILIDAD: psycopg3 devuelve filas por posición por defecto
+    y no expone `row_factory`. Las queries SQLite usan `?` como placeholder y
+    `row["col"]`. Este seam NO reescribe queries, placeholders ni migraciones.
+    PostgreSQL queda preparado pero no operativo hasta una migración futura de
+    queries — por eso no se activa por defecto en producción.
+    """
+    if get_backend() == "postgresql":
+        from database.pg_pool import get_pg_pool_connection
+
+        # PgConnectionProxy traduce connection.close() -> pool.putconn()
+        # (ciclo de vida: checkout -> uso -> close -> devolución). Idempotente.
+        return get_pg_pool_connection()
+
+    # --- SQLite (default) ---
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DATABASE_PATH, timeout=10, check_same_thread=False)
     connection.execute("PRAGMA busy_timeout = 10000")
