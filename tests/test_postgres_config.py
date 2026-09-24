@@ -20,8 +20,16 @@ from database.pg_pool import (
 
 class TestPostgresConfig(unittest.TestCase):
     def setUp(self):
-        # Asegurar aislamiento de variables de entorno
-        self.env_patcher = mock.patch.dict(os.environ, {}, clear=False)
+        _STRIPPED_ENV_KEYS = (
+            "FLASK_ENV",
+            "DATABASE_URL",
+            "ADMIN_PASSWORD_HASH",
+            "ADMIN_PASSWORD",
+            "COOKIE_SECURE",
+        )
+        safe_env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_KEYS}
+        safe_env["FLASK_ENV"] = "development"
+        self.env_patcher = mock.patch.dict(os.environ, safe_env, clear=True)
         self.env_patcher.start()
 
     def tearDown(self):
