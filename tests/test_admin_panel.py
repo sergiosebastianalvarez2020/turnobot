@@ -543,7 +543,7 @@ class TestAdminAJAX(unittest.TestCase):
     def test_admin_reschedule_returns_json(self):
         """Reprogramación con Accept: application/json devuelve JSON."""
         appointment_id = self._create_turno(time_="09:00")
-        new_date = _next_open_day()
+        new_date = _next_open_weekday_with_afternoon()
         response = self.client.post(
             f"/admin/turnos/{appointment_id}/reprogramar",
             data={"csrf_token": self.csrf_token, "new_date": new_date, "new_time": "15:00"},
