@@ -10,10 +10,18 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+import psycopg
 import psycopg_pool
+from psycopg import errors as _psycopg_errors
+
+try:
+    from psycopg.pq import TransactionStatus as _PgTransactionStatus
+except Exception:  # pragma: no cover - entornos sin psycopg.pq
+    _PgTransactionStatus = None  # type: ignore
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -374,6 +382,119 @@ def _to_pg_row_proxy(row: Any, description: Any) -> PgRowProxy | Any:
     return row
 
 
+# ============================================================
+# COMANDOS DE TRANSACCIÓN Y TRADUCCIÓN DE ERRORES (Fase 4G)
+#
+# SQLite se apoya en `BEGIN IMMEDIATE` para serializar escritores. psycopg3
+# gestiona la transacción por sí mismo y rechaza un `BEGIN` manual cuando ya
+# hay una en curso ("there is already a transaction in progress"). Para
+# preservar la SEMÁNTICA de negocio (no la implementación interna), estos
+# helpers traducen los comandos de transacción que el código de la aplicación
+# emite vía execute() y mapean los errores psycopg3 a las excepciones sqlite3
+# que los puntos de captura existentes ya esperan.
+# ============================================================
+
+
+def _pg_transaction_state(connection):
+    """Devuelve el estado transaccional psycopg3 de una conexión (o None)."""
+    try:
+        return connection.info.transaction_status
+    except Exception:
+        return None
+
+
+def _pg_is_in_transaction(connection):
+    status = _pg_transaction_state(connection)
+    if status is None or _PgTransactionStatus is None:
+        return False
+    return status in (_PgTransactionStatus.INTRANS, _PgTransactionStatus.ACTIVE)
+
+
+def handle_transaction_command(connection, query):
+    """Traduce comandos de transacción SQLite a los métodos de psycopg3.
+
+    Devuelve True si ``query`` era un comando de transacción (BEGIN IMMEDIATE,
+    BEGIN, COMMIT, ROLLBACK) y quedó manejado por la conexión psycopg3:
+
+    - ``BEGIN IMMEDIATE``: abre transacción solo si no hay una en curso. Si una
+      lectura previa ya abrió una implícita (patrón read-then-write), es no-op
+      y evita el error "already in a transaction in progress".
+    - ``ROLLBACK``: ``connection.rollback()`` solo si hay transacción activa.
+    - ``COMMIT``: ``connection.commit()`` solo si hay transacción activa.
+    """
+    command = (query or "").strip().upper()
+    if command not in ("BEGIN IMMEDIATE", "BEGIN", "COMMIT", "ROLLBACK"):
+        return False
+
+    if command == "BEGIN IMMEDIATE":
+        status = _pg_transaction_state(connection)
+        if _PgTransactionStatus is not None and status == _PgTransactionStatus.INERROR:
+            connection.rollback()
+        if not _pg_is_in_transaction(connection):
+            connection.begin()
+        return True
+
+    if command == "COMMIT":
+        if _pg_is_in_transaction(connection):
+            connection.commit()
+        return True
+
+    if command == "ROLLBACK":
+        status = _pg_transaction_state(connection)
+        if _PgTransactionStatus is not None and status in (
+            _PgTransactionStatus.INTRANS,
+            _PgTransactionStatus.ACTIVE,
+            _PgTransactionStatus.INERROR,
+        ):
+            connection.rollback()
+        elif _pg_is_in_transaction(connection):
+            connection.rollback()
+        return True
+
+    return False
+
+
+def translate_pg_error(error):
+    """Mapea errores psycopg3 a las excepciones equivalentes de sqlite3.
+
+    El código de la aplicación captura ``sqlite3.IntegrityError`` /
+    ``sqlite3.OperationalError`` en decenas de puntos (reserva ocupada,
+    idempotencia de puntos, rewards duplicados, tokens ya usados, migraciones).
+    psycopg3 lanza sus propios ``psycopg.errors.*``, incompatibles con ese
+    contrato. Traducirlos aquí hace que esas ramas funcionen sin tocar la capa
+    de negocio ni en SQLite ni en PostgreSQL.
+    """
+    if isinstance(error, sqlite3.Error):
+        return error
+    mapping = (
+        (sqlite3.IntegrityError, _psycopg_errors.IntegrityError),
+        (sqlite3.OperationalError, _psycopg_errors.OperationalError),
+        (sqlite3.ProgrammingError, _psycopg_errors.ProgrammingError),
+        (sqlite3.InternalError, _psycopg_errors.InternalError),
+        (sqlite3.NotSupportedError, _psycopg_errors.NotSupportedError),
+    )
+    for sqlite_cls, psycopg_error_cls in mapping:
+        try:
+            if isinstance(error, psycopg_error_cls):
+                return sqlite_cls(str(error))
+        except TypeError:
+            continue
+    if isinstance(error, psycopg.Error):
+        return sqlite3.DatabaseError(str(error))
+    return error
+
+
+def _call_translated(call):
+    """Ejecuta un callable psycopg y traduce sus errores a sqlite3.*."""
+    try:
+        return call()
+    except Exception as error:  # noqa: BLE001 - traducción deliberada de errores
+        translated = translate_pg_error(error)
+        if translated is error:
+            raise
+        raise translated from error
+
+
 class PgCursorProxy:
     """Cursor proxy para psycopg3 que adapta la ejecución de consultas SQLite a PostgreSQL,
     emula sqlite3.Row mediante PgRowProxy y gestiona lastrowid.
@@ -388,6 +509,10 @@ class PgCursorProxy:
         return self._lastrowid
 
     def execute(self, query: str, params: Any = None) -> PgCursorProxy:
+        if handle_transaction_command(self._cursor.connection, query):
+            self._lastrowid = None
+            return self
+
         adapted_query, adapted_params = adapt_query_for_postgres(query, params)
         if adapted_query is None:
             self._lastrowid = None
@@ -397,10 +522,13 @@ class PgCursorProxy:
         if is_insert and "RETURNING" not in adapted_query.upper():
             adapted_query += " RETURNING id"
 
-        if adapted_params is None:
-            self._cursor.execute(adapted_query)
-        else:
-            self._cursor.execute(adapted_query, adapted_params)
+        _call_translated(
+            lambda: (
+                self._cursor.execute(adapted_query)
+                if adapted_params is None
+                else self._cursor.execute(adapted_query, adapted_params)
+            )
+        )
 
         if is_insert:
             try:
@@ -429,13 +557,13 @@ class PgCursorProxy:
         adapted_query, _ = adapt_query_for_postgres(query, None)
         if adapted_query is None:
             return self
-        self._cursor.executemany(adapted_query, seq_of_params)
+        _call_translated(lambda: self._cursor.executemany(adapted_query, seq_of_params))
         return self
 
     def executescript(self, sql_script: str) -> PgCursorProxy:
         adapted_script, _ = adapt_query_for_postgres(sql_script, None)
         if adapted_script:
-            self._cursor.execute(adapted_script)
+            _call_translated(lambda: self._cursor.execute(adapted_script))
         return self
 
     def __iter__(self):
@@ -465,6 +593,8 @@ class PgConnectionProxy:
         return PgCursorProxy(self._conn.cursor())
 
     def execute(self, query: str, params: Any = None) -> PgCursorProxy:
+        if handle_transaction_command(self._conn, query):
+            return PgCursorProxy(self._conn.cursor())
         cur = self.cursor()
         cur.execute(query, params)
         return cur

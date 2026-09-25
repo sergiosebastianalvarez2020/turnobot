@@ -16,6 +16,7 @@ import sqlite3
 from datetime import date
 
 from database.database import (
+    acquire_business_write_lock,
     get_connection,
     get_loyalty_account_by_id_scoped,
     get_loyalty_settings_scoped,
@@ -26,6 +27,11 @@ from database.database import (
 from services.appointments import normalize_phone
 
 logger = logging.getLogger("turnobot.loyalty")
+
+# Clave de advisory lock por negocio para las mutaciones de puntos (earn/
+# adjust/redeem). Diferente del namespace de reservas (día ordinal) para que un
+# turno y un movimiento de puntos del mismo negocio NO se bloqueen entre sí.
+_PG_LOYALTY_LOCK_KEY = 2_000_000_000
 
 
 def award_points_for_completed(business_id, appointment_id):
@@ -68,6 +74,7 @@ def award_points_for_completed(business_id, appointment_id):
             return {"success": True, "reason": "missing_phone"}
 
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _PG_LOYALTY_LOCK_KEY)
         try:
             account = connection.execute(
                 """SELECT * FROM loyalty_accounts WHERE business_id = ? AND customer_phone = ?""",
@@ -76,14 +83,16 @@ def award_points_for_completed(business_id, appointment_id):
             if account is None:
                 email = (appointment.get("customer_email") or "").strip().lower() or None
                 name = (appointment.get("customer_name") or "").strip() or None
-                cur = connection.execute(
+                connection.execute(
                     """INSERT INTO loyalty_accounts
                        (business_id, customer_phone, customer_email, customer_name, points_balance)
-                       VALUES (?, ?, ?, ?, 0)""",
+                       VALUES (?, ?, ?, ?, 0)
+                       ON CONFLICT (business_id, customer_phone) DO NOTHING""",
                     (business_id, phone, email, name),
                 )
                 account = connection.execute(
-                    "SELECT * FROM loyalty_accounts WHERE id = ?", (cur.lastrowid,)
+                    "SELECT * FROM loyalty_accounts WHERE business_id = ? AND customer_phone = ?",
+                    (business_id, phone),
                 ).fetchone()
             else:
                 email = (appointment.get("customer_email") or "").strip().lower() or None
@@ -211,6 +220,7 @@ def adjust_points(business_id, account_id, delta, reason, actor_user_id):
     connection = get_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _PG_LOYALTY_LOCK_KEY)
         try:
             connection.execute(
                 """INSERT INTO points_ledger
@@ -223,6 +233,9 @@ def adjust_points(business_id, account_id, delta, reason, actor_user_id):
                    WHERE business_id = ? AND account_id = ?""",
                 (business_id, account_id),
             ).fetchone()
+            if total["t"] < 0:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "negative_balance"}
             connection.execute(
                 """UPDATE loyalty_accounts SET points_balance = ?, updated_at = CURRENT_TIMESTAMP
                    WHERE id = ? AND business_id = ?""",
@@ -306,6 +319,7 @@ def redeem(business_id, account_id, reward_id, idempotency_key, actor_user_id=No
     connection = get_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _PG_LOYALTY_LOCK_KEY)
         existing = connection.execute(
             "SELECT * FROM redemptions WHERE business_id=? AND idempotency_key=?",
             (business_id, idempotency_key),
@@ -358,12 +372,34 @@ def redeem(business_id, account_id, reward_id, idempotency_key, actor_user_id=No
                 redemption_id,
             ),
         )
-        connection.execute(
+        cursor = connection.execute(
             "UPDATE loyalty_accounts SET points_balance=points_balance-?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND business_id=? AND points_balance>=?",
             (reward["points_cost"], account_id, business_id, reward["points_cost"]),
         )
+        if cursor.rowcount != 1:
+            # El saldo columnar quedó por debajo del costo aunque el SUM del
+            # ledger lo permitía (carrera entre canjes): el UPDATE condicional
+            # es la barrera atómica. Rollback para no dejar un movement 'redeem'
+            # en el ledger sin su reflejo en el saldo.
+            connection.execute("ROLLBACK")
+            return {"success": False, "reason": "insufficient_points"}
         connection.commit()
         return {"success": True, "reason": "redeemed", "redemption_id": redemption_id}
+    except sqlite3.IntegrityError:
+        # Idempotency UNIQUE (business_id, idempotency_key): otro request canjeó
+        # la misma key entre el SELECT y el INSERT. Releemos el ganador.
+        connection.rollback()
+        existing = connection.execute(
+            "SELECT * FROM redemptions WHERE business_id=? AND idempotency_key=?",
+            (business_id, idempotency_key),
+        ).fetchone()
+        if existing:
+            return {
+                "success": existing["status"] == "redeemed",
+                "reason": "already_processed",
+                "redemption": dict(existing),
+            }
+        return {"success": False, "reason": "error"}
     except Exception:
         connection.rollback()
         return {"success": False, "reason": "error"}

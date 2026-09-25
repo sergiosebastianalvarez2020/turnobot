@@ -9,6 +9,7 @@ Proporciona helpers para:
 
 import hashlib
 import re
+import sqlite3
 import uuid
 
 from database.database import get_connection
@@ -80,14 +81,31 @@ def get_or_create_conversation_session_scoped(
             return _row_to_dict(row)
 
         # Crear nueva sesión
-        cursor = connection.execute(
-            """
-            INSERT INTO conversation_sessions
-                (business_id, customer_phone, customer_name, customer_email, status, needs_human)
-            VALUES (?, ?, ?, ?, 'active', 0)
-            """,
-            (business_id, phone, customer_name, customer_email),
-        )
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO conversation_sessions
+                    (business_id, customer_phone, customer_name, customer_email, status, needs_human)
+                VALUES (?, ?, ?, ?, 'active', 0)
+                """,
+                (business_id, phone, customer_name, customer_email),
+            )
+        except sqlite3.IntegrityError:
+            # Carrera del UNIQUE (business_id, customer_phone): otra petición
+            # creó la sesión entre el SELECT y el INSERT. Se relee la ganadora.
+            connection.rollback()
+            row = connection.execute(
+                """
+                SELECT id, business_id, customer_phone, customer_name, customer_email,
+                       status, needs_human, human_requested_at, resolved_at, created_at, updated_at
+                FROM conversation_sessions
+                WHERE business_id = ? AND customer_phone = ?
+                """,
+                (business_id, phone),
+            ).fetchone()
+            if row is not None:
+                return _row_to_dict(row)
+            raise
         connection.commit()
         session_id = cursor.lastrowid
         return get_conversation_session_by_id_scoped(session_id, business_id)

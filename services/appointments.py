@@ -11,6 +11,7 @@ else:  # pragma: no cover
     _EMAIL_RE = None
 
 from database.database import (
+    acquire_business_write_lock,
     get_active_services_scoped,
     get_business_settings_scoped,
     get_connection,
@@ -49,6 +50,18 @@ def _to_minutes(hm):
     """Convierte 'HH:MM' a minutos desde medianoche."""
     hour, minute = hm.split(":")
     return int(hour) * 60 + int(minute)
+
+
+def _appointment_day_ordinal(appointment_date):
+    """Días desde la epoch gregoriana para un 'YYYY-MM-DD' (clave de lock por día).
+
+    Solo se usa como clave determinística del advisory lock por negocio+fecha;
+    sobre SQLite no tiene efecto.
+    """
+    try:
+        return datetime.strptime(appointment_date, "%Y-%m-%d").date().toordinal()
+    except (ValueError, TypeError):
+        return 0
 
 
 def _to_hhmm(minutes):
@@ -521,6 +534,9 @@ def create_appointment(
 
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(
+            connection, business_id, _appointment_day_ordinal(appointment_date)
+        )
 
         try:
             # ------------------------------------------------
@@ -1000,6 +1016,7 @@ def reschedule_appointment(
     try:
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _appointment_day_ordinal(new_date))
 
         try:
             # ------------------------------------------------
@@ -1172,6 +1189,7 @@ def reschedule_appointment_admin(
 
     try:
         connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _appointment_day_ordinal(new_date))
 
         try:
             appointment = connection.execute(

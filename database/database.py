@@ -64,6 +64,29 @@ def get_connection():
     return connection
 
 
+def acquire_business_write_lock(connection, business_id, lock_key=0):
+    """Serializa escrituras por negocio+clave cuando el backend es PostgreSQL.
+
+    SQLite ya serializa escritores con ``BEGIN IMMEDIATE`` + WAL. PostgreSQL,
+    bajo READ COMMITTED, permite que dos transacciones pasen conjuntamente un
+    check-then-act (solapamiento de turnos, saldo de puntos, idempotencia).
+    Este hook toma un advisory xact lock de PostgreSQL por ``(business_id,
+    lock_key)`` sobre la MISMA conexión: las transacciones del mismo negocio y
+    clave se ejecutan en serie SIN bloquear a otros tenants (classid distinto).
+    En SQLite es un no-op.
+    """
+    if get_backend() != "postgresql":
+        return
+    try:
+        business_id = int(business_id)
+        lock_key = int(lock_key)
+    except (TypeError, ValueError):
+        raise ValueError("business_id y lock_key deben ser enteros") from None
+    if business_id <= 0:
+        raise ValueError("business_id inválido para lock de escritura por negocio")
+    connection.execute("SELECT pg_advisory_xact_lock(?, ?)", (business_id, lock_key))
+
+
 # ============================================================
 # SISTEMA DE MIGRACIONES
 # ============================================================
