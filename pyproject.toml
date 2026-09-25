@@ -4,6 +4,10 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-ra -q --cov=. --cov-report=term-missing --ignore=test_results.txt"
+markers = [
+    "pg_live: suite de integración contra PostgreSQL real (Fase 4H)",
+    "pg_typed: escenarios F.5 (E1-E4, E6) que ejercitan la brecha de parámetros tipados (informativo)",
+]
 
 [tool.coverage.run]
 source = ["."]

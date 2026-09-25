@@ -6,12 +6,30 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  POSTGRES_PASSWORD: 4h_ephemeral_pg_password
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.12"]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +49,25 @@ jobs:
       - name: Type check (mypy, incremental)
         run: python -m mypy
       - name: Run tests with coverage
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: python -m pytest
+      - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          set -euo pipefail
+          output="$(python -m pytest tests_pg -q -p no:cacheprovider --no-cov --tb=short 2>&1 || true)"
+          printf '%s\n' "$output"
+          if grep -q "skipped" <<< "$output"; then
+            echo "FALLO: tests_pg quedaron con SKIP en CI"
+            exit 1
+          fi
+          if grep -q "deselected" <<< "$output"; then
+            echo "FALLO: tests_pg quedaron con DESELECTED en CI"
+            exit 1
+          fi
+          if ! grep -qE "[0-9]+ passed" <<< "$output"; then
+            echo "FALLO: tests_pg no registró tests passed"
+            exit 1
+          fi
