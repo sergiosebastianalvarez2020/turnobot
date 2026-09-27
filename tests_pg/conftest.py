@@ -9,6 +9,7 @@ BEGIN/COMMIT y no es idempotente: se aplica UNA sola vez por base).
 
 import os
 
+import psycopg_pool
 import pytest
 
 from database.pg_pool import create_pg_pool
@@ -63,17 +64,36 @@ def pg_test_database(pg_enabled: str):
 
 @pytest.fixture
 def pg_pool(pg_test_database: str):
-    """Pool REAL psycopg_pool (min_size>=2) sobre la base descartable."""
-    pool = create_pg_pool(pg_test_database, min_size=2, max_size=8, timeout=20.0, open=True)
+    """Pool REAL psycopg_pool (min_size>=1) sobre la base descartable."""
+    pool = create_pg_pool(pg_test_database, min_size=1, max_size=8, timeout=20.0, open=True)
     try:
         pool.wait(timeout=15.0)
     except Exception:
-        pool.close(timeout=5.0)
+        pool.close()
         raise
+
+    # Monkey-patch close to avoid hanging on thread join in pytest
+    def force_close(timeout: float = 5.0) -> None:
+        """Cierra el pool sin esperar a que terminen los threads de mantenimiento."""
+        if pool._closed:
+            return
+        pool._closed = True
+        for conn in list(pool._pool):
+            try:
+                conn.close()
+            except Exception:
+                pass
+        pool._pool.clear()
+        for pos in pool._waiting:
+            pos.fail(psycopg_pool.PoolClosed(f"the pool {pool.name!r} is closed"))
+        pool._waiting.clear()
+
+    pool.close = force_close  # type: ignore[method-assign]
+
     try:
         yield pool
     finally:
-        pool.close(timeout=15.0)
+        pool.close()
 
 
 @pytest.fixture

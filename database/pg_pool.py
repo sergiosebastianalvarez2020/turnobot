@@ -317,13 +317,63 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
         )
         sql = re.sub(r"datetime\(\s*'now'\s*\)", "CURRENT_TIMESTAMP", sql, flags=re.IGNORECASE)
 
-    # 6. Reemplazar placeholders '?' por '%s' fuera de comillas
+    # 6. Transformar comparaciones booleanas SQLite (col = 1/0) a PostgreSQL (col / NOT col)
+    # Se hace después del reemplazo de placeholders para no interferir con ? en otros contextos
+    sql = _adapt_boolean_comparisons(sql)
+
+    # 7. Reemplazar placeholders '?' por '%s' fuera de comillas
     sql = replace_placeholders(sql)
 
-    # 7. Escapar '%' literales para el parser de psycopg3
+    # 8. Escapar '%' literales para el parser de psycopg3
     sql = escape_literal_percent(sql)
 
     return sql, params
+
+
+def _adapt_boolean_comparisons(sql: str) -> str:
+    """Convierte comparaciones booleanas estilo SQLite (col = 1 / col = 0) a PostgreSQL nativo.
+
+    En SQLite: WHERE active = 1, WHERE active = 0, WHERE is_open = 1, etc.
+    En PostgreSQL: WHERE active, WHERE NOT active, WHERE is_open, WHERE NOT is_open
+
+    Esta transformación es segura porque:
+    - Solo afecta comparaciones con literales 1 o 0
+    - No afecta placeholders (? o %s) ni columnas numéricas reales
+    - Las columnas BOOLEAN en PostgreSQL aceptan IS TRUE / IS FALSE / NOT col
+    """
+    import re
+
+    # Lista de columnas conocidas como BOOLEAN en el esquema PostgreSQL
+    boolean_columns = {
+        "active",
+        "pending",
+        "is_open",
+        "needs_human",
+        "revoked",
+        "enabled",
+        "notifications_enabled",
+    }
+
+    # Patrón: columna = 1  o  columna = 0  (fuera de comillas)
+    # Usamos word boundaries para evitar coincidencias parciales
+    for col in boolean_columns:
+        # col = 1  ->  col
+        pattern_eq_1 = re.compile(rf"\b{re.escape(col)}\s*=\s*1\b", re.IGNORECASE)
+        sql = pattern_eq_1.sub(col, sql)
+
+        # col = 0  ->  NOT col
+        pattern_eq_0 = re.compile(rf"\b{re.escape(col)}\s*=\s*0\b", re.IGNORECASE)
+        sql = pattern_eq_0.sub(f"NOT {col}", sql)
+
+        # col != 1  ->  NOT col  (poco común pero por completitud)
+        pattern_ne_1 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*1\b", re.IGNORECASE)
+        sql = pattern_ne_1.sub(f"NOT {col}", sql)
+
+        # col != 0  ->  col
+        pattern_ne_0 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*0\b", re.IGNORECASE)
+        sql = pattern_ne_0.sub(col, sql)
+
+    return sql
 
 
 class PgRowProxy(dict):
@@ -410,6 +460,21 @@ def _pg_is_in_transaction(connection):
     return status in (_PgTransactionStatus.INTRANS, _PgTransactionStatus.ACTIVE)
 
 
+def _start_pg_transaction(connection) -> None:
+    """Abre la transacción implícita de psycopg3 si no hay una en curso.
+
+    psycopg3 (a diferencia de psycopg2) NO expone ``Connection.begin()``: con
+    autocommit desactivado la transacción se abre IMPLÍCITAMENTE en la primera
+    ejecución contra el servidor. Para conservar la semántica del seam
+    (``BEGIN IMMEDIATE`` debe dejar una transacción activa) se dispara esa
+    transacción implícita mediante una sentencia benigna de solo lectura.
+    En autocommit no hay transacción que abrir y no se ejecuta nada.
+    """
+    if getattr(connection, "autocommit", False):
+        return
+    connection.execute("SELECT 1")
+
+
 def handle_transaction_command(connection, query):
     """Traduce comandos de transacción SQLite a los métodos de psycopg3.
 
@@ -431,7 +496,7 @@ def handle_transaction_command(connection, query):
         if _PgTransactionStatus is not None and status == _PgTransactionStatus.INERROR:
             connection.rollback()
         if not _pg_is_in_transaction(connection):
-            connection.begin()
+            _start_pg_transaction(connection)
         return True
 
     if command == "COMMIT":

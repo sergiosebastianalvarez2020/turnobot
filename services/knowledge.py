@@ -36,7 +36,7 @@ def get_knowledge_scoped(business_id, active_only=True):
         """
         params = [business_id]
         if active_only:
-            query += " AND active = 1"
+            query += " AND active"
         query += " ORDER BY type, question"
         rows = connection.execute(query, params).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -58,7 +58,7 @@ def search_knowledge_scoped(business_id, query, limit=5):
                    bk.created_by_user_id
             FROM business_knowledge_fts
             JOIN business_knowledge bk ON bk.id = business_knowledge_fts.rowid
-            WHERE business_knowledge_fts MATCH ? AND bk.business_id = ? AND bk.active = 1
+            WHERE business_knowledge_fts MATCH ? AND bk.business_id = ? AND bk.active
             ORDER BY rank
             LIMIT ?
             """,
@@ -78,7 +78,7 @@ def create_knowledge_scoped(business_id, type_, question, answer, tags, user_id)
             """
             INSERT INTO business_knowledge
                 (business_id, type, question, answer, tags, active, created_by_user_id)
-            VALUES (?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, ?, ?, TRUE, ?)
             """,
             (business_id, type_, question, answer, tags, user_id),
         )
@@ -101,7 +101,7 @@ def update_knowledge_scoped(knowledge_id, business_id, type_, question, answer, 
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND business_id = ?
                 """,
-                (type_, question, answer, tags, 1 if active else 0, knowledge_id, business_id),
+                (type_, question, answer, tags, active, knowledge_id, business_id),
             )
         else:
             cursor = connection.execute(

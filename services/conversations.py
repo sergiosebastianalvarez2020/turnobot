@@ -144,7 +144,7 @@ def list_conversation_sessions_scoped(business_id, status=None, limit=50, offset
                     WHERE cm.session_id = cs.id
                     ORDER BY cm.created_at DESC LIMIT 1) as last_message,
                    (SELECT COUNT(*) FROM conversation_messages cm
-                    WHERE cm.session_id = cs.id AND cm.needs_human = 1) as unread_human_count
+                    WHERE cm.session_id = cs.id AND cm.needs_human) as unread_human_count
             FROM conversation_sessions cs
             WHERE cs.business_id = ?
         """
@@ -192,7 +192,7 @@ def add_conversation_message_scoped(session_id, business_id, role, content, need
             INSERT INTO conversation_messages (session_id, role, content, needs_human)
             VALUES (?, ?, ?, ?)
             """,
-            (session_id, role, content, 1 if needs_human else 0),
+            (session_id, role, content, needs_human),
         )
         # Actualizar timestamp de la sesión
         connection.execute(
@@ -238,7 +238,7 @@ def request_human_handoff_scoped(session_id, business_id):
         cursor = connection.execute(
             """
             UPDATE conversation_sessions
-            SET status = 'needs_human', needs_human = 1,
+            SET status = 'needs_human', needs_human = TRUE,
                 human_requested_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND business_id = ? AND status != 'human_resolved'
@@ -258,7 +258,7 @@ def resolve_human_handoff_scoped(session_id, business_id, admin_user_id=None):
         cursor = connection.execute(
             """
             UPDATE conversation_sessions
-            SET status = 'human_resolved', needs_human = 0,
+            SET status = 'human_resolved', needs_human = FALSE,
                 resolved_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND business_id = ?
@@ -375,7 +375,7 @@ def get_conversation_stats_scoped(business_id):
             (business_id,),
         ).fetchone()[0]
         needs_human = connection.execute(
-            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND needs_human = 1",
+            "SELECT COUNT(*) FROM conversation_sessions WHERE business_id = ? AND needs_human",
             (business_id,),
         ).fetchone()[0]
         resolved = connection.execute(

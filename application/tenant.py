@@ -52,7 +52,7 @@ def resolve_business(slug=None):
             ).fetchone()
         else:
             row = connection.execute(
-                "SELECT id, name, slug FROM businesses WHERE slug = ? AND active = 1", (slug,)
+                "SELECT id, name, slug FROM businesses WHERE slug = ? AND active", (slug,)
             ).fetchone()
         return dict(row) if row else None
     finally:

@@ -105,14 +105,15 @@ def seed_business_settings(url: str, business_id: int) -> None:
 def seed_full_week(url: str, business_id: int, start: str = "09:00", end: str = "18:00") -> None:
     start_time = _as_time(start)
     end_time = _as_time(end)
-    week = [(day, start_time, end_time, business_id) for day in range(7)]
+    week = [(day, start_time, end_time, start_time, end_time, business_id) for day in range(7)]
     with connect_autocommit(url) as conn:
-        conn.executemany(
-            "INSERT INTO weekly_schedules "
-            "(day_of_week, is_open, morning_start, morning_end, afternoon_start, "
-            " afternoon_end, business_id) VALUES (%s, TRUE, %s, %s, %s, %s, %s)",
-            week,
-        )
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO weekly_schedules "
+                "(day_of_week, is_open, morning_start, morning_end, afternoon_start, "
+                " afternoon_end, business_id) VALUES (%s, TRUE, %s, %s, %s, %s, %s)",
+                week,
+            )
 
 
 def seed_service(url: str, business_id: int, name: str = "Corte", duration: int = 30) -> int:

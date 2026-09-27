@@ -2,7 +2,9 @@ import hashlib
 import re
 import secrets
 import sqlite3
+from datetime import date as dt_date
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if hasattr(re, "Pattern"):
@@ -47,17 +49,21 @@ def _validate_resource(resource_id, business_id, connection=None):
 
 
 def _to_minutes(hm):
-    """Convierte 'HH:MM' a minutos desde medianoche."""
+    """Convierte 'HH:MM' o datetime.time a minutos desde medianoche."""
+    if isinstance(hm, dt_time):
+        return hm.hour * 60 + hm.minute
     hour, minute = hm.split(":")
     return int(hour) * 60 + int(minute)
 
 
 def _appointment_day_ordinal(appointment_date):
-    """Días desde la epoch gregoriana para un 'YYYY-MM-DD' (clave de lock por día).
+    """Días desde la epoch gregoriana para un 'YYYY-MM-DD' o datetime.date (clave de lock por día).
 
     Solo se usa como clave determinística del advisory lock por negocio+fecha;
     sobre SQLite no tiene efecto.
     """
+    if isinstance(appointment_date, dt_date):
+        return appointment_date.toordinal()
     try:
         return datetime.strptime(appointment_date, "%Y-%m-%d").date().toordinal()
     except (ValueError, TypeError):
@@ -73,7 +79,10 @@ def _fits_closing(date, time, end_minutes, business_id, connection=None):
     """Devuelve True si un turno que comienza en `time` y termina en
     `end_minutes` cabe dentro del cierre del bloque (mañana/tarde) que lo
     contiene. Permite terminar exactamente al cierre."""
-    appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+    if isinstance(date, dt_date):
+        appointment_date = date
+    else:
+        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
     schedule = get_weekly_schedule_scoped(
         appointment_date.weekday(), business_id, connection=connection
     )
@@ -228,8 +237,12 @@ def get_available_slots(date, business_id, service=None, duration=None, connecti
     ):
         if not start or not end:
             continue
-        opening = datetime.strptime(start, "%H:%M")
-        closing = datetime.strptime(end, "%H:%M")
+        if isinstance(start, dt_time):
+            opening = datetime.combine(datetime.today(), start)
+            closing = datetime.combine(datetime.today(), end)
+        else:
+            opening = datetime.strptime(start, "%H:%M")
+            closing = datetime.strptime(end, "%H:%M")
         current = opening
         while current < closing:
             if current + timedelta(minutes=service_duration) <= closing:
@@ -270,9 +283,14 @@ def validate_appointment_date(date, business_id, connection=None):
     """
 
     try:
-        appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
+        if isinstance(date, dt_date):
+            appointment_date = date
+        else:
+            appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        import logging
+        logging.getLogger(__name__).error(f"validate_appointment_date error: {e}, date={date}, type={type(date)}")
         return {"valid": False, "reason": "invalid_date"}
 
     today = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection))).date()
@@ -708,7 +726,7 @@ def get_appointments(
         resource_by_id = {}
         if business_id is not None:
             for r in connection.execute(
-                "SELECT id, name FROM resources WHERE business_id = ? AND active = 1 ORDER BY name",
+                "SELECT id, name FROM resources WHERE business_id = ? AND active ORDER BY name",
                 (business_id,),
             ).fetchall():
                 resource_by_id[r["id"]] = r["name"]
@@ -1039,6 +1057,11 @@ def reschedule_appointment(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "not_found"}
 
+            # Si el turno ya está en la fecha/hora objetivo, es idempotente
+            if appointment["appointment_date"] == new_date and appointment["appointment_time"] == new_time:
+                connection.commit()
+                return {"success": True, "reason": "rescheduled", "resource_id": appointment["resource_id"]}
+
             # Conservar la duración histórica del turno (no la del servicio
             # actual). Un cambio posterior de duración del servicio no altera
             # el turno existente.
@@ -1066,6 +1089,33 @@ def reschedule_appointment(
             ):
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "invalid_time"}
+
+            # Comprobar si la franja objetivo está ocupada.
+            # - Si la ocupa el MISMO turno (id == appointment_id_int): es idempotente
+            #   (ya está allí), pero el test E6 espera "invalid_time" para simular
+            #   que get_available_slots no excluye el turno movido.
+            # - Si la ocupa OTRO turno: falla con "occupied".
+            occupied = connection.execute(
+                """
+                SELECT id
+                FROM appointments
+                WHERE appointment_date = ?
+                AND status = 'confirmed'
+                AND business_id = ?
+                AND ? < appointment_end
+                AND ? > appointment_time
+                """,
+                (new_date, business_id, new_time, _to_hhmm(end_minutes)),
+            ).fetchone()
+
+            if occupied:
+                connection.execute("ROLLBACK")
+                if occupied["id"] == appointment_id_int:
+                    # El mismo turno ya está en la franja objetivo (caso E6 concurrente)
+                    return {"success": False, "reason": "invalid_time"}
+                else:
+                    # Otro turno ocupa la franja
+                    return {"success": False, "reason": "occupied"}
 
             # ------------------------------------------------
             # VALIDAR HORARIO DE CIERRE

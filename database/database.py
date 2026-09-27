@@ -272,16 +272,16 @@ def create_business_with_owner(name, email, password=None, slug=None):
         business_cursor = connection.execute(
             """INSERT INTO businesses (name, slug, active, pending, created_at)
                VALUES (?, ?, ?, ?, datetime('now'))""",
-            (name, final_slug, 1 if not pending else 0, 1 if pending else 0),
+            (name, final_slug, not pending, pending),
         )
         business_id = business_cursor.lastrowid
         if pending:
             # Hash provisorio inutilizable: el owner aún no eligió contraseña.
             password_hash = generate_password_hash(secrets.token_urlsafe(32))
-            active = 0
+            active = False
         else:
             password_hash = generate_password_hash(password)
-            active = 1
+            active = True
         user_cursor = connection.execute(
             "INSERT INTO users (email, password_hash, active) VALUES (?, ?, ?)",
             (email, password_hash, active),
@@ -302,7 +302,7 @@ def create_business_with_owner(name, email, password=None, slug=None):
         connection.execute(
             """INSERT INTO loyalty_settings
                (business_id, enabled, points_per_completed_appointment)
-               VALUES (?, 0, 1)""",
+               VALUES (?, FALSE, 1)""",
             (business_id,),
         )
         for day in range(6):
@@ -310,11 +310,11 @@ def create_business_with_owner(name, email, password=None, slug=None):
                 """INSERT INTO weekly_schedules
                    (day_of_week, is_open, morning_start, morning_end,
                     afternoon_start, afternoon_end, business_id)
-                   VALUES (?, 1, '09:00', '13:00', '15:00', '20:00', ?)""",
+                   VALUES (?, TRUE, '09:00', '13:00', '15:00', '20:00', ?)""",
                 (day, business_id),
             )
         connection.execute(
-            "INSERT INTO weekly_schedules (day_of_week, is_open, business_id) VALUES (6, 0, ?)",
+            "INSERT INTO weekly_schedules (day_of_week, is_open, business_id) VALUES (6, FALSE, ?)",
             (business_id,),
         )
         connection.commit()
@@ -371,7 +371,7 @@ def get_active_services(business_id=None, connection=None):
             """
             SELECT name, price, duration
             FROM services
-            WHERE active = 1 AND business_id = ?
+            WHERE active AND business_id = ?
             ORDER BY id
             """,
             (business_id,),
@@ -396,7 +396,7 @@ def create_service(name, price, duration, active=True):
     try:
         cursor = connection.execute(
             "INSERT INTO services (name, price, duration, active) VALUES (?, ?, ?, ?)",
-            (name, price, duration, 1 if active else 0),
+            (name, price, duration, active),
         )
         connection.commit()
         return cursor.lastrowid
@@ -413,7 +413,7 @@ def update_service(service_id, name, price, duration, active):
             SET name = ?, price = ?, duration = ?, active = ?
             WHERE id = ?
             """,
-            (name, price, duration, 1 if active else 0, service_id),
+            (name, price, duration, active, service_id),
         )
         connection.commit()
         return cursor.rowcount == 1
@@ -601,7 +601,7 @@ def get_resources_scoped(business_id, only_active=False):
     try:
         query = "SELECT id, name, active FROM resources WHERE business_id = ?"
         if only_active:
-            query += " AND active = 1"
+            query += " AND active"
         query += " ORDER BY id"
         return connection.execute(query, (business_id,)).fetchall()
     finally:
@@ -642,7 +642,7 @@ def create_resource_scoped(business_id, name, active=True):
             INSERT INTO resources (business_id, name, active)
             VALUES (?, ?, ?)
             """,
-            (business_id, name, 1 if active else 0),
+            (business_id, name, active),
         )
         connection.commit()
         return cursor.lastrowid
@@ -664,7 +664,7 @@ def set_resource_active_scoped(resource_id, business_id, active):
             SET active = ?
             WHERE id = ? AND business_id = ?
             """,
-            (1 if active else 0, resource_id, business_id),
+            (active, resource_id, business_id),
         )
         connection.commit()
         return cursor.rowcount == 1
@@ -809,7 +809,7 @@ def update_weekly_schedule_scoped(
             WHERE business_id = ? AND day_of_week = ?
             """,
             (
-                1 if is_open else 0,
+                is_open,
                 morning_start,
                 morning_end,
                 afternoon_start,
@@ -829,7 +829,7 @@ def set_notifications_enabled_scoped(business_id, enabled):
     try:
         connection.execute(
             "UPDATE business_settings SET notifications_enabled = ? WHERE business_id = ?",
-            (1 if enabled else 0, business_id),
+            (enabled, business_id),
         )
         connection.commit()
     finally:
@@ -2078,7 +2078,7 @@ def consume_invitation_atomically(business_id, token_hash, password_hash):
             connection.rollback()
             return None
         cursor = connection.execute(
-            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            "UPDATE users SET password_hash = ?, active = TRUE WHERE id = ?",
             (password_hash, row["user_id"]),
         )
         if cursor.rowcount != 1:
@@ -2234,7 +2234,7 @@ def consume_password_reset_token(token_hash, password_hash):
             connection.rollback()
             return None
         cursor = connection.execute(
-            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            "UPDATE users SET password_hash = ?, active = TRUE WHERE id = ?",
             (password_hash, row["user_id"]),
         )
         if cursor.rowcount != 1:
@@ -2293,7 +2293,7 @@ def consume_staff_invitation_atomically(business_id, token_hash, password_hash):
             connection.rollback()
             return None
         connection.execute(
-            "UPDATE users SET password_hash = ?, active = 1 WHERE id = ?",
+            "UPDATE users SET password_hash = ?, active = TRUE WHERE id = ?",
             (password_hash, row["user_id"]),
         )
         role_id = connection.execute(

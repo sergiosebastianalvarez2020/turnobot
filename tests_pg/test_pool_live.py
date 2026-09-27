@@ -33,17 +33,19 @@ def _drop_scratch(proxy) -> None:
 
 def test_pool_real_tiene_al_menos_dos_conexiones(pg_pool):
     stats = pg_pool.get_stats()
-    pool_size = stats.get("pool_size") or len(getattr(pg_pool, "pool", []))
-    assert pool_size >= 2
-    pids = set()
-    for _ in range(2):
-        proxy = make_pg_proxy(pg_pool)
-        try:
-            row = proxy.execute("SELECT pg_backend_pid() AS pid").fetchone()
-            pids.add(row[0])
-        finally:
-            proxy.close()
-    assert len(pids) == 2
+    connections_num = stats.get("connections_num", 0)
+    assert connections_num >= 1  # Al menos 1 conexión creada
+    # Crear dos proxies SIN cerrar el primero para verificar que el pool
+    # puede crear una segunda conexión bajo demanda (con min_size=1)
+    proxy_a = make_pg_proxy(pg_pool)
+    proxy_b = make_pg_proxy(pg_pool)
+    try:
+        pid_a = proxy_a.execute("SELECT pg_backend_pid() AS pid").fetchone()[0]
+        pid_b = proxy_b.execute("SELECT pg_backend_pid() AS pid").fetchone()[0]
+        assert pid_a != pid_b
+    finally:
+        proxy_b.close()
+        proxy_a.close()
 
 
 def test_begin_real_abre_transaccion_y_commit_cierra(pg_pool):
@@ -74,12 +76,9 @@ def test_commit_hace_visible_la_escritura(pg_pool):
         after = proxy_b.execute(f"SELECT COUNT(*) FROM {SCRATCH_TABLE}").fetchone()[0]
         assert after == 1
     finally:
-        try:
-            _drop_scratch(proxy_a)
-        except Exception:
-            proxy_a.rollback()
         proxy_b.close()
         proxy_a.close()
+        _drop_scratch(proxy_a)
 
 
 def test_rollback_revierte_la_escritura_pendiente(pg_pool):
@@ -93,12 +92,9 @@ def test_rollback_revierte_la_escritura_pendiente(pg_pool):
         after = proxy_b.execute(f"SELECT COUNT(*) FROM {SCRATCH_TABLE}").fetchone()[0]
         assert after == 0
     finally:
-        try:
-            _drop_scratch(proxy_a)
-        except Exception:
-            proxy_a.rollback()
         proxy_b.close()
         proxy_a.close()
+        _drop_scratch(proxy_a)
 
 
 def test_escrituras_sin_commit_no_se_ven_entre_conexiones(pg_pool):
@@ -119,12 +115,9 @@ def test_escrituras_sin_commit_no_se_ven_entre_conexiones(pg_pool):
         final = proxy_b.execute(f"SELECT COUNT(*) FROM {SCRATCH_TABLE}").fetchone()[0]
         assert final == 0
     finally:
-        try:
-            _drop_scratch(proxy_a)
-        except Exception:
-            proxy_a.rollback()
         proxy_b.close()
         proxy_a.close()
+        _drop_scratch(proxy_a)
 
 
 def test_dos_conexiones_son_pids_distintos(pg_pool):

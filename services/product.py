@@ -90,7 +90,7 @@ def get_onboarding_steps(business_id: int, settings: Any, services: Any) -> list
     connection = get_connection()
     try:
         row = connection.execute(
-            "SELECT COUNT(*) AS n FROM weekly_schedules WHERE business_id = ? AND is_open = 1",
+            "SELECT COUNT(*) AS n FROM weekly_schedules WHERE business_id = ? AND is_open",
             (business_id,),
         ).fetchone()
         open_count = row["n"] if row else 0

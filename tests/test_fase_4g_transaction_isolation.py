@@ -67,20 +67,39 @@ class _FakePgInfo:
 
 
 class _FakePgConnection:
+    """Fake con la API real de psycopg3 (Connection NO tiene begin()).
+
+    Replica el comienzo de transacción IMPLÍCITO: ejecutar una sentencia sobre
+    una conexión idle con autocommit apagado abre la transacción (SELECT 1 es
+    la sentencia benigna que usa ``_start_pg_transaction``). commit()/rollback()
+    devuelven la conexión a IDLE, igual que psycopg3.
+    """
+
     def __init__(self, transaction_status):
         self.info = _FakePgInfo(transaction_status)
+        self.autocommit = False
         self.begun = 0
         self.committed = 0
         self.rolled_back = 0
 
-    def begin(self):
-        self.begun += 1
+    def execute(self, sql, params=None):
+        sql_upper = (sql or "").strip().upper()
+        if (
+            sql_upper == "SELECT 1"
+            and not self.autocommit
+            and self.info.transaction_status == TransactionStatus.IDLE
+        ):
+            self.begun += 1
+            self.info.transaction_status = TransactionStatus.INTRANS
+        return mock.MagicMock()
 
     def commit(self):
         self.committed += 1
+        self.info.transaction_status = TransactionStatus.IDLE
 
     def rollback(self):
         self.rolled_back += 1
+        self.info.transaction_status = TransactionStatus.IDLE
 
 
 class TestTransactionCommandHandling(unittest.TestCase):

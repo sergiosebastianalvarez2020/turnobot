@@ -280,7 +280,7 @@ def save_reward(business_id, reward_id, name, description, points_cost, active=T
                     name,
                     (description or "").strip() or None,
                     points_cost,
-                    int(bool(active)),
+                    active,
                     reward_id,
                     business_id,
                 ),
@@ -293,7 +293,7 @@ def save_reward(business_id, reward_id, name, description, points_cost, active=T
                     name,
                     (description or "").strip() or None,
                     points_cost,
-                    int(bool(active)),
+                    active,
                 ),
             )
         connection.commit()
@@ -335,7 +335,7 @@ def redeem(business_id, account_id, reward_id, idempotency_key, actor_user_id=No
             "SELECT * FROM loyalty_accounts WHERE id=? AND business_id=?", (account_id, business_id)
         ).fetchone()
         reward = connection.execute(
-            "SELECT * FROM rewards WHERE id=? AND business_id=? AND active=1",
+            "SELECT * FROM rewards WHERE id=? AND business_id=? AND active",
             (reward_id, business_id),
         ).fetchone()
         if not account or not reward:
