@@ -288,13 +288,7 @@ def save_reward(business_id, reward_id, name, description, points_cost, active=T
         else:
             cur = connection.execute(
                 "INSERT INTO rewards (business_id,name,description,points_cost,active) VALUES (?,?,?,?,?)",
-                (
-                    business_id,
-                    name,
-                    (description or "").strip() or None,
-                    points_cost,
-                    active,
-                ),
+                (business_id, name, (description or "").strip() or None, points_cost, active),
             )
         connection.commit()
         return {"success": cur.rowcount == 1, "reason": None if cur.rowcount == 1 else "not_found"}

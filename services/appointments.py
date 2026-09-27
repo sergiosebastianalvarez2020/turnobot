@@ -290,7 +290,10 @@ def validate_appointment_date(date, business_id, connection=None):
 
     except (ValueError, TypeError) as e:
         import logging
-        logging.getLogger(__name__).error(f"validate_appointment_date error: {e}, date={date}, type={type(date)}")
+
+        logging.getLogger(__name__).error(
+            f"validate_appointment_date error: {e}, date={date}, type={type(date)}"
+        )
         return {"valid": False, "reason": "invalid_date"}
 
     today = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection))).date()
@@ -1058,9 +1061,16 @@ def reschedule_appointment(
                 return {"success": False, "reason": "not_found"}
 
             # Si el turno ya está en la fecha/hora objetivo, es idempotente
-            if appointment["appointment_date"] == new_date and appointment["appointment_time"] == new_time:
+            if (
+                appointment["appointment_date"] == new_date
+                and appointment["appointment_time"] == new_time
+            ):
                 connection.commit()
-                return {"success": True, "reason": "rescheduled", "resource_id": appointment["resource_id"]}
+                return {
+                    "success": True,
+                    "reason": "rescheduled",
+                    "resource_id": appointment["resource_id"],
+                }
 
             # Conservar la duración histórica del turno (no la del servicio
             # actual). Un cambio posterior de duración del servicio no altera
