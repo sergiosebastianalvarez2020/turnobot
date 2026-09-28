@@ -53,6 +53,23 @@ jobs:
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: python -m pytest
+      - name: Debug TURNOBOT_PG_URL
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          echo "TURNOBOT_PG_URL present: ${TURNOBOT_PG_URL:+YES}"
+          python3 -c "
+import os
+u = os.getenv('TURNOBOT_PG_URL')
+if u:
+    from urllib.parse import urlsplit
+    p = __import__('urllib.parse').urlsplit(u)
+    print('host=' + (p.hostname or 'NONE'))
+    print('port=' + (str(p.port) if p.port else 'NONE'))
+    print('path=' + (p.path or 'NONE'))
+else:
+    print('TURNOBOT_PG_URL is NOT set')
+"
       - name: Debug tests_pg - show collected
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
