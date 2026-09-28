@@ -53,6 +53,37 @@ jobs:
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: python -m pytest
+      - name: Diagnose PostgreSQL connectivity
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          echo "TURNOBOT_PG_URL present: ${TURNOBOT_PG_URL:+YES}"
+          python -c "
+import os
+from urllib.parse import urlsplit
+u = os.getenv('TURNOBOT_PG_URL')
+if u:
+    p = urlsplit(u)
+    print(f'host={p.hostname}')
+    print(f'port={p.port}')
+    print(f'path={p.path}')
+else:
+    print('TURNOBOT_PG_URL is NOT set')
+"
+      - name: Test Python PostgreSQL connection
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          python -c "
+import os, psycopg
+u = os.environ['TURNOBOT_PG_URL']
+try:
+    conn = psycopg.connect(u, connect_timeout=5)
+    conn.close()
+    print('PYTHON_PG_CONNECT=OK')
+except Exception as e:
+    print(f'PYTHON_PG_CONNECT=FAIL: {e}')
+"
       - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
