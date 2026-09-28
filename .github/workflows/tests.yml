@@ -53,7 +53,12 @@ jobs:
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: python -m pytest
-      - name: Debug tests_pg execution
+      - name: Debug tests_pg - show collected
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          python -m pytest tests_pg --collect-only -q 2>&1
+      - name: Debug tests_pg - run with full output
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
