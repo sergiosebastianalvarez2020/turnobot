@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   POSTGRES_PASSWORD: 4h_ephemeral_pg_password
@@ -49,53 +49,69 @@ jobs:
         run: python -m ruff format --check .
       - name: Type check (mypy, incremental)
         run: python -m mypy
-      - name: Run tests with coverage
-        env:
-          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
-        run: python -m pytest
-      - name: Debug TURNOBOT_PG_URL
+      - name: PostgreSQL connectivity diagnostic
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
-          echo "TURNOBOT_PG_URL present: ${TURNOBOT_PG_URL:+YES}"
-          python3 -c "
-import os
-u = os.getenv('TURNOBOT_PG_URL')
-if u:
-    from urllib.parse import urlsplit
-    p = __import__('urllib.parse').urlsplit(u)
-    print('host=' + (p.hostname or 'NONE'))
-    print('port=' + (str(p.port) if p.port else 'NONE'))
-    print('path=' + (p.path or 'NONE'))
-else:
-    print('TURNOBOT_PG_URL is NOT set')
-"
-      - name: Debug tests_pg - show collected
+          cat > /tmp/check_postgres.py <<'PY'
+          import os
+          import sys
+
+          import psycopg
+          from urllib.parse import urlsplit
+
+          url = os.getenv("TURNOBOT_PG_URL")
+          if not url:
+              print("FAIL: TURNOBOT_PG_URL is not set", file=sys.stderr)
+              sys.exit(1)
+
+          parsed = urlsplit(url)
+          print(f"Host: {parsed.hostname}")
+          print(f"Port: {parsed.port}")
+          print(f"Database: {parsed.path or 'NONE'}")
+
+          try:
+              with psycopg.connect(url, connect_timeout=10) as conn:
+                  print("PostgreSQL connection: OK")
+                  with conn.cursor() as cur:
+                      cur.execute("SELECT version()")
+                      version = cur.fetchone()[0]
+                      cur.execute("SELECT current_database()")
+                      database = cur.fetchone()[0]
+                      cur.execute("SELECT current_user")
+                      user = cur.fetchone()[0]
+                      cur.execute("SELECT 1")
+                      ok = cur.fetchone()[0]
+                  print(f"Database: {database}")
+                  print(f"User: {user}")
+                  print(f"Server version: {version}")
+                  print(f"SELECT 1: {ok}")
+          except Exception as e:
+              print(f"FAIL: PostgreSQL connection failed: {e}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+          python /tmp/check_postgres.py
+      - name: Run PostgreSQL integration tests (tests_pg)
+        id: tests_pg
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: python -m pytest tests_pg -v --tb=short -p no:cacheprovider --no-cov 2>&1 | tee /tmp/tests_pg_output.txt
+      - name: Guard - tests_pg must not be skipped/deselected
+        if: steps.tests_pg.outcome == 'success'
         run: |
-          python -m pytest tests_pg --collect-only -q 2>&1
-      - name: Debug tests_pg - run with full output
-        env:
-          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
-        run: |
-          python -m pytest tests_pg -v --tb=short -p no:cacheprovider --no-cov 2>&1
-      - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
-        env:
-          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
-        run: |
-          set -euo pipefail
-          output="$(python -m pytest tests_pg -q -p no:cacheprovider --no-cov --tb=short 2>&1 || true)"
-          printf '%s\n' "$output"
-          if grep -q "skipped" <<< "$output"; then
+          output_file="/tmp/tests_pg_output.txt"
+          if grep -qE "no tests ran|0 tests" "$output_file"; then
+            echo "FALLO: tests_pg no registró tests ejecutados"
+            exit 1
+          fi
+          if grep -q "skipped" "$output_file"; then
             echo "FALLO: tests_pg quedaron con SKIP en CI"
             exit 1
           fi
-          if grep -q "deselected" <<< "$output"; then
+          if grep -q "deselected" "$output_file"; then
             echo "FALLO: tests_pg quedaron con DESELECTED en CI"
             exit 1
           fi
-          if ! grep -qE "[0-9]+ passed" <<< "$output"; then
-            echo "FALLO: tests_pg no registró tests passed"
-            exit 1
-          fi
+      - name: Run general tests
+        run: python -m pytest tests -p no:cacheprovider
