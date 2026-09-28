@@ -58,35 +58,12 @@ jobs:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
           echo "TURNOBOT_PG_URL present: ${TURNOBOT_PG_URL:+YES}"
-          cat > /tmp/diag.py << 'EOF'
-import os
-from urllib.parse import urlsplit
-u = os.getenv('TURNOBOT_PG_URL')
-if u:
-    p = urlsplit(u)
-    print('host=' + (p.hostname or 'NONE'))
-    print('port=' + (str(p.port) if p.port else 'NONE'))
-    print('path=' + (p.path or 'NONE'))
-else:
-    print('TURNOBOT_PG_URL is NOT set')
-EOF
-          python3 /tmp/diag.py
+          python3 -c "import os; from urllib.parse import urlsplit; u=os.getenv('TURNOBOT_PG_URL'); p=__import__('urllib.parse').urlsplit(u) if u else None; print('host=' + (p.hostname or 'NONE')) if p else print('TURNOBOT_PG_URL is NOT set'); print('port=' + str(p.port)) if p and p.port else None; print('path=' + p.path) if p else None"
       - name: Test Python PostgreSQL connection
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
-          cat > /tmp/connect_test.py << 'EOF'
-import os
-import psycopg
-u = os.environ['TURNOBOT_PG_URL']
-try:
-    conn = psycopg.connect(u, connect_timeout=5)
-    conn.close()
-    print('PYTHON_PG_CONNECT=OK')
-except Exception as e:
-    print('PYTHON_PG_CONNECT=FAIL: ' + str(e))
-EOF
-          python3 /tmp/connect_test.py
+          python3 -c "import os, psycopg; u=os.environ['TURNOBOT_PG_URL']; conn=psycopg.connect(u, connect_timeout=5); conn.close(); print('PYTHON_PG_CONNECT=OK')"
       - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
