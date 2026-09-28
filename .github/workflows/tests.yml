@@ -64,9 +64,9 @@ from urllib.parse import urlsplit
 u = os.getenv('TURNOBOT_PG_URL')
 if u:
     p = urlsplit(u)
-    print(f'host={p.hostname}')
-    print(f'port={p.port}')
-    print(f'path={p.path}')
+    print('host=' + p.hostname)
+    print('port=' + str(p.port))
+    print('path=' + p.path)
 else:
     print('TURNOBOT_PG_URL is NOT set')
 "
@@ -82,7 +82,7 @@ try:
     conn.close()
     print('PYTHON_PG_CONNECT=OK')
 except Exception as e:
-    print(f'PYTHON_PG_CONNECT=FAIL: {e}')
+    print('PYTHON_PG_CONNECT=FAIL: ' + str(e))
 "
       - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
         env:
