@@ -53,6 +53,11 @@ jobs:
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: python -m pytest
+      - name: Debug tests_pg execution
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          python -m pytest tests_pg -v --tb=short -p no:cacheprovider --no-cov 2>&1
       - name: Guard - tests_pg no pueden quedar skipped/deselected en CI
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
