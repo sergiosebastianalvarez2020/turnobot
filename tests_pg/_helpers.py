@@ -120,6 +120,19 @@ def seed_business_settings(url: str, business_id: int) -> None:
         )
 
 
+def seed_user(url: str, email: str | None = None) -> int:
+    """Crea un usuario y devuelve su id. Necesario para FK references."""
+    suffix = uuid.uuid4().hex[:10]
+    email = email or f"user-{suffix}@test.com"
+    with connect_autocommit(url) as conn:
+        row = conn.execute(
+            "INSERT INTO users (email, password_hash, active) "
+            "VALUES (%s, 'hash', TRUE) RETURNING id",
+            (email,),
+        ).fetchone()
+    return row[0]
+
+
 def seed_full_week(url: str, business_id: int, start: str = "09:00", end: str = "18:00") -> None:
     start_time = _as_time(start)
     end_time = _as_time(end)
