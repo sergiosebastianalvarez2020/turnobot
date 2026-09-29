@@ -338,6 +338,73 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["success"] is True
         assert data.get("resource_id") is None
 
+    def test_reintento_con_misma_clave_devuelve_el_turno_original(self):
+        """El contrato HTTP del replay: 200 (no 201) y sin emails repetidos."""
+        from app import app as flask_app
+
+        flask_app.config["TESTING"] = True
+        client = flask_app.test_client()
+
+        enviados = []
+        # La vista importa los notificadores desde `app` en cada request, así
+        # que hay que sustituir los nombres en ese módulo (no en el servicio).
+        import app as app_module
+
+        original_confirmacion = app_module.send_confirmation_email
+        original_negocio = app_module.send_business_confirmation_email
+        app_module.send_confirmation_email = lambda *a, **k: enviados.append("cliente")
+        app_module.send_business_confirmation_email = lambda *a, **k: enviados.append("negocio")
+        self.addCleanup(setattr, app_module, "send_confirmation_email", original_confirmacion)
+        self.addCleanup(setattr, app_module, "send_business_confirmation_email", original_negocio)
+
+        payload = {
+            "nombre": "Juan Pérez",
+            "telefono": "1122334455",
+            "servicio": "Partido Pádel",
+            "fecha": self.date,
+            "hora": "10:00",
+            "idempotency_key": "clave-http-1",
+        }
+        url = "/b/padel-club/api/reservar"
+        primera = client.post(url, data=json.dumps(payload), content_type="application/json")
+        assert primera.status_code == 201
+        assert len(enviados) == 2
+
+        segunda = client.post(url, data=json.dumps(payload), content_type="application/json")
+        assert segunda.status_code == 200, "un reintento no debe crear un turno nuevo"
+        data = json.loads(segunda.data)
+        assert data["success"] is True
+        assert data["idempotent_replay"] is True
+        assert data["appointment_id"] == json.loads(primera.data)["appointment_id"]
+        assert data.get("management_token") is None
+        assert len(enviados) == 2, "el replay no debe reenviar los emails de confirmación"
+
+        rows = self._query("SELECT COUNT(*) FROM appointments WHERE business_id = 2")
+        assert rows[0][0] == 1
+
+    def test_reserva_sin_clave_sigue_fallando_con_occupied(self):
+        from app import app as flask_app
+
+        flask_app.config["TESTING"] = True
+        client = flask_app.test_client()
+
+        payload = {
+            "nombre": "Juan Pérez",
+            "telefono": "1122334455",
+            "servicio": "Partido Pádel",
+            "fecha": self.date,
+            "hora": "10:00",
+        }
+        url = "/b/padel-club/api/reservar"
+        assert (
+            client.post(url, data=json.dumps(payload), content_type="application/json").status_code
+            == 201
+        )
+
+        repetida = client.post(url, data=json.dumps(payload), content_type="application/json")
+        assert repetida.status_code == 400
+        assert json.loads(repetida.data)["code"] == "occupied"
+
     def test_reserva_con_resource_id_inexistente_rechazada(self):
         from app import app as flask_app
 

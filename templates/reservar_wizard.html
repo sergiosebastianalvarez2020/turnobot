@@ -444,6 +444,7 @@
 
                 <form id="bookingForm" method="POST" action="/b/{{ business.slug }}/reservar/confirmar">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="idempotency_key" value="{{ idempotency_key or '' }}">
                     <input type="hidden" name="servicio" id="formServicio" value="">
                     <input type="hidden" name="fecha" id="formFecha" value="">
                     <input type="hidden" name="hora" id="formHora" value="">

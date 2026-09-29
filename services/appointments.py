@@ -14,6 +14,7 @@ else:  # pragma: no cover
 
 from database.database import (
     acquire_business_write_lock,
+    appointment_day_ordinal,
     get_active_services_scoped,
     get_business_settings_scoped,
     get_connection,
@@ -57,17 +58,14 @@ def _to_minutes(hm):
 
 
 def _appointment_day_ordinal(appointment_date):
-    """Días desde la epoch gregoriana para un 'YYYY-MM-DD' o datetime.date (clave de lock por día).
+    """Clave de lock por día para un negocio.
 
-    Solo se usa como clave determinística del advisory lock por negocio+fecha;
-    sobre SQLite no tiene efecto.
+    Delega en `database.database.appointment_day_ordinal` para que la capa de
+    servicios y `update_appointment_status_scoped` usen la MISMA clave: si
+    calcularan el ordinal de forma distinta, dos operaciones que也应该
+    serializarse tomarían locks diferentes y no se protegerían.
     """
-    if isinstance(appointment_date, dt_date):
-        return appointment_date.toordinal()
-    try:
-        return datetime.strptime(appointment_date, "%Y-%m-%d").date().toordinal()
-    except (ValueError, TypeError):
-        return 0
+    return appointment_day_ordinal(appointment_date)
 
 
 def _to_hhmm(minutes):
@@ -431,6 +429,61 @@ def get_available_times(date, business_id=None, service=None, resource_id=None):
 # ============================================================
 
 
+def _idempotent_replay_response(row, business_id):
+    """Respuesta de un reintento con la misma `idempotency_key`.
+
+    Devuelve el turno que YA existe con la misma forma de éxito que
+    `create_appointment`, para que los callers no tengan que bifurcar.
+
+    `management_token` es None a propósito: el token se genera en el servidor y
+    solo se persiste su SHA-256, así que no es reconstruible. Quien ya tiene el
+    turno (el cliente que lo reservó) conserva su enlace de gestión; quien
+    reintenta recupera el `appointment_id` sin volver a enviar confirmaciones.
+    """
+    return {
+        "success": True,
+        "appointment_id": row["id"],
+        "management_token": None,
+        "customer_email": row["customer_email"],
+        "customer_name": row["customer_name"],
+        "service": row["service"],
+        "appointment_date": row["appointment_date"],
+        "appointment_time": row["appointment_time"],
+        "appointment_end": row["appointment_end"],
+        "duration": row["duration"],
+        "business_id": business_id,
+        "resource_id": row["resource_id"],
+        "reason": "already_created",
+        "idempotent_replay": True,
+    }
+
+
+def _acquire_day_locks(connection, business_id, *appointment_dates):
+    """Toma los advisory locks de varios días del calendario en ORDEN ASCENDENTE.
+
+    Una reprogramación mueve el turno de un día a otro: LIBERA el slot del día de
+    origen y OCUPA el del destino, así que necesita ambos locks, no solo el del
+    destino. Sin el del origen, una reserva concurrente sobre el día liberado
+    puede observar el turno todavía `confirmed` y rechazar la franja con
+    `occupied` (fallo espurio).
+
+    El orden ascendente (menor ordinal primero) es lo que hace que dos
+    reprogramaciones concurrentes NO puedan deadlockearse: todas las
+    transacciones de un negocio toman las claves del calendario en el mismo
+    orden global, así que nunca se forma un ciclo de espera. Sin ese orden,
+    A: D5→D3 y B: D3→D5 se bloquearían mutuamente.
+
+    Deduplica (origen == destino) y es no-op en SQLite, donde `BEGIN IMMEDIATE`
+    ya serializa los escritores.
+
+    Propaga `sqlite3.OperationalError` cuando se agota el `lock_timeout` de la
+    sesión: el llamador debe hacer ROLLBACK y devolver un motivo reintentable en
+    lugar de dejar correr un error 500.
+    """
+    for key in sorted({_appointment_day_ordinal(fecha) for fecha in appointment_dates}):
+        acquire_business_write_lock(connection, business_id, key)
+
+
 def create_appointment(
     customer_name,
     phone,
@@ -440,6 +493,7 @@ def create_appointment(
     business_id,
     email=None,
     resource_id=None,
+    idempotency_key=None,
 ):
     """
     Crea un turno.
@@ -455,6 +509,17 @@ def create_appointment(
     - horario válido
     - horario disponible
 
+    Idempotencia (opcional): si se pasa `idempotency_key` (clave opaca que el
+    cliente genera al renderizar el formulario), un reintento con la misma clave
+    NO crea un turno nuevo ni falla con 'occupied': devuelve el turno original
+    con `reason="already_created"` e `idempotent_replay=True`. Es el mismo
+    patrón que `loyalty.redeem` y absorbe double-click, refresh, back, reintento
+    HTTP y dos solicitudes simultáneas con la misma clave.
+
+    Sin `idempotency_key` el comportamiento es el histórico. La clave identifica
+    la OPERACIÓN, no el payload: si se reusa con datos distintos devuelve igual
+    el turno original.
+
     Devuelve SIEMPRE un diccionario.
 
     Éxito:
@@ -464,6 +529,16 @@ def create_appointment(
             "appointment_id": 123,
             "reason": "created",
             "customer_email": "cliente@ejemplo.com"
+        }
+
+    Replay:
+
+        {
+            "success": True,
+            "appointment_id": 123,
+            "reason": "already_created",
+            "idempotent_replay": True,
+            "management_token": None
         }
 
     Error:
@@ -561,6 +636,34 @@ def create_appointment(
 
         try:
             # ------------------------------------------------
+            # IDEMPOTENCIA: DEVOLVER EL TURNO DE UN REINTENTO
+            #
+            # Va DESPUÉS del advisory lock y ANTES de cualquier validación de
+            # ocupación para que un reintento nunca falle por 'occupied' (el
+            # turno que el cliente ya tiene es el que "ocupa" la franja).
+            # Mismo patrón que loyalty.redeem: se busca por
+            # (business_id, idempotency_key) con el índice único como segunda
+            # barrera.
+            # ------------------------------------------------
+
+            if idempotency_key:
+                replay = connection.execute(
+                    """
+                    SELECT id, customer_name, customer_email, service,
+                           appointment_date, appointment_time, appointment_end,
+                           duration, resource_id
+                    FROM appointments
+                    WHERE business_id = ?
+                    AND idempotency_key = ?
+                    """,
+                    (business_id, idempotency_key),
+                ).fetchone()
+
+                if replay is not None:
+                    connection.execute("ROLLBACK")
+                    return _idempotent_replay_response(replay, business_id)
+
+            # ------------------------------------------------
             # VALIDAR HORARIO DE CIERRE
             #
             # El turno solo es válido si su fin no excede el cierre
@@ -637,8 +740,8 @@ def create_appointment(
                 INSERT INTO appointments
                 (customer_name, phone, customer_email, service, appointment_date,
                  appointment_time, appointment_end, duration, business_id,
-                 resource_id, management_token_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resource_id, management_token_hash, idempotency_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     customer_name,
@@ -652,6 +755,7 @@ def create_appointment(
                     business_id,
                     resource_id_validated,
                     management_token_hash,
+                    idempotency_key or None,
                 ),
             )
 
@@ -675,6 +779,25 @@ def create_appointment(
 
         except sqlite3.IntegrityError:
             connection.execute("ROLLBACK")
+            # El UNIQUE de idempotencia puede saltar entre el SELECT de replay y
+            # este INSERT: dos requests con la misma clave pero DISTINTA fecha
+            # toman locks distintos (la clave del advisory lock es el día) y no
+            # se serializan. Releemos al ganador antes de asumir 'occupied'
+            # (mismo criterio que loyalty.redeem ante la carrera de canjes).
+            if idempotency_key:
+                winner = connection.execute(
+                    """
+                    SELECT id, customer_name, customer_email, service,
+                           appointment_date, appointment_time, appointment_end,
+                           duration, resource_id
+                    FROM appointments
+                    WHERE business_id = ?
+                    AND idempotency_key = ?
+                    """,
+                    (business_id, idempotency_key),
+                ).fetchone()
+                if winner is not None:
+                    return _idempotent_replay_response(winner, business_id)
             return {"success": False, "appointment_id": None, "reason": "occupied"}
         except Exception:
             connection.execute("ROLLBACK")
@@ -891,7 +1014,12 @@ def cancel_appointment(
     enumerable) NO alcanza como único factor para operar sobre turnos ajenos:
     siempre se exige el token de gestión (enlace seguro).
 
-    Usa BEGIN IMMEDIATE para transacción atómica.
+    Usa BEGIN IMMEDIATE para transacción atómica y toma el advisory lock de
+    escritura del negocio para la FECHA del turno (mismo par
+    `(business_id, _appointment_day_ordinal(...))` que usa
+    `create_appointment`), de modo que una cancelación no se entrelaza con una
+    creación o una reprogramación concurrente del mismo día.
+
     Hace ROLLBACK si algo falla.
 
     Devuelve:
@@ -929,6 +1057,52 @@ def cancel_appointment(
         connection.execute("BEGIN IMMEDIATE")
 
         try:
+            # ------------------------------------------------
+            # LOCALIZAR EL TURNO (solo para conocer su fecha)
+            #
+            # Esta primera lectura NO decide nada: únicamente aporta la fecha
+            # que determina la clave del advisory lock. La autorización y el
+            # estado se vuelven a verificar DESPUÉS de tomar el lock, contra el
+            # estado ya consolidado por cualquier escritor concurrente.
+            # ------------------------------------------------
+
+            row = connection.execute(
+                """
+                SELECT id, appointment_date
+                FROM appointments
+                WHERE id = ?
+                AND business_id = ?
+                AND management_token_hash = ?
+                """,
+                (appointment_id_int, business_id, token_hash),
+            ).fetchone()
+
+            if row is None:
+                connection.execute("ROLLBACK")
+                return False
+
+            # ------------------------------------------------
+            # SERIALIZAR CON create_appointment / reschedule_appointment
+            #
+            # Sin esto, en PostgreSQL (READ COMMITTED) una cancelación y una
+            # reprogramación del mismo turno pueden leerse ambas 'confirmed' y
+            # commitear en cualquier orden, con el side-effect de que la
+            # reprogramación confirme un turno que la cancelación ya había
+            # dado de baja. En SQLite el BEGIN IMMEDIATE ya serializa y el
+            # hook es un no-op.
+            # ------------------------------------------------
+
+            try:
+                acquire_business_write_lock(
+                    connection, business_id, _appointment_day_ordinal(row["appointment_date"])
+                )
+            except sqlite3.OperationalError:
+                # `lock_timeout` agotado (LockNotAvailable -> OperationalError):
+                # el turno queda como estaba, igual que ante "database is locked"
+                # en SQLite, en lugar de propagar un error al cliente.
+                connection.execute("ROLLBACK")
+                return False
+
             # ------------------------------------------------
             # VERIFICAR QUE EXISTE Y PERTENECE AL SOLICITANTE
             # ------------------------------------------------
@@ -1037,11 +1211,57 @@ def reschedule_appointment(
     try:
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
-        acquire_business_write_lock(connection, business_id, _appointment_day_ordinal(new_date))
 
         try:
             # ------------------------------------------------
-            # BUSCAR TURNO ORIGINAL
+            # LOCALIZAR EL TURNO ORIGINAL (solo para su fecha y hora)
+            #
+            # Se lee SIN filtrar por estado y SIN tomar locks todavía: la única
+            # información que hace falta aquí es el DÍA DE ORIGEN y la HORA DE ORIGEN,
+            # que determinan los locks y sirven de referencia para detectar si el
+            # early-return debe activarse. La decisión se toma más abajo, ya
+            # con el lock tomado y el estado revalidado.
+            # ------------------------------------------------
+
+            origen = connection.execute(
+                """
+                SELECT appointment_date, appointment_time
+                FROM appointments
+                WHERE id = ?
+                AND business_id = ?
+                AND management_token_hash = ?
+                """,
+                (appointment_id_int, business_id, token_hash),
+            ).fetchone()
+
+            if origen is None:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "not_found"}
+
+            # Guardar fecha/hora originales ANTES de adquirir locks.
+            # Sirven de referencia para el early-return: si el turno YA estaba
+            # en el slot objetivo ANTES de esta operación, es idempotente.
+            # Si otro hilo lo movió allí concurrentemente, NO es idempotente.
+            original_date = origen["appointment_date"]
+            original_time = origen["appointment_time"]
+
+            # ------------------------------------------------
+            # SERIALIZAR DÍA DE ORIGEN + DÍA DE DESTINO (orden ascendente)
+            #
+            # Sin el lock del día de origen, una reserva concurrente sobre la
+            # franja que esta operación está liberando puede observar el turno
+            # todavía `confirmed` y rechazarla con `occupied`.
+            # ------------------------------------------------
+
+            try:
+                _acquire_day_locks(connection, business_id, origen["appointment_date"], new_date)
+            except sqlite3.OperationalError:
+                # `lock_timeout` agotado: el turno queda como estaba.
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "busy"}
+
+            # ------------------------------------------------
+            # BUSCAR TURNO ORIGINAL (con el estado ya consolidado)
             # ------------------------------------------------
 
             appointment = connection.execute(
@@ -1060,10 +1280,11 @@ def reschedule_appointment(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "not_found"}
 
-            # Si el turno ya está en la fecha/hora objetivo, es idempotente
-            if (
-                appointment["appointment_date"] == new_date
-                and appointment["appointment_time"] == new_time
+            # Si el turno YA estaba en la fecha/hora objetivo ANTES de esta operación,
+            # es idempotente. Usar las fechas/horas originales leídas ANTES de
+            # adquirir locks (no la relectura post-lock).
+            if str(original_date) == str(new_date) and _to_minutes(original_time) == _to_minutes(
+                new_time
             ):
                 connection.commit()
                 return {
@@ -1193,7 +1414,7 @@ def reschedule_appointment(
             # ACTUALIZAR TURNO
             # ------------------------------------------------
 
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE appointments
                 SET appointment_date = ?, appointment_time = ?, appointment_end = ?
@@ -1202,6 +1423,14 @@ def reschedule_appointment(
                 """,
                 (new_date, new_time, new_end, appointment_id_int, business_id, token_hash),
             )
+
+            # rowcount 0 con la transacción viva significa que el turno dejó de
+            # estar `confirmed` entre la revalidación y este UPDATE: otra vía
+            # (cancelación pública o administrativa) lo dio de baja. Reportar
+            # `rescheduled` sobre un turno cancelado sería mentirle al cliente.
+            if cursor.rowcount != 1:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "not_found"}
 
             connection.commit()
 
@@ -1249,9 +1478,35 @@ def reschedule_appointment_admin(
 
     try:
         connection.execute("BEGIN IMMEDIATE")
-        acquire_business_write_lock(connection, business_id, _appointment_day_ordinal(new_date))
 
         try:
+            # ------------------------------------------------
+            # LOCALIZAR EL TURNO ORIGINAL (solo para su fecha)
+            # ------------------------------------------------
+
+            origen = connection.execute(
+                """
+                SELECT appointment_date
+                FROM appointments
+                WHERE id = ?
+                AND business_id = ?
+                """,
+                (appointment_id_int, business_id),
+            ).fetchone()
+
+            if origen is None:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "not_found"}
+
+            # Mismo par de locks que la vía del cliente: origen + destino, en
+            # orden ascendente. Es lo que serializa esta reprogramación contra
+            # reservas, cancelaciones y reprogramaciones del mismo negocio.
+            try:
+                _acquire_day_locks(connection, business_id, origen["appointment_date"], new_date)
+            except sqlite3.OperationalError:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "busy"}
+
             appointment = connection.execute(
                 """
                 SELECT *
@@ -1359,7 +1614,7 @@ def reschedule_appointment_admin(
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "occupied"}
 
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE appointments
                 SET appointment_date = ?, appointment_time = ?, appointment_end = ?,
@@ -1368,6 +1623,13 @@ def reschedule_appointment_admin(
                 """,
                 (new_date, new_time, new_end, target_resource_id, appointment_id_int, business_id),
             )
+
+            # Ver `reschedule_appointment`: rowcount 0 significa que el turno se
+            # canceló entre la revalidación y este UPDATE, no que la operación
+            # haya sido un no-op.
+            if cursor.rowcount != 1:
+                connection.execute("ROLLBACK")
+                return {"success": False, "reason": "not_found"}
 
             connection.commit()
             return {"success": True, "reason": "rescheduled", "resource_id": target_resource_id}

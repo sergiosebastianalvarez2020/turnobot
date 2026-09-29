@@ -518,7 +518,15 @@ def admin_cancel_appointment(appointment_id, slug=None):
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
-    update_appointment_status_scoped(appointment_id, "cancelled", business_id)
+    # Serializado con el advisory lock de negocio+día (ver
+    # update_appointment_status_scoped): el False significa que el turno no
+    # existe en este negocio, no se pudo tomar el lock, o ya no está en un
+    # estado cancelable. Reportarlo evita un "Turno cancelado" mentiroso.
+    if not update_appointment_status_scoped(appointment_id, "cancelled", business_id):
+        message = "No se pudo cancelar el turno: no existe o ya fue cancelado."
+        if _is_json_request():
+            return _json_error("CANCEL_ERROR", message), 409
+        return redirect(_admin_url(status="confirmed", error_message=message))
     if _is_json_request():
         return jsonify({"success": True, "message": "Turno cancelado"})
     return redirect(_admin_url(status="confirmed"))
@@ -540,7 +548,18 @@ def admin_update_appointment_status(appointment_id, slug=None):
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
-    update_appointment_status_scoped(appointment_id, status, business_id)
+    # False = el turno no es de este negocio, no se pudo tomar el lock, no
+    # cambió (ya estaba en ese estado) o es una resurrección desde `cancelled`.
+    # Ver update_appointment_status_scoped. No se reporta éxito mentiroso, y no
+    # se awardean puntos por un cambio que no ocurrió.
+    if not update_appointment_status_scoped(appointment_id, status, business_id):
+        message = (
+            f"No se pudo actualizar el estado a {status}: "
+            "el turno no existe, no cambió o está cancelado."
+        )
+        if _is_json_request():
+            return _json_error("STATUS_ERROR", message), 409
+        return redirect(_admin_url(status=status, error_message=message))
     if status == "completed":
         loyalty.award_points_for_completed(business_id, appointment_id)
     if _is_json_request():

@@ -8,10 +8,11 @@ y acceso de datos de SQLite a PostgreSQL sin alterar la funcionalidad sobre SQLi
 
 from __future__ import annotations
 
+import atexit
 import logging
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -29,6 +30,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger("turnobot.db.pg_pool")
 
 _global_pool: psycopg_pool.ConnectionPool | None = None
+
+
+# ============================================================
+# CONFIGURACIÓN DE SESIÓN POSTGRESQL (hardening pre-producción)
+# ============================================================
+#
+# TurnoBot persiste las marcas de tiempo como TIMESTAMPTZ. PostgreSQL devuelve
+# TIMESTAMPTZ usando el timezone de la SESIÓN, no el del servidor: si la sesión
+# hereda el timezone del servidor (o el del cliente vía libpq), las expiraciones
+# de sesión, invitaciones, notificaciones y la detección de turnos vencidos
+# dependen de una configuración externa no controlada por la aplicación. Por eso
+# la sesión se fija explícitamente a UTC en CADA conexión nueva del pool, sin
+# depender de la configuración del servidor ni del sistema operativo.
+
+PG_SESSION_TIMEZONE = "UTC"
+
+# `lock_timeout` acota la espera por locks (filas y `pg_advisory_xact_lock` de
+# `acquire_business_write_lock`). Valor 5s justificado con la configuración ya
+# existente del pool:
+#   - Es menor que el timeout de checkout del pool (10s) y que el
+#     `PRAGMA busy_timeout` de SQLite (10s): un lock nunca retiene una conexión
+#     del pool más tiempo del que SQLite ya tolerate por escritura.
+#   - Es holgado para el tráfico normal: las transacciones de TurnoBot son
+#     escrituras cortas y el advisory lock solo serializa la misma
+#     (business_id, lock_key), así que la espera real es de milisegundos.
+#   - Ante contención patológica PostgreSQL lanza LockNotAvailable, subclase de
+#     psycopg.OperationalError, que `translate_pg_error` mapea a
+#     sqlite3.OperationalError: las rutas de "recurso ocupado" ya existentes
+#     responden con el mismo código HTTP que en SQLite en vez de colgarse.
+PG_LOCK_TIMEOUT = "5s"
+
+
+def configure_pg_session(connection: Any) -> None:
+    """Fija la configuración de sesión obligatoria en una conexión nueva del pool.
+
+    Se ejecuta en autocommit para que los `set_config` (.., false) SURTAN efecto
+    en la sesión y no queden pendientes de un COMMIT posterior, y para no dejar
+    una transacción implícita abierta que el primer `SELECT` de la aplicación
+    heredaría. La conexión recién creada está en estado IDLE, por lo que volver
+    a autocommit=False no puede perder trabajo previo.
+    """
+    connection.autocommit = True
+    try:
+        connection.execute("SELECT set_config('TimeZone', %s, false)", (PG_SESSION_TIMEZONE,))
+        connection.execute("SELECT set_config('lock_timeout', %s, false)", (PG_LOCK_TIMEOUT,))
+    finally:
+        connection.autocommit = False
 
 
 def sanitize_database_url(url: str | None) -> str | None:
@@ -99,6 +147,11 @@ def create_pg_pool(
         "Creando pool PostgreSQL para %s (min_size=%d, max_size=%d)", sanitized, min_size, max_size
     )
 
+    # `configure` se invoca por el pool en CADA conexión nueva: es el punto
+    # único donde se puede garantizar timezone/lock_timeout sin depender de
+    # callers individuales. Un caller puede sustituirlo vía kwargs.
+    kwargs.setdefault("configure", configure_pg_session)
+
     return psycopg_pool.ConnectionPool(
         conninfo=normalized_conninfo,
         min_size=min_size,
@@ -109,6 +162,33 @@ def create_pg_pool(
         open=open,
         **kwargs,
     )
+
+
+def _current_flask_app() -> Flask | None:
+    """Devuelve la aplicación Flask del contexto activo, o None si no hay contexto.
+
+    `get_connection()` se llama desde servicios que no reciben la app (se
+    resuelven vía `flask.current_app`), por lo que el pool debe poder localised
+    sin que cada caller pase la app explícitamente.
+    """
+    try:
+        from flask import current_app, has_app_context
+    except ImportError:  # pragma: no cover - Flask siempre presente en runtime
+        return None
+    if not has_app_context():
+        return None
+    return current_app._get_current_object()  # type: ignore[attr-defined]
+
+
+def _is_pool_open(pool: Any) -> bool:
+    """True si hay un pool registrado y vigente.
+
+    No consulta `pool.closed`: psycopg_pool marca como cerrado un pool creado con
+    `open=False` (aún sin conexiones), y eso haría recrear pools en tests y CLI.
+    El ciclo de vida lo gobierna `close_pg_pool()`, que además retira el pool de
+    `app.extensions`: si sigue registrado, es el pool vigente.
+    """
+    return pool is not None
 
 
 def init_pg_pool(
@@ -122,7 +202,16 @@ def init_pg_pool(
     timeout: float = 10.0,
     open: bool = True,
 ) -> psycopg_pool.ConnectionPool | None:
-    """Inicializa el pool de conexiones PostgreSQL para la aplicación Flask o a nivel global."""
+    """Inicializa el pool de conexiones PostgreSQL para la aplicación Flask o a nivel global.
+
+    Fuente de verdad: `app.extensions["pg_pool"]` cuando se pasa una app Flask.
+    `_global_pool` guarda una referencia al MISMO objeto como respaldo para los
+    paths que corren sin contexto Flask (`create_app()` → `init_database()` antes
+    de atender el primer request, scripts CLI); nunca es un segundo pool.
+
+    Es idempotente por app: si esa app ya tiene un pool registrado se lo devuelve
+    sin crear otro, de modo que re-entradas no multiplican conexiones.
+    """
     global _global_pool
 
     effective_url = conninfo
@@ -133,6 +222,12 @@ def init_pg_pool(
     if backend != "postgresql" or not effective_url:
         logger.debug("Backend actual es %s; no se inicializa pool de PostgreSQL", backend)
         return None
+
+    if app is not None:
+        existing = getattr(app, "extensions", {}).get("pg_pool")
+        if _is_pool_open(existing):
+            logger.debug("Pool PostgreSQL ya inicializado para esta app; se reutiliza")
+            return existing
 
     pool = create_pg_pool(
         effective_url,
@@ -147,31 +242,39 @@ def init_pg_pool(
     if app is not None:
         app.extensions = getattr(app, "extensions", {})
         app.extensions["pg_pool"] = pool
-    else:
-        _global_pool = pool
+
+    # Respaldo para callers sin contexto Flask: misma instancia, no una copia.
+    _global_pool = pool
 
     return pool
 
 
 def get_pg_pool(app: Flask | None = None) -> psycopg_pool.ConnectionPool | None:
-    """Obtiene la instancia de ConnectionPool activa desde app context o global."""
-    if app is not None and hasattr(app, "extensions") and "pg_pool" in app.extensions:
-        return app.extensions["pg_pool"]
+    """Obtiene el pool activo: app explícita > app del contexto Flask > respaldo global."""
+    target_app = app if app is not None else _current_flask_app()
+    if target_app is not None:
+        pool = getattr(target_app, "extensions", {}).get("pg_pool")
+        if pool is not None:
+            return pool
     return _global_pool
 
 
 def close_pg_pool(
     pool: psycopg_pool.ConnectionPool | None = None, app: Flask | None = None, timeout: float = 5.0
 ) -> None:
-    """Cierra limpiamente un pool de conexiones PostgreSQL y limpia referencias."""
+    """Cierra limpiamente un pool de conexiones PostgreSQL y limpia referencias.
+
+    Es idempotente: cerrar un pool ya cerrado (o una app que nunca tuvo pool)
+    no lanza. Cuando se pasa `app` el cierre se limita a ESA app: nunca cae al
+    respaldo global, para que un teardown repetido no pueda cerrar el pool de
+    otra instancia de la aplicación.
+    """
     global _global_pool
 
     target_pool = pool
     if target_pool is None and app is not None:
-        if hasattr(app, "extensions") and "pg_pool" in app.extensions:
-            target_pool = app.extensions.pop("pg_pool")
-
-    if target_pool is None:
+        target_pool = getattr(app, "extensions", {}).pop("pg_pool", None)
+    elif target_pool is None:
         target_pool = _global_pool
 
     if target_pool is not None:
@@ -182,6 +285,32 @@ def close_pg_pool(
             target_pool.close(timeout=timeout)
         except Exception as err:
             logger.warning("Error al cerrar pool PostgreSQL: %s", err)
+
+
+def register_pg_pool_teardown(app: Flask) -> Callable[[], None]:
+    """Engancha el cierre del pool al fin de vida de la aplicación Flask.
+
+    Flask no expone un evento de "aplicación apagada" para servidores WSGI
+    reales (en producción se sirve con waitress tras systemd), por eso el
+    teardown se registra en el hook `atexit` del proceso: se ejecuta al salir
+    del proceso, incluido el salida ordenada por SIGTERM que usa
+    `turnobot.service`. Deliberadamente NO se usa `teardown_appcontext`, que
+    correría al final de CADA request/app context y cerraría el pool durante
+    el tráfico.
+
+    Devuelve el callable de cierre para poder ejecutarlo explícitamente
+    (tests, apagados manuales) y desregistrarlo con `atexit.unregister`.
+    """
+    extensions = getattr(app, "extensions", None)
+    if extensions is None:  # pragma: no cover - Flask siempre define extensions
+        app.extensions = {}
+
+    def _shutdown_pg_pool() -> None:
+        close_pg_pool(app=app)
+
+    atexit.register(_shutdown_pg_pool)
+    logger.debug("Teardown del pool PostgreSQL registrado para el fin de la aplicación")
+    return _shutdown_pg_pool
 
 
 # ============================================================

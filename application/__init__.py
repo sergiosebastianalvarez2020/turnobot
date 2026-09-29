@@ -45,13 +45,15 @@ def create_app():
     # Inicialización del pool PostgreSQL: únicamente cuando DB_BACKEND lo requiere.
     # SQLite (default) nunca activa pg_pool (Fase 4D: seam de preparación).
     if config["DB_BACKEND"] == "postgresql":
-        from database.pg_pool import init_pg_pool
+        from database.pg_pool import init_pg_pool, register_pg_pool_teardown
 
         pool = init_pg_pool(app)
         if pool is None:
             raise RuntimeError(
                 "DB_BACKEND=postgresql pero no se pudo inicializar el pool de conexiones"
             )
+        # Cierre del pool al terminar el proceso (waitress + systemd/SIGTERM).
+        register_pg_pool_teardown(app)
 
     from database.database import init_database
 

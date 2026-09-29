@@ -9,6 +9,7 @@ import hashlib
 import uuid
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote
 
 import psycopg
 import psycopg.conninfo as _conninfo
@@ -30,6 +31,23 @@ def connect_autocommit(conninfo: str) -> psycopg.Connection:
 def test_db_conninfo(base_url: str, dbname: str) -> str:
     """Construye el conninfo de una base reemplazando el nombre de base."""
     return _conninfo.make_conninfo(base_url, dbname=dbname)
+
+
+def conninfo_to_url(conninfo: str) -> str:
+    """Convierte un conninfo key/value en una URL ``postgresql://``.
+
+    Necesario para los tests que ejercitan ``init_pg_pool``/``create_app``:
+    la detección de backend (igual que en producción, donde ``DATABASE_URL`` es
+    una URL) se basa en el prefijo, no en el conninfo key/value que devuelve
+    ``test_db_conninfo``.
+    """
+    params = _conninfo.conninfo_to_dict(conninfo)
+    user = quote(params.get("user", ""), safe="")
+    password = quote(params.get("password", ""), safe="")
+    host = params.get("host", "localhost")
+    port = params.get("port", "5432")
+    dbname = params.get("dbname", "")
+    return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
 
 
 def create_test_database(base_url: str, dbname: str) -> None:

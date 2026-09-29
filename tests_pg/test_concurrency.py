@@ -256,3 +256,102 @@ def test_e6_reprogramacion_concurrente(pg_pool, pg_seed, monkeypatch):
         ).fetchone()
     assert row[0] == datetime.date.fromisoformat(E6_TARGET_DATE)
     assert row[1] == datetime.time(11, 0)
+
+
+# ============================================================
+# IDEMPOTENCIA DE create_appointment (pg_live)
+# ============================================================
+
+
+def _count_appointments(url, business_id, idempotency_key):
+    with connect_autocommit(url) as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM appointments WHERE business_id = %s AND idempotency_key = %s",
+            (business_id, idempotency_key),
+        ).fetchone()[0]
+
+
+@pytest.mark.pg_live
+@pytest.mark.pg_typed
+def test_reintento_con_misma_clave_devuelve_el_turno_original(pg_pool, pg_seed, monkeypatch):
+    """El mismo `idempotency_key` dos veces -> un turno, y el replay gana."""
+    _setup_booking_context(pg_seed)
+    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
+
+    def crear():
+        return appointments.create_appointment(
+            NAME,
+            PHONE,
+            "Corte",
+            E5_DATE,
+            "10:00",
+            pg_seed["business_id"],
+            idempotency_key="clave-replay",
+        )
+
+    primero, segundo = crear(), crear()
+
+    assert primero["success"] and primero["reason"] == "created"
+    assert segundo["success"], str(segundo)
+    assert segundo["reason"] == "already_created"
+    assert segundo["idempotent_replay"] is True
+    assert segundo["appointment_id"] == primero["appointment_id"]
+    assert primero["management_token"]
+    assert segundo["management_token"] is None
+    assert _count_appointments(pg_seed["url"], pg_seed["business_id"], "clave-replay") == 1
+
+
+@pytest.mark.pg_live
+@pytest.mark.pg_typed
+def test_misma_clave_en_dias_distintos_no_crea_dos_turnos(pg_pool, pg_seed, monkeypatch):
+    """La carrera que el advisory lock por día NO puede serializar.
+
+    Dos requests con la misma clave pero en FECHAS DISTINTAS toman locks
+    distintos (la clave del lock es el ordinal del día), así que pasan
+    ambas el SELECT de replay y compiten por el índice único
+    (business_id, idempotency_key). La perdedora NO debe caer en 'occupied':
+    relee al ganador y lo devuelve, igual que `loyalty.redeem`.
+    """
+    _setup_booking_context(pg_seed)
+    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
+
+    def crear(fecha):
+        return appointments.create_appointment(
+            NAME,
+            PHONE,
+            "Corte",
+            fecha,
+            "10:00",
+            pg_seed["business_id"],
+            idempotency_key="clave-carrera",
+        )
+
+    results = _run_concurrently([lambda: crear(E5_DATE), lambda: crear(E6_TARGET_DATE)])
+    assert len(results) == 2
+    assert all(isinstance(r, dict) and r.get("success") for r in results), str(results)
+
+    reason = sorted(r["reason"] for r in results)
+    assert reason == ["already_created", "created"], str(results)
+    assert len({r["appointment_id"] for r in results}) == 1
+    assert _count_appointments(pg_seed["url"], pg_seed["business_id"], "clave-carrera") == 1
+
+
+@pytest.mark.pg_live
+@pytest.mark.pg_typed
+def test_turnos_sin_clave_no_entran_al_indice(pg_pool, pg_seed, monkeypatch):
+    """NULL no viola el índice parcial: dos altas sin clave coexisten."""
+    _setup_booking_context(pg_seed)
+    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
+
+    results = _run_concurrently(
+        [
+            lambda: appointments.create_appointment(
+                NAME, PHONE, "Corte", E5_DATE, "10:00", pg_seed["business_id"]
+            ),
+            lambda: appointments.create_appointment(
+                NAME, PHONE, "Corte", E6_TARGET_DATE, "10:00", pg_seed["business_id"]
+            ),
+        ]
+    )
+    assert all(isinstance(r, dict) and r["success"] for r in results), str(results)
+    assert len({r["appointment_id"] for r in results}) == 2

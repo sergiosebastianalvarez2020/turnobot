@@ -546,6 +546,15 @@ def _create_public_appointment_response(business_id):
             except (ValueError, TypeError):
                 return jsonify({"success": False, "error": "resource_id inválido."}), 400
 
+        # Clave de idempotencia OPCIONAL: mismo patron que el canje de
+        # fidelizacion. Si el cliente la reenvia, un reintento devuelve el turno
+        # original en lugar de 'occupied'. Sin ella el flujo es el historico.
+        idempotency_key = data.get("idempotency_key")
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not idempotency_key
+        ):
+            idempotency_key = None
+
         # ----------------------------------------------------
         # CREAR TURNO
         # ----------------------------------------------------
@@ -559,6 +568,7 @@ def _create_public_appointment_response(business_id):
             business_id=business_id,
             email=email or None,
             resource_id=resource_id,
+            idempotency_key=idempotency_key,
         )
 
         # ----------------------------------------------------
@@ -664,6 +674,27 @@ def _create_public_appointment_response(business_id):
         # ----------------------------------------------------
 
         if resultado.get("success"):
+            # ----------------------------------------------------
+            # REPLAY IDEMPOTENTE
+            #
+            # El turno ya existe (misma idempotency_key): se responde 200 con el
+            # mismo appointment_id y NO se reenvian los emails de confirmacion
+            # (el cliente ya los recibio en el intento original).
+            # ----------------------------------------------------
+
+            if resultado.get("idempotent_replay"):
+                return (
+                    jsonify(
+                        {
+                            "success": True,
+                            "appointment_id": resultado.get("appointment_id"),
+                            "idempotent_replay": True,
+                            "message": "Este turno ya estaba reservado.",
+                        }
+                    ),
+                    200,
+                )
+
             # ----------------------------------------------------
             # CONFIRMACIÓN POR EMAIL (no bloqueante para la reserva)
             # ----------------------------------------------------

@@ -64,6 +64,25 @@ def get_connection():
     return connection
 
 
+def appointment_day_ordinal(appointment_date):
+    """Días desde la epoch gregoriana para un 'YYYY-MM-DD' o datetime.date.
+
+    Clave determinística del advisory lock por negocio+día. Vive aquí (y no en
+    `services.appointments`) para que las dos capas que serializan escrituras
+    contra el calendario compartan UNA sola implementación: `services` ya importa
+    este módulo, pero no al revés.
+
+    Acepta las dos formas que devuelve cada backend: `str` en SQLite (TEXT) y
+    `datetime.date` en PostgreSQL (DATE). Devuelve 0 si el valor es ilegible.
+    """
+    if isinstance(appointment_date, datetime.date):
+        return appointment_date.toordinal()
+    try:
+        return datetime.datetime.strptime(appointment_date, "%Y-%m-%d").date().toordinal()
+    except (ValueError, TypeError):
+        return 0
+
+
 def acquire_business_write_lock(connection, business_id, lock_key=0):
     """Serializa escrituras por negocio+clave cuando el backend es PostgreSQL.
 
@@ -1429,17 +1448,68 @@ def get_weekly_schedule_scoped(day_of_week, business_id, connection=None):
 
 
 def update_appointment_status_scoped(appointment_id, status, business_id):
-    """Actualiza el estado de un turno solo si pertenece al negocio indicado."""
+    """Actualiza el estado de un turno del negocio indicado, serializado.
+
+    Es la vía que usa el panel admin (`admin_cancel_appointment` y
+    `admin_update_appointment_status`). Antes hacía un UPDATE suelto: sin
+    transacción, sin advisory lock y sin predicado de estado. Eso la dejaba
+    fuera de la serialización del resto de operaciones del calendario, así que
+    una cancelación o una reprogramación concurrentes se entrelazaban con ella y
+    el panel podía confirmar un cambio que nunca ocurrió.
+
+    Ahora replica el esquema de `cancel_appointment`: transacción, advisory lock
+    del DÍA del turno (mismo par `(business_id, día)` que el resto) y
+    revalidación de la fila dentro de la transacción.
+
+    Un turno `cancelled` no puede volver a `confirmed`: el cliente que canceló
+    desde su enlace no debe ver reaparecer el turno porque un operador cambiara
+    el estado en el panel. Se devuelve False y el llamador debe informarlo en
+    lugar de reportar éxito.
+
+    Devuelve True solo si la fila se actualizó de verdad.
+    """
     if status not in {"confirmed", "cancelled", "completed", "no_show"}:
         return False
     connection = get_connection()
     try:
-        cursor = connection.execute(
-            "UPDATE appointments SET status = ? WHERE id = ? AND business_id = ?",
-            (status, appointment_id, business_id),
-        )
-        connection.commit()
-        return cursor.rowcount == 1
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            fila = connection.execute(
+                "SELECT appointment_date, status FROM appointments WHERE id = ? AND business_id = ?",
+                (appointment_id, business_id),
+            ).fetchone()
+
+            if fila is None:
+                connection.execute("ROLLBACK")
+                return False
+
+            if fila["status"] == "cancelled" and status == "confirmed":
+                connection.execute("ROLLBACK")
+                return False
+
+            try:
+                acquire_business_write_lock(
+                    connection, business_id, appointment_day_ordinal(fila["appointment_date"])
+                )
+            except sqlite3.OperationalError:
+                connection.execute("ROLLBACK")
+                return False
+
+            cursor = connection.execute(
+                "UPDATE appointments SET status = ? "
+                "WHERE id = ? AND business_id = ? AND status <> ?",
+                (status, appointment_id, business_id, status),
+            )
+
+            if cursor.rowcount != 1:
+                connection.execute("ROLLBACK")
+                return False
+
+            connection.commit()
+            return True
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
     finally:
         connection.close()
 

@@ -574,5 +574,150 @@ class TestAdminAJAX(unittest.TestCase):
         self.assertIn("appointment_id", data)
 
 
+class TestAdminNoReportaCambiosInexistentes(unittest.TestCase):
+    """El panel no debe confirmar un cambio de estado que no ocurrió.
+
+    `update_appointment_status_scoped` devuelve False cuando el turno no es del
+    negocio, cuando no cambió, cuando no se pudo tomar el lock o cuando sería
+    resucitar un turno cancelado. Antes la ruta ignoraba ese retorno y siempre
+    respondía `success: true`.
+    """
+
+    def setUp(self):
+        application.rate_limit_state.clear()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_database_path = database.DATABASE_PATH
+        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+        database.init_database()
+
+        self.client = application.app.test_client()
+        self.original_hash = application.ADMIN_PASSWORD_HASH
+        self.original_password = application.ADMIN_PASSWORD
+        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD = None
+
+        login_page = self.client.get("/login")
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+
+    def tearDown(self):
+        application.ADMIN_PASSWORD_HASH = self.original_hash
+        application.ADMIN_PASSWORD = self.original_password
+        database.DATABASE_PATH = self.original_database_path
+        self.temp_dir.cleanup()
+
+    def _create_turno(self, date_=None, time_="09:00"):
+        date_ = date_ or _next_open_day()
+        result = appointments.create_appointment(
+            "Ana Pérez", "3838439222", "Corte", date_, time_, 1
+        )
+        self.assertTrue(result["success"])
+        return result["appointment_id"]
+
+    def _estado(self, appointment_id):
+        c = database.get_connection()
+        try:
+            return c.execute(
+                "SELECT status FROM appointments WHERE id = ?", (appointment_id,)
+            ).fetchone()["status"]
+        finally:
+            c.close()
+
+    def test_cancelar_inexistente_no_reporta_exito(self):
+        response = self.client.post(
+            "/b/el-corte/admin/turnos/999999/cancelar",
+            data={"csrf_token": self.csrf_token},
+            headers={"Accept": "application/json"},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
+
+    def test_cancelar_ya_cancelado_no_reporta_exito(self):
+        appointment_id = self._create_turno()
+        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "cancelled", 1))
+
+        response = self.client.post(
+            f"/b/el-corte/admin/turnos/{appointment_id}/cancelar",
+            data={"csrf_token": self.csrf_token},
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
+        self.assertEqual(self._estado(appointment_id), "cancelled")
+
+    def test_cancelar_exitoso_sigue_funcionando(self):
+        appointment_id = self._create_turno()
+
+        response = self.client.post(
+            f"/b/el-corte/admin/turnos/{appointment_id}/cancelar",
+            data={"csrf_token": self.csrf_token},
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
+        self.assertEqual(self._estado(appointment_id), "cancelled")
+
+    def test_html_de_cancelacion_fallida_muestra_el_error(self):
+        appointment_id = self._create_turno()
+        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "cancelled", 1))
+
+        response = self.client.post(
+            f"/b/el-corte/admin/turnos/{appointment_id}/cancelar",
+            data={"csrf_token": self.csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("error_message", response.headers["Location"])
+        self.assertEqual(self._estado(appointment_id), "cancelled")
+
+    def test_estado_igual_no_reporta_exito(self):
+        appointment_id = self._create_turno()
+
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/estado",
+            data={"csrf_token": self.csrf_token, "status": "confirmed"},
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
+        self.assertEqual(self._estado(appointment_id), "confirmed")
+
+    def test_no_puede_resucitar_desde_el_panel(self):
+        appointment_id = self._create_turno()
+        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "cancelled", 1))
+
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/estado",
+            data={"csrf_token": self.csrf_token, "status": "confirmed"},
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["success"])
+        self.assertEqual(self._estado(appointment_id), "cancelled")
+
+    def test_no_awardea_puntos_si_el_cambio_no_ocurrio(self):
+        appointment_id = self._create_turno()
+        database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=4)
+        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "completed", 1))
+
+        cuenta_antes = database.get_loyalty_account_scoped(1, "3838439222")
+        saldo_antes = cuenta_antes["points_balance"] if cuenta_antes else 0
+
+        response = self.client.post(
+            f"/admin/turnos/{appointment_id}/estado",
+            data={"csrf_token": self.csrf_token, "status": "completed"},
+            headers={"Accept": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        cuenta = database.get_loyalty_account_scoped(1, "3838439222")
+        saldo_despues = cuenta["points_balance"] if cuenta else 0
+        self.assertEqual(saldo_despues, saldo_antes, "un no-op no puede sumar puntos")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,8 +18,13 @@ import time
 
 import pytest
 
+import services.appointments as appointments
 from database.database import acquire_business_write_lock
-from tests_pg._helpers import connect_autocommit, make_pg_proxy
+from tests_pg._helpers import connect_autocommit, make_pg_proxy, seed_confirmed_appointment
+
+CANCEL_DATE = "2026-10-01"
+CANCEL_TOKEN = "cancel-lock-management-token"
+PHONE = "5551234567"
 
 
 @pytest.mark.pg_live
@@ -85,3 +90,71 @@ def test_advisory_lock_serializa_conexiones_reales(pg_pool, pg_test_database):
     assert record["b_done"] >= record["a_released"]
     # Liberado el lock, el mismo intento ya adquiere.
     assert try_lock() is True
+
+
+@pytest.mark.pg_live
+def test_cancel_appointment_respeta_el_advisory_lock(pg_pool, pg_seed, monkeypatch):
+    """``cancel_appointment`` de producción se BLOQUEA tras el lock ajeno.
+
+    Demuestra que la cancelación toma el advisory lock ``(business_id, día)``
+    con la misma clave que usa ``create_appointment``: mientras otra conexión
+    lo sostiene, el ``UPDATE ... status='cancelled'`` NO se ejecuta. Al liberar,
+    la cancelación retoma y completa.
+
+    Sin el lock, la cancelación se commitearía durante el hold y este test
+    fallaría en el primer ``assert``. No usa mocks: solo la fuente de conexión
+    se enruta al pool (igual que en el resto de la suite pg).
+    """
+    appointment_id = seed_confirmed_appointment(
+        pg_seed["url"], pg_seed["business_id"], CANCEL_TOKEN, CANCEL_DATE, "10:00", "10:30"
+    )
+    business_id = pg_seed["business_id"]
+    lock_key = appointments._appointment_day_ordinal(CANCEL_DATE)
+
+    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
+
+    holder = make_pg_proxy(pg_pool)
+    held = threading.Event()
+    release = threading.Event()
+    record = {"cancel_done": None, "status_while_held": None}
+
+    def hold_lock():
+        try:
+            holder.execute("BEGIN IMMEDIATE")
+            acquire_business_write_lock(holder, business_id, lock_key)
+            held.set()
+            release.wait(timeout=15)
+            holder.commit()
+        finally:
+            holder.close()
+
+    def status_now():
+        with connect_autocommit(pg_seed["url"]) as probe:
+            return probe.execute(
+                "SELECT status FROM appointments WHERE id = %s", (appointment_id,)
+            ).fetchone()[0]
+
+    def cancelar():
+        record["cancel_done"] = appointments.cancel_appointment(
+            appointment_id, PHONE, business_id=business_id, management_token=CANCEL_TOKEN
+        )
+
+    holder_thread = threading.Thread(target=hold_lock)
+    cancel_thread = threading.Thread(target=cancelar)
+    holder_thread.start()
+    try:
+        assert held.wait(timeout=15)
+        cancel_thread.start()
+        time.sleep(0.4)
+        assert record["cancel_done"] is None, "cancel_appointment no respetó el advisory lock"
+        record["status_while_held"] = status_now()
+        assert record["status_while_held"] == "confirmed", "el turno se canceló sin tomar el lock"
+    finally:
+        release.set()
+        holder_thread.join(timeout=15)
+        cancel_thread.join(timeout=15)
+
+    assert not holder_thread.is_alive()
+    assert not cancel_thread.is_alive()
+    assert record["cancel_done"] is True
+    assert status_now() == "cancelled"

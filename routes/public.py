@@ -17,6 +17,8 @@ La resolución de tenant (load_current_business) se mantiene en app.py
 como before_request hook.
 """
 
+import secrets
+
 from flask import abort, g, jsonify, render_template, request
 
 
@@ -199,6 +201,12 @@ def business_reservar_wizard_datos(slug):
         selected_hora=hora,
         selected_resource_id=resource_id or None,
         step=3,
+        # Clave de idempotencia estable para TODO este render del wizard: el
+        # campo hidden viaja con cada intento del mismo formulario, asi que un
+        # double-click o un reintento del POST devuelven el turno original en
+        # lugar de 'occupied'. Mismo patron que el canje de fidelizacion
+        # (routes/public_api.py genera la suya al renderizar gestionar_turno).
+        idempotency_key=secrets.token_urlsafe(24),
         public_frontend_config=application.build_public_frontend_config(settings),
     )
 
@@ -322,6 +330,10 @@ def business_reservar_wizard_confirmar(slug):
             except (ValueError, TypeError):
                 return jsonify({"success": False, "error": "resource_id inválido."}), 400
 
+        # Clave de idempotencia del render del formulario (campo hidden). Vacia
+        # o ausente = flujo historico sin idempotencia.
+        idempotency_key = (data.get("idempotency_key") or "").strip() or None
+
         # Crear la reserva
         resultado = create_appointment(
             customer_name=nombre,
@@ -332,6 +344,7 @@ def business_reservar_wizard_confirmar(slug):
             business_id=business_id,
             email=email or None,
             resource_id=resource_id,
+            idempotency_key=idempotency_key,
         )
 
         if not resultado.get("success"):
@@ -359,6 +372,21 @@ def business_reservar_wizard_confirmar(slug):
             }
             code, msg = code_map.get(reason, ("INTERNAL_ERROR", "No se pudo realizar la reserva."))
             return jsonify({"success": False, "code": code, "reason": reason, "error": msg}), 400
+
+        # Replay idempotente: el turno ya existe (misma clave). No se reenvian
+        # los emails de confirmacion, que el cliente ya recibio.
+        if resultado.get("idempotent_replay"):
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "appointment_id": resultado.get("appointment_id"),
+                        "idempotent_replay": True,
+                        "message": "Este turno ya estaba reservado.",
+                    }
+                ),
+                200,
+            )
 
         # Enviar confirmaciones (no bloqueante)
         try:

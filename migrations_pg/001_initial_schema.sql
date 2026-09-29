@@ -159,7 +159,10 @@ CREATE TABLE appointments (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     business_id          BIGINT NOT NULL REFERENCES businesses(id),
     management_token_hash TEXT,
-    resource_id          BIGINT REFERENCES resources(id)
+    resource_id          BIGINT REFERENCES resources(id),
+    -- 023: clave opaca que el cliente genera al renderizar el formulario.
+    -- NULL en los turnos creados sin clave (alta manual, asistente de IA).
+    idempotency_key      TEXT
 );
 
 -- 022 (estado final): UNIQUE parcial con COALESCE(resource_id, -1); reemplaza
@@ -167,6 +170,13 @@ CREATE TABLE appointments (
 CREATE UNIQUE INDEX unique_confirmed_appointment_slot
 ON appointments (business_id, appointment_date, appointment_time, COALESCE(resource_id, -1))
 WHERE status = 'confirmed';
+
+-- 023: idempotencia de create_appointment. Un reintento con la misma clave
+-- devuelve el turno original en vez de fallar con 'occupied'. Parcial porque
+-- los turnos sin clave (admin manual, asistente de IA) deben quedar fuera.
+CREATE UNIQUE INDEX unique_appointment_idempotency_key
+ON appointments (business_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
 
 CREATE INDEX idx_appointments_phone ON appointments (phone);
 CREATE INDEX idx_appointments_date_status ON appointments (appointment_date, status);

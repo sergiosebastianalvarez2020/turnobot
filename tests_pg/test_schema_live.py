@@ -103,8 +103,50 @@ def test_indices_relevantes_de_appointments(pg_test_database):
         "idx_appointments_business",
         "idx_appointments_management_token",
         "unique_confirmed_appointment_slot",
+        "unique_appointment_idempotency_key",
     }
     assert expected <= indexes
+
+
+def test_indice_unico_parcial_de_idempotencia(pg_test_database):
+    """La idempotencia se verifica por COMPORTAMIENTO, no por el DDL.
+
+    Misma clave en el mismo negocio choca; misma clave en otro negocio no; y
+    NULL (turnos sin clave) no participa del índice.
+    """
+    with connect_autocommit(pg_test_database) as conn:
+        negocio_a = seed_business(pg_test_database)
+        negocio_b = seed_business(pg_test_database)
+
+        def insertar(business_id, hora, clave):
+            conn.execute(
+                "INSERT INTO appointments "
+                "(customer_name, service, appointment_date, appointment_time, "
+                " appointment_end, duration, status, business_id, idempotency_key) "
+                "VALUES (%s, 'Corte', %s, %s, %s, 30, 'cancelled', %s, %s)",
+                (
+                    "Cliente",
+                    datetime.date(2026, 9, 1),
+                    hora,
+                    datetime.time(hora.hour, 30),
+                    business_id,
+                    clave,
+                ),
+            )
+
+        insertar(negocio_a, datetime.time(10, 0), "clave-x")
+        with pytest.raises(UniqueViolation):
+            insertar(negocio_a, datetime.time(12, 0), "clave-x")
+
+        # NULL convive (índice parcial) y la misma clave en otro negocio también.
+        insertar(negocio_a, datetime.time(14, 0), None)
+        insertar(negocio_a, datetime.time(16, 0), None)
+        insertar(negocio_b, datetime.time(10, 0), "clave-x")
+
+        total = conn.execute(
+            "SELECT COUNT(*) FROM appointments WHERE business_id = %s", (negocio_a,)
+        ).fetchone()[0]
+    assert total == 3
 
 
 def test_indice_unico_parcial_confirmed(pg_test_database):

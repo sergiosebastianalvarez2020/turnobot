@@ -2556,6 +2556,59 @@ async function loadTimes(
 
 
     // ========================================================
+    // IDEMPOTENCIA DE LA RESERVA
+    //
+    // La clave se genera en el PRIMER intento y se reutiliza en los
+    // reintentos (timeout, error de red, doble click): el servidor
+    // devuelve el turno original en lugar de rechazar con 'occupied'.
+    // Se regenera si cambia servicio, fecha u hora, porque eso ya es
+    // otra operacion.
+    // ========================================================
+
+    let bookingIdempotency =
+        null;
+
+
+    const bookingFingerprint = (servicio, fecha, hora) =>
+        `${servicio}|${fecha}|${hora}`;
+
+
+    const getBookingIdempotencyKey = (servicio, fecha, hora) => {
+
+        const fingerprint =
+            bookingFingerprint(
+                servicio,
+                fecha,
+                hora
+            );
+
+
+        if (
+            !bookingIdempotency ||
+            bookingIdempotency.fingerprint !== fingerprint
+        ) {
+
+            bookingIdempotency = {
+
+                fingerprint: fingerprint,
+
+                key:
+                    (
+                        window.crypto &&
+                        window.crypto.randomUUID
+                    ) ?
+                        window.crypto.randomUUID() :
+                        `b-${Date.now()}-${Math.random().toString(36).slice(2)}`
+            };
+
+        }
+
+
+        return bookingIdempotency.key;
+    };
+
+
+    // ========================================================
     // CONFIRMAR RESERVA
     // ========================================================
 
@@ -2709,7 +2762,14 @@ async function loadTimes(
 
                                         fecha,
 
-                                        hora
+                                        hora,
+
+                                        idempotency_key:
+                                            getBookingIdempotencyKey(
+                                                servicio,
+                                                fecha,
+                                                hora
+                                            )
 
                                     })
                             },
@@ -2832,6 +2892,12 @@ async function loadTimes(
             // =================================================
             // RESERVA CORRECTA
             // =================================================
+
+            // La operacion quedo absorbida: la proxima reserva
+            // arranca con una clave nueva.
+            bookingIdempotency =
+                null;
+
 
             message.remove();
 
