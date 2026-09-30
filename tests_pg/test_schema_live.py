@@ -266,7 +266,7 @@ def test_init_database_applies_schema_postgresql(pg_enabled: str, monkeypatch):
 
     dbname = f"turnobot_bootstrap_{uuid.uuid4().hex[:10]}"
     create_test_database(pg_enabled, dbname)
-    db_conninfo = _helpers.test_db_conninfo(pg_enabled, dbname)
+    db_conninfo = _helpers.build_test_db_conninfo(pg_enabled, dbname)
     db_url = conninfo_to_url(db_conninfo)
 
     pool = init_pg_pool(None, conninfo=db_url)
@@ -317,7 +317,7 @@ def test_init_database_postgresql_idempotente(pg_enabled: str, monkeypatch):
 
     dbname = f"turnobot_bootstrap_{uuid.uuid4().hex[:10]}"
     create_test_database(pg_enabled, dbname)
-    db_conninfo = _helpers.test_db_conninfo(pg_enabled, dbname)
+    db_conninfo = _helpers.build_test_db_conninfo(pg_enabled, dbname)
     db_url = conninfo_to_url(db_conninfo)
 
     pool = init_pg_pool(None, conninfo=db_url)

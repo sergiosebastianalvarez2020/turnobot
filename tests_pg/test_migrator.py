@@ -37,7 +37,7 @@ from tests_pg._helpers import (
     create_test_database,
     drop_test_database,
     new_db_name,
-    test_db_conninfo,
+    build_test_db_conninfo,
 )
 
 pytestmark = pytest.mark.pg_live
@@ -205,7 +205,7 @@ def _setup_pg_target(pg_enabled: str) -> tuple[str, str, str]:
     """Crea una base PG descartable, aplica el schema y devuelve (dbname, conninfo, url)."""
     dbname = new_db_name()
     create_test_database(pg_enabled, dbname)
-    db_conninfo = test_db_conninfo(pg_enabled, dbname)
+    db_conninfo = build_test_db_conninfo(pg_enabled, dbname)
     db_url = conninfo_to_url(db_conninfo)
     apply_initial_schema(db_url)
     return dbname, db_conninfo, db_url

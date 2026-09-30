@@ -20,7 +20,7 @@ from tests_pg._helpers import (
     drop_test_database,
     new_db_name,
     seed_business,
-    test_db_conninfo,
+    build_test_db_conninfo,
 )
 
 TURNOBOT_PG_URL = os.getenv(TURNOBOT_PG_URL_KEY)
@@ -54,7 +54,7 @@ def pg_test_database(pg_enabled: str):
     """Crea una base descartable por test y la destruye al finalizar."""
     dbname = new_db_name()
     create_test_database(pg_enabled, dbname)
-    test_url = test_db_conninfo(pg_enabled, dbname)
+    test_url = build_test_db_conninfo(pg_enabled, dbname)
     apply_initial_schema(test_url)
     try:
         yield test_url

@@ -28,7 +28,7 @@ def connect_autocommit(conninfo: str) -> psycopg.Connection:
     return psycopg.connect(conninfo, autocommit=True)
 
 
-def test_db_conninfo(base_url: str, dbname: str) -> str:
+def build_test_db_conninfo(base_url: str, dbname: str) -> str:
     """Construye el conninfo de una base reemplazando el nombre de base."""
     return _conninfo.make_conninfo(base_url, dbname=dbname)
 
@@ -39,7 +39,7 @@ def conninfo_to_url(conninfo: str) -> str:
     Necesario para los tests que ejercitan ``init_pg_pool``/``create_app``:
     la detección de backend (igual que en producción, donde ``DATABASE_URL`` es
     una URL) se basa en el prefijo, no en el conninfo key/value que devuelve
-    ``test_db_conninfo``.
+    ``build_test_db_conninfo``.
     """
     params = _conninfo.conninfo_to_dict(conninfo)
     user = quote(params.get("user", ""), safe="")
