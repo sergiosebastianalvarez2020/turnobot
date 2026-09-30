@@ -21,6 +21,7 @@ Usa la misma config SMTP que la app (env). Nunca toca la ventana de reserva.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,6 +36,12 @@ from database.database import (
     get_business_settings_scoped,
     list_failed_notifications_scoped,
 )
+from database.pg_pool import (
+    close_pg_pool,
+    get_database_backend,
+    init_pg_pool,
+    normalize_database_url,
+)
 from services.notifications import (
     BUSINESS_CONFIRMATION,
     CONFIRMATION,
@@ -46,6 +53,28 @@ from services.notifications import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("retry_failed_notifications")
+
+
+def _init_cli_pool():
+    """Inicializa el pool PostgreSQL para este proceso CLI y lo devuelve.
+
+    `init_pg_pool()` sin argumentos NO alcanza en un proceso sin contexto Flask:
+    `conninfo` queda en `None` y la URL solo se toma de `app.config`, asi que
+    devolveria `None` aun con `DATABASE_URL` configurada y
+    `get_connection()` fallaria despues con "El pool PostgreSQL no esta
+    inicializado". Por eso se pasa la URL del entorno ya normalizada, igual que
+    hace `database.database.get_backend()`.
+
+    Devuelve `None` cuando el backend es SQLite (no hay nada que inicializar).
+    """
+    conninfo = normalize_database_url(os.getenv("DATABASE_URL"))
+    pool = init_pg_pool(conninfo=conninfo)
+    if pool is None and get_database_backend(conninfo) == "postgresql":
+        raise RuntimeError(
+            "No se pudo inicializar el pool PostgreSQL para el proceso CLI. "
+            "Revisar DATABASE_URL antes de ejecutar este script."
+        )
+    return pool
 
 
 def _resend(row):
@@ -76,40 +105,46 @@ def _resend(row):
 
 
 def _run_once(business_id=None, limit=100):
-    if not smtp_configured():
-        logger.warning("SMTP no configurado (falta SMTP_HOST). No se reintentará nada.")
-        return 0
+    pool = _init_cli_pool()
+    try:
+        if not smtp_configured():
+            logger.warning("SMTP no configurado (falta SMTP_HOST). No se reintentará nada.")
+            return 0
 
-    failed = list_failed_notifications_scoped(business_id, limit=limit)
-    if not failed:
-        logger.info("No hay notificaciones fallidas pendientes.")
-        return 0
+        failed = list_failed_notifications_scoped(business_id, limit=limit)
+        if not failed:
+            logger.info("No hay notificaciones fallidas pendientes.")
+            return 0
 
-    ok_count = 0
-    for row in failed:
-        business_id = row["business_id"]
-        settings = get_business_settings_scoped(business_id)
-        if not settings:
-            logger.warning("Negocio %s inexistente; se omite fila %s.", business_id, row["id"])
-            continue
+        ok_count = 0
+        for row in failed:
+            business_id = row["business_id"]
+            settings = get_business_settings_scoped(business_id)
+            if not settings:
+                logger.warning(
+                    "Negocio %s inexistente; se omite fila %s.", business_id, row["id"]
+                )
+                continue
 
-        ok, reason = _resend(row)
-        if ok:
-            ok_count += 1
-            logger.info(
-                "Reenviado %s turno %s (%s) -> %s",
-                row["type"],
-                row["appointment_id"],
-                business_id,
-                row["destination"],
-            )
-        else:
-            logger.info(
-                "Sigue fallando %s turno %s: %s", row["type"], row["appointment_id"], reason
-            )
+            ok, reason = _resend(row)
+            if ok:
+                ok_count += 1
+                logger.info(
+                    "Reenviado %s turno %s (%s) -> %s",
+                    row["type"],
+                    row["appointment_id"],
+                    business_id,
+                    row["destination"],
+                )
+            else:
+                logger.info(
+                    "Sigue fallando %s turno %s: %s", row["type"], row["appointment_id"], reason
+                )
 
-    logger.info("Resumen: %s reenviados de %s intentados.", ok_count, len(failed))
-    return ok_count
+        logger.info("Resumen: %s reenviados de %s intentados.", ok_count, len(failed))
+        return ok_count
+    finally:
+        close_pg_pool(pool)
 
 
 if __name__ == "__main__":
