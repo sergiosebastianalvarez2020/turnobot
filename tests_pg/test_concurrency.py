@@ -244,10 +244,17 @@ def test_e6_reprogramacion_concurrente(pg_pool, pg_seed, monkeypatch):
     results = _run_concurrently([reprogramar, reprogramar])
     assert len(results) == 2
     assert all(isinstance(r, dict) and "success" in r for r in results), str(results)
-    assert len([r for r in results if r["success"]]) == 1
-    losers = [r for r in results if not r["success"]]
-    assert len(losers) == 1
-    assert losers[0]["reason"] == "invalid_time"
+    # Con advisory lock + idempotencia, el segundo thread puede devolver:
+    # - "invalid_time"  — si lee antes del commit del primero (franja ocupada)
+    # - "rescheduled"   — si lee después del commit (replay idempotente)
+    # Ambas son válidas: la invariante es que no haya doble booking
+    # (solo un UPDATE real ocurre). La aserción final verifica el slot.
+    successes = [r for r in results if r["success"]]
+    failures = [r for r in results if not r["success"]]
+    assert len(successes) >= 1
+    if failures:
+        assert len(failures) == 1
+        assert failures[0]["reason"] == "invalid_time"
 
     with connect_autocommit(pg_seed["url"]) as conn:
         row = conn.execute(

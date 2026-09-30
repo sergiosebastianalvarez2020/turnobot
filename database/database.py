@@ -261,6 +261,7 @@ def _init_postgresql():
         ).fetchone()
         if row:
             logger.info("Schema PostgreSQL ya presente; se omite bootstrap.")
+            connection.rollback()
             return
 
         schema_path = BASE_DIR / "migrations_pg" / "001_initial_schema.sql"
