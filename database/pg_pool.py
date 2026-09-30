@@ -344,6 +344,61 @@ def replace_placeholders(sql: str) -> str:
     return "".join(result)
 
 
+def split_sql_statements(sql: str) -> list[str]:
+    """Divide un script SQL en sentencias individuales.
+
+    Respeta literales de texto (comillas simples), comentarios de línea
+    (``--``) y comentarios de bloque (``/* */``).  Las sentencias se
+    separan por ``;`` solo cuando no están dentro de un literal.
+    """
+    result: list[str] = []
+    current: list[str] = []
+    in_single = False
+    i = 0
+    n = len(sql)
+
+    while i < n:
+        char = sql[i]
+
+        if char == "-" and not in_single and i + 1 < n and sql[i + 1] == "-":
+            while i < n and sql[i] != "\n":
+                i += 1
+            continue
+
+        if char == "/" and not in_single and i + 1 < n and sql[i + 1] == "*":
+            i += 2
+            while i < n - 1 and not (sql[i] == "*" and sql[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        if char == "'" and not in_single:
+            in_single = True
+            current.append(char)
+        elif char == "'" and in_single:
+            if i + 1 < n and sql[i + 1] == "'":
+                current.append("''")
+                i += 1
+            else:
+                in_single = False
+                current.append(char)
+        elif char == ";" and not in_single:
+            stmt = "".join(current).strip()
+            if stmt:
+                result.append(stmt)
+            current = []
+        else:
+            current.append(char)
+
+        i += 1
+
+    stmt = "".join(current).strip()
+    if stmt:
+        result.append(stmt)
+
+    return result
+
+
 def escape_literal_percent(sql: str) -> str:
     """Duplica los '%' literales ('%' -> '%%') emulando el parser de psycopg3.
 
@@ -757,7 +812,12 @@ class PgCursorProxy:
     def executescript(self, sql_script: str) -> PgCursorProxy:
         adapted_script, _ = adapt_query_for_postgres(sql_script, None)
         if adapted_script:
-            _call_translated(lambda: self._cursor.execute(adapted_script))
+            statements = split_sql_statements(adapted_script)
+            for stmt in statements:
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+                _call_translated(lambda s=stmt: self._cursor.execute(s))
         return self
 
     def __iter__(self):

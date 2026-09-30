@@ -236,7 +236,55 @@ def apply_migrations():
 
 
 def init_database():
-    apply_migrations()
+    backend = get_backend()
+    if backend == "postgresql":
+        _init_postgresql()
+    else:
+        apply_migrations()
+
+
+def _init_postgresql():
+    """Aplica el schema inicial de PostgreSQL desde migrations_pg/001_initial_schema.sql.
+
+    No es idempotente por diseño: el archivo contiene DDL ``CREATE TABLE`` sin
+    ``IF NOT EXISTS`` y debe ejecutarse una sola vez contra una base vacía.
+    Si la tabla ``businesses`` ya existe, se asume que el schema está aplicado
+    y se omite.
+    """
+    from database.pg_pool import split_sql_statements
+
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = 'businesses'"
+        ).fetchone()
+        if row:
+            logger.info("Schema PostgreSQL ya presente; se omite bootstrap.")
+            return
+
+        schema_path = BASE_DIR / "migrations_pg" / "001_initial_schema.sql"
+        sql = schema_path.read_text(encoding="utf-8")
+        statements = split_sql_statements(sql)
+
+        logger.info("Aplicando schema inicial PostgreSQL (%d statements)...", len(statements))
+
+        for stmt in statements:
+            stmt = stmt.strip()
+            if not stmt:
+                continue
+            if stmt.upper() in ("BEGIN", "COMMIT", "ROLLBACK"):
+                continue
+            connection.execute(stmt)
+
+        connection.commit()
+        logger.info("Schema inicial PostgreSQL aplicado.")
+    except Exception:
+        connection.rollback()
+        logger.error("ERROR aplicando schema inicial PostgreSQL.", exc_info=True)
+        raise
+    finally:
+        connection.close()
 
 
 def create_business_with_owner(name, email, password=None, slug=None):

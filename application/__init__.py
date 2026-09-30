@@ -14,6 +14,7 @@ import os
 from flask import Flask
 
 from application.config import build_config
+from application.json_provider import PgAwareJSONProvider
 from application.logging_config import (
     USE_JSON_LOGS,
     RequestContextFilter,
@@ -36,6 +37,7 @@ def create_app():
         static_folder="static",
         static_url_path="/static",
     )
+    app.json = PgAwareJSONProvider(app)
 
     config = build_config(app, logger=logger)
     app.ADMIN_PASSWORD_HASH = config["ADMIN_PASSWORD_HASH"]

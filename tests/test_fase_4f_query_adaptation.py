@@ -10,6 +10,7 @@ from database.pg_pool import (
     adapt_query_for_postgres,
     escape_literal_percent,
     replace_placeholders,
+    split_sql_statements,
 )
 
 
@@ -197,6 +198,57 @@ class TestFase4FQueryAdaptation(unittest.TestCase):
         # close() devuelve la conexión al pool (putconn)
         conn_proxy.close()
         mock_pool.putconn.assert_called_once_with(mock_conn)
+
+    def test_split_sql_statements_basic(self):
+        """Verifica división básica por ';'."""
+        sql = "CREATE TABLE a (id int); CREATE TABLE b (id int);"
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 2)
+        self.assertIn("CREATE TABLE a", stmts[0])
+        self.assertIn("CREATE TABLE b", stmts[1])
+
+    def test_split_sql_statements_respects_string_literals(self):
+        """Verifica que ';' dentro de comillas simples no separa sentencias."""
+        sql = "INSERT INTO x (col) VALUES ('a;b'); CREATE TABLE y (id int);"
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 2)
+        self.assertIn("VALUES ('a;b')", stmts[0])
+        self.assertIn("CREATE TABLE y", stmts[1])
+
+    def test_split_sql_statements_escaped_quotes(self):
+        """Verifica que comillas escapadas '' dentro de literales no cierran el string."""
+        sql = "INSERT INTO x (col) VALUES ('it''s a test');"
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 1)
+        self.assertIn("it''s a test", stmts[0])
+
+    def test_split_sql_statements_skips_comments(self):
+        """Verifica que comentarios -- y /* */ se ignoren."""
+        sql = """
+        -- comentario de línea
+        CREATE TABLE a (id int);
+        /* comentario de bloque */
+        CREATE TABLE b (id int);
+        """
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 2)
+        self.assertIn("CREATE TABLE a", stmts[0])
+        self.assertIn("CREATE TABLE b", stmts[1])
+
+    def test_split_sql_statements_trailing_without_semicolon(self):
+        """Verifica que la última sentencia sin ';' se incluye."""
+        sql = "CREATE TABLE a (id int); CREATE TABLE b (id int)"
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 2)
+
+    def test_split_sql_statements_begin_commit(self):
+        """Verifica que BEGIN y COMMIT se manejen como sentencias separadas."""
+        sql = "BEGIN; CREATE TABLE a (id int); COMMIT;"
+        stmts = split_sql_statements(sql)
+        self.assertEqual(len(stmts), 3)
+        self.assertEqual(stmts[0].upper(), "BEGIN")
+        self.assertIn("CREATE TABLE a", stmts[1])
+        self.assertEqual(stmts[2].upper(), "COMMIT")
 
 
 if __name__ == "__main__":

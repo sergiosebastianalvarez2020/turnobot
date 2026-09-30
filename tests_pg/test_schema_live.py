@@ -7,11 +7,19 @@ seed de roles. No modifica el archivo del schema.
 """
 
 import datetime
+import uuid
 
 import pytest
 from psycopg.errors import UniqueViolation
 
-from tests_pg._helpers import connect_autocommit, seed_business
+import tests_pg._helpers as _helpers
+from tests_pg._helpers import (
+    connect_autocommit,
+    conninfo_to_url,
+    create_test_database,
+    drop_test_database,
+    seed_business,
+)
 
 pytestmark = pytest.mark.pg_live
 
@@ -244,3 +252,104 @@ def test_seed_roles_presente(pg_test_database):
     with connect_autocommit(pg_test_database) as conn:
         rows = conn.execute("SELECT id, name FROM roles ORDER BY id").fetchall()
     assert list(rows) == [(1, "owner"), (2, "admin"), (3, "staff"), (4, "customer")]
+
+
+# =====================================================================
+# FASE 5A — BOOTSTRAP DE POSTGRESQL DESDE CERO
+# =====================================================================
+
+
+def test_init_database_applies_schema_postgresql(pg_enabled: str, monkeypatch):
+    """init_database() aplica migrations_pg/001_initial_schema.sql en PostgreSQL."""
+    from database.database import init_database
+    from database.pg_pool import close_pg_pool, init_pg_pool
+
+    dbname = f"turnobot_bootstrap_{uuid.uuid4().hex[:10]}"
+    create_test_database(pg_enabled, dbname)
+    db_conninfo = _helpers.test_db_conninfo(pg_enabled, dbname)
+    db_url = conninfo_to_url(db_conninfo)
+
+    pool = init_pg_pool(None, conninfo=db_url)
+    assert pool is not None
+    pool.wait(timeout=15.0)
+
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    try:
+        with connect_autocommit(db_conninfo) as conn:
+            tables = conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ).fetchall()
+        assert len(tables) == 0
+
+        init_database()
+
+        with connect_autocommit(db_conninfo) as conn:
+            tables = conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ).fetchall()
+        actual = {row[0] for row in tables}
+        assert "businesses" in actual
+        assert "users" in actual
+        assert "roles" in actual
+        assert "appointments" in actual
+        assert "business_knowledge" in actual
+
+        with connect_autocommit(db_conninfo) as conn:
+            indexes = conn.execute(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'business_knowledge'"
+            ).fetchall()
+        index_names = {row[0] for row in indexes}
+        assert "idx_bk_tsearch" in index_names
+
+        with connect_autocommit(db_conninfo) as conn:
+            roles = conn.execute("SELECT id, name FROM roles ORDER BY id").fetchall()
+        assert list(roles) == [(1, "owner"), (2, "admin"), (3, "staff"), (4, "customer")]
+    finally:
+        close_pg_pool(pool=pool)
+        drop_test_database(pg_enabled, dbname)
+
+
+def test_init_database_postgresql_idempotente(pg_enabled: str, monkeypatch):
+    """Llamar a init_database() dos veces no falla ni duplica objetos."""
+    from database.database import init_database
+    from database.pg_pool import close_pg_pool, init_pg_pool
+
+    dbname = f"turnobot_bootstrap_{uuid.uuid4().hex[:10]}"
+    create_test_database(pg_enabled, dbname)
+    db_conninfo = _helpers.test_db_conninfo(pg_enabled, dbname)
+    db_url = conninfo_to_url(db_conninfo)
+
+    pool = init_pg_pool(None, conninfo=db_url)
+    assert pool is not None
+    pool.wait(timeout=15.0)
+
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    try:
+        init_database()
+        init_database()
+
+        with connect_autocommit(db_conninfo) as conn:
+            tables = conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ).fetchall()
+        actual = {row[0] for row in tables}
+        assert "businesses" in actual
+        assert "users" in actual
+    finally:
+        close_pg_pool(pool=pool)
+        drop_test_database(pg_enabled, dbname)
+
+
+def test_executescript_postgresql_multiple_statements(pg_test_database):
+    """executescript() divide y ejecuta correctamente SQL multi-sentencia en PostgreSQL."""
+    with connect_autocommit(pg_test_database) as conn:
+        conn.execute("CREATE TABLE exec_test_a (id int); CREATE TABLE exec_test_b (id int);")
+
+    with connect_autocommit(pg_test_database) as conn:
+        rows = conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name IN ('exec_test_a', 'exec_test_b')"
+        ).fetchall()
+    assert len(rows) == 2
