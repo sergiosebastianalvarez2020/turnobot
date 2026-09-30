@@ -941,6 +941,22 @@ class PgConnectionProxy:
         if self._returned:
             return
         self._returned = True
+        if not getattr(self._conn, "autocommit", False):
+            status = _pg_transaction_state(self._conn)
+            if _PgTransactionStatus is not None and status in (
+                _PgTransactionStatus.INTRANS,
+                _PgTransactionStatus.ACTIVE,
+                _PgTransactionStatus.INERROR,
+            ):
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+            elif _pg_is_in_transaction(self._conn):
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
         try:
             self._pool.putconn(self._conn)
         except Exception as err:
