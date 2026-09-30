@@ -505,6 +505,9 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     # Se hace después del reemplazo de placeholders para no interferir con ? en otros contextos
     sql = _adapt_boolean_comparisons(sql)
 
+    # 6b. Convertir 0/1 en INSERT VALUES de columnas BOOLEAN a FALSE/TRUE
+    sql = _adapt_insert_boolean_values(sql)
+
     # 7. Reemplazar placeholders '?' por '%s' fuera de comillas
     sql = replace_placeholders(sql)
 
@@ -558,6 +561,81 @@ def _adapt_boolean_comparisons(sql: str) -> str:
         sql = pattern_ne_0.sub(col, sql)
 
     return sql
+
+
+def _adapt_insert_boolean_values(sql: str) -> str:
+    """Convierte literales 0/1 en columnas BOOLEAN de INSERT VALUES a TRUE/FALSE.
+
+    PostgreSQL rechaza 'column "enabled" is of type boolean but expression is of type integer'.
+    En SQLite se usa 0/1 para booleanos; en INSERT VALUES se debe convertir explícitamente
+    al tipo BOOLEAN de PostgreSQL (0 -> false, 1 -> true) cuando la columna es BOOLEAN.
+    """
+    boolean_columns = {
+        "active",
+        "pending",
+        "is_open",
+        "needs_human",
+        "revoked",
+        "enabled",
+        "notifications_enabled",
+    }
+
+    import re
+
+    pattern = re.compile(
+        r"(INSERT\s+INTO\s+\w+\s*\()\s*([^)]+)\s*(\)\s*VALUES\s*\()", re.IGNORECASE
+    )
+    match = pattern.search(sql)
+    if not match:
+        return sql
+
+    columns_str = match.group(2)
+    columns = [c.strip().strip('"').strip("'") for c in columns_str.split(",")]
+    values_start = match.end()
+    depth = 1
+    i = values_start
+    while i < len(sql) and depth > 0:
+        if sql[i] == "(":
+            depth += 1
+        elif sql[i] == ")":
+            depth -= 1
+        i += 1
+    values_str = sql[values_start : i - 1]
+
+    values = []
+    current = ""
+    in_single = False
+    for char in values_str:
+        if char == "'" and not in_single:
+            in_single = True
+            current += char
+        elif char == "'" and in_single:
+            if current and current[-1] == "'":
+                current += char
+            else:
+                in_single = False
+                current += char
+        elif char == "," and not in_single:
+            values.append(current.strip())
+            current = ""
+        else:
+            current += char
+    if current.strip():
+        values.append(current.strip())
+
+    if len(columns) != len(values):
+        return sql
+
+    for idx, col in enumerate(columns):
+        if col.lower() in boolean_columns:
+            val = values[idx].strip()
+            if val == "0":
+                values[idx] = "false"
+            elif val == "1":
+                values[idx] = "true"
+
+    new_values_str = ", ".join(values)
+    return sql[:values_start] + new_values_str + sql[i - 1 :]
 
 
 class PgRowProxy(dict):

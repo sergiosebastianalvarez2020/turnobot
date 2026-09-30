@@ -7,6 +7,7 @@ from database.pg_pool import (
     PgConnectionProxy,
     PgCursorProxy,
     PgRowProxy,
+    _adapt_insert_boolean_values,
     adapt_query_for_postgres,
     escape_literal_percent,
     replace_placeholders,
@@ -249,6 +250,29 @@ class TestFase4FQueryAdaptation(unittest.TestCase):
         self.assertEqual(stmts[0].upper(), "BEGIN")
         self.assertIn("CREATE TABLE a", stmts[1])
         self.assertEqual(stmts[2].upper(), "COMMIT")
+
+    def test_adapt_insert_boolean_values_true_false(self):
+        """Convierte 0/1 a false/true en columnas BOOLEAN de INSERT VALUES."""
+        sql = (
+            "INSERT INTO loyalty_settings "
+            "(business_id, enabled, points_per_completed_appointment) "
+            "VALUES (?, 0, 1)"
+        )
+        result = _adapt_insert_boolean_values(sql)
+        self.assertIn("FALSE", result.upper())
+        self.assertIn("1)", result)  # points_per_completed_appointment keeps integer 1
+
+    def test_adapt_insert_boolean_values_no_boolean_column(self):
+        """No modifica INSERT VALUES sin columnas booleanas."""
+        sql = "INSERT INTO services (name, price, duration) VALUES (?, 100, 60)"
+        result = _adapt_insert_boolean_values(sql)
+        self.assertEqual(result, sql)
+
+    def test_adapt_insert_boolean_values_not_insert(self):
+        """No afecta queries que no son INSERT."""
+        sql = "SELECT * FROM businesses WHERE active"
+        result = _adapt_insert_boolean_values(sql)
+        self.assertEqual(result, sql)
 
 
 if __name__ == "__main__":
