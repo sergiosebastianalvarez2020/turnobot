@@ -1,5 +1,5 @@
 [Unit]
-Description=TurnoBot - Verificacion de restauracion del backup
+Description=TurnoBot - Verificacion de restauracion del backup PostgreSQL
 After=network.target turnobot-backup.service
 OnFailure=turnobot-failure-notify@%N.service
 
@@ -10,6 +10,6 @@ Group=opc
 WorkingDirectory=/home/opc/proyecto/turnobot
 EnvironmentFile=/etc/turnobot.env
 Environment=PYTHONPATH=/home/opc/proyecto/turnobot
-ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/verify_backup.py
+ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/verify_backup_postgresql.py
 NoNewPrivileges=true
 PrivateTmp=true

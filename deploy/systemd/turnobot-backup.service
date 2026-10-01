@@ -1,5 +1,5 @@
 [Unit]
-Description=TurnoBot - Backup de base de datos SQLite
+Description=TurnoBot - Backup de base de datos PostgreSQL
 After=network.target
 
 [Service]
@@ -9,6 +9,6 @@ Group=opc
 WorkingDirectory=/home/opc/proyecto/turnobot
 EnvironmentFile=/etc/turnobot.env
 Environment=PYTHONPATH=/home/opc/proyecto/turnobot
-ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/backup_database.py
+ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/scripts/backup_postgresql.py
 NoNewPrivileges=true
 PrivateTmp=true
