@@ -16,11 +16,11 @@ from database.pg_pool import create_pg_pool
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
     apply_initial_schema,
+    build_test_db_conninfo,
     create_test_database,
     drop_test_database,
     new_db_name,
     seed_business,
-    build_test_db_conninfo,
 )
 
 TURNOBOT_PG_URL = os.getenv(TURNOBOT_PG_URL_KEY)

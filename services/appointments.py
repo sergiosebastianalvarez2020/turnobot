@@ -440,6 +440,15 @@ def _idempotent_replay_response(row, business_id):
     turno (el cliente que lo reservó) conserva su enlace de gestión; quien
     reintenta recupera el `appointment_id` sin volver a enviar confirmaciones.
     """
+    time_val = row["appointment_time"]
+    if not isinstance(time_val, str):
+        time_val = time_val.strftime("%H:%M")
+    end_val = row["appointment_end"]
+    if end_val is not None and not isinstance(end_val, str):
+        end_val = end_val.strftime("%H:%M")
+    date_val = row["appointment_date"]
+    if not isinstance(date_val, str):
+        date_val = date_val.isoformat()
     return {
         "success": True,
         "appointment_id": row["id"],
@@ -447,9 +456,9 @@ def _idempotent_replay_response(row, business_id):
         "customer_email": row["customer_email"],
         "customer_name": row["customer_name"],
         "service": row["service"],
-        "appointment_date": row["appointment_date"],
-        "appointment_time": row["appointment_time"],
-        "appointment_end": row["appointment_end"],
+        "appointment_date": date_val,
+        "appointment_time": time_val,
+        "appointment_end": end_val,
         "duration": row["duration"],
         "business_id": business_id,
         "resource_id": row["resource_id"],
@@ -891,10 +900,13 @@ def get_appointment_counts(business_id=None):
         for row in rows:
             counts[row["status"]] = counts.get(row["status"], 0) + row["total"]
             if row["status"] == "confirmed":
-                try:
-                    apt_date = datetime.strptime(row["appointment_date"], "%Y-%m-%d").date()
-                except (ValueError, TypeError):
-                    apt_date = datetime.min.date()
+                apt_date = row["appointment_date"]
+                if isinstance(apt_date, str):
+                    try:
+                        apt_date = datetime.strptime(apt_date, "%Y-%m-%d").date()
+                    except ValueError:
+                        apt_date = datetime.min.date()
+                # If already a date object (PostgreSQL), use as-is
                 if apt_date >= today:
                     upcoming += row["total"]
         return {

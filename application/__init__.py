@@ -45,7 +45,7 @@ def create_app():
     app.TRUSTED_PROXY_COUNT = config["TRUSTED_PROXY_COUNT"]
 
     # Inicialización del pool PostgreSQL: únicamente cuando DB_BACKEND lo requiere.
-    # SQLite (default) nunca activa pg_pool (Fase 4D: seam de preparación).
+    # SQLite solo se activa mediante DB_BACKEND=sqlite explícito.
     if config["DB_BACKEND"] == "postgresql":
         from database.pg_pool import init_pg_pool, register_pg_pool_teardown
 
@@ -59,7 +59,7 @@ def create_app():
 
     from database.database import init_database
 
-    init_database()
+    init_database(config["DB_BACKEND"])
 
     # Contexto tenant y de negocio
     from application.tenant import (

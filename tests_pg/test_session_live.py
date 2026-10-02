@@ -66,7 +66,8 @@ def _import_app_facade(monkeypatch) -> None:
     """
     for key in _FACTORY_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("DATABASE_URL", "")
+    # No establecemos DATABASE_URL=""; el fixture pg_coherent_env ya la configura
+    # a la URL de mantenimiento. El test la sobrescribirá con la base de tests.
     importlib.import_module("app")
 
 
@@ -88,7 +89,7 @@ def test_create_app_entrega_conexion_del_pool_registrado(pg_test_database, monke
     """create_app() con DATABASE_URL PostgreSQL inicializa el pool y get_connection()
     devuelve una conexión real Y perteneciente a ese pool."""
     db_url = _db_url(pg_test_database)
-    monkeypatch.setattr(dbmod, "init_database", lambda: None)
+    monkeypatch.setattr(dbmod, "init_database", lambda backend=None: None)
     _import_app_facade(monkeypatch)
 
     monkeypatch.setenv("DATABASE_URL", db_url)
@@ -130,7 +131,7 @@ def test_get_connection_fuera_de_app_context_usa_el_pool_de_create_app(
     """Regresión del bug app.extensions/_global_pool: fuera de todo contexto Flask,
     get_connection() encuentra el pool creado por create_app() (antes: RuntimeError)."""
     db_url = _db_url(pg_test_database)
-    monkeypatch.setattr(dbmod, "init_database", lambda: None)
+    monkeypatch.setattr(dbmod, "init_database", lambda backend=None: None)
     _import_app_facade(monkeypatch)
 
     monkeypatch.setenv("DATABASE_URL", db_url)

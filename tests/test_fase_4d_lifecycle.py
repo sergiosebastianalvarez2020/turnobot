@@ -109,6 +109,7 @@ def test_proxy_delegates_methods(monkeypatch):
             conn.execute("SELECT 1")
             conn.commit()
             conn.rollback()
+            fake_conn.cursor.assert_called_once_with()
             fake_cursor.execute.assert_called_once_with("SELECT 1")
             fake_conn.commit.assert_called_once()
             fake_conn.rollback.assert_called_once()

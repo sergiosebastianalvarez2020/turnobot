@@ -8,6 +8,7 @@ from database.pg_pool import (
     PgCursorProxy,
     PgRowProxy,
     _adapt_insert_boolean_values,
+    _adapt_update_boolean_params,
     adapt_query_for_postgres,
     escape_literal_percent,
     replace_placeholders,
@@ -258,21 +259,58 @@ class TestFase4FQueryAdaptation(unittest.TestCase):
             "(business_id, enabled, points_per_completed_appointment) "
             "VALUES (?, 0, 1)"
         )
-        result = _adapt_insert_boolean_values(sql)
-        self.assertIn("FALSE", result.upper())
-        self.assertIn("1)", result)  # points_per_completed_appointment keeps integer 1
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertIn("FALSE", result_sql.upper())
+        self.assertIn("1)", result_sql)  # points_per_completed_appointment keeps integer 1
 
     def test_adapt_insert_boolean_values_no_boolean_column(self):
         """No modifica INSERT VALUES sin columnas booleanas."""
         sql = "INSERT INTO services (name, price, duration) VALUES (?, 100, 60)"
-        result = _adapt_insert_boolean_values(sql)
-        self.assertEqual(result, sql)
+        result_sql, result_params = _adapt_insert_boolean_values(sql)
+        self.assertEqual(result_sql, sql)
+        self.assertIsNone(result_params)
 
     def test_adapt_insert_boolean_values_not_insert(self):
         """No afecta queries que no son INSERT."""
         sql = "SELECT * FROM businesses WHERE active"
-        result = _adapt_insert_boolean_values(sql)
-        self.assertEqual(result, sql)
+        result_sql, result_params = _adapt_insert_boolean_values(sql)
+        self.assertEqual(result_sql, sql)
+        self.assertIsNone(result_params)
+
+    def test_adapt_update_boolean_params_true(self):
+        """Convierte int 1 en param de columna BOOLEAN a True en UPDATE SET."""
+        sql = "UPDATE businesses SET active = ?, name = ? WHERE id = ?"
+        params = (1, "Mi Negocio", 1)
+        _, result_params = _adapt_update_boolean_params(sql, params)
+        self.assertIs(result_params[0], True)
+        self.assertEqual(result_params[1], "Mi Negocio")
+        self.assertEqual(result_params[2], 1)
+
+    def test_adapt_update_boolean_params_false(self):
+        """Convierte int 0 en param de columna BOOLEAN a False en UPDATE SET."""
+        sql = "UPDATE businesses SET active = ? WHERE id = ?"
+        params = (0, 1)
+        _, result_params = _adapt_update_boolean_params(sql, params)
+        self.assertIs(result_params[0], False)
+        self.assertEqual(result_params[1], 1)
+
+    def test_adapt_update_boolean_params_non_boolean_not_converted(self):
+        """No transforma parámetros de columnas que no son BOOLEAN."""
+        sql = "UPDATE services SET price = ?, duration = ?, active = ? WHERE id = ?"
+        params = (10000, 30, 1, 5)
+        _, result_params = _adapt_update_boolean_params(sql, params)
+        self.assertEqual(result_params[0], 10000)
+        self.assertEqual(result_params[1], 30)
+        self.assertIs(result_params[2], True)
+        self.assertEqual(result_params[3], 5)
+
+    def test_adapt_update_boolean_params_no_transformation_needed(self):
+        """No modifica consultas o parámetros que no necesitan adaptación."""
+        sql = "UPDATE services SET price = 10000, duration = 30 WHERE id = ?"
+        params = (5,)
+        result_sql, result_params = _adapt_update_boolean_params(sql, params)
+        self.assertEqual(result_sql, sql)
+        self.assertEqual(result_params, (5,))
 
 
 if __name__ == "__main__":

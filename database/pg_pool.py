@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import atexit
 import logging
+import os
 import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import psycopg
 import psycopg_pool
@@ -104,18 +106,57 @@ def normalize_database_url(url: str | None) -> str | None:
     return url_trimmed
 
 
-def get_database_backend(url: str | None = None) -> str:
-    """Determina el backend de base de datos a partir de la URL dada o del entorno.
+def resolve_database_backend(
+    url: str | None = None,
+    *,
+    environment: str | None = None,
+    sqlite_opt_in: str | None = None,
+) -> tuple[str, str | None]:
+    """Valida una única selección de backend y devuelve ``(backend, URL normalizada)``.
 
-    Retorna "postgresql" si la URL comienza con postgresql:// o postgres://,
-    de lo contrario "sqlite".
+    En producción solo se permite una URL PostgreSQL completa. En desarrollo y
+    tests SQLite requiere ``DB_BACKEND=sqlite`` explícito; no hay fallback.
     """
+    environment = environment if environment is not None else os.getenv("FLASK_ENV")
+    sqlite_opt_in = (
+        sqlite_opt_in if sqlite_opt_in is not None else os.getenv("DB_BACKEND")
+    )
     normalized = normalize_database_url(url)
-    if normalized and (
-        normalized.startswith("postgresql://") or normalized.startswith("postgres://")
-    ):
-        return "postgresql"
-    return "sqlite"
+    if not normalized:
+        if environment == "production":
+            raise RuntimeError(
+                "DATABASE_URL es obligatoria y debe apuntar a PostgreSQL en producción"
+            )
+        if sqlite_opt_in == "sqlite":
+            return "sqlite", None
+        raise RuntimeError("DATABASE_URL PostgreSQL o DB_BACKEND=sqlite explícito son obligatorios")
+
+    scheme = urlsplit(normalized).scheme.lower()
+    if scheme not in ("postgres", "postgresql"):
+        if scheme == "sqlite" and environment != "production" and sqlite_opt_in == "sqlite":
+            return "sqlite", normalized
+        if environment == "production":
+            raise RuntimeError(
+                "DATABASE_URL de producción debe usar PostgreSQL; SQLite no está permitido"
+            )
+        raise RuntimeError("DATABASE_URL debe usar PostgreSQL; SQLite requiere DB_BACKEND=sqlite explícito")
+
+    try:
+        parsed = urlsplit(normalized)
+        if not parsed.hostname or not parsed.path or parsed.path == "/":
+            raise ValueError("host y nombre de base requeridos")
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("puerto inválido")
+    except ValueError as error:
+        raise RuntimeError("DATABASE_URL PostgreSQL malformada") from error
+    return "postgresql", normalized
+
+
+def get_database_backend(url: str | None = None) -> str:
+    """Compatibilidad: retorna el backend validado por el resolver único."""
+    if url is None:
+        url = os.getenv("DATABASE_URL")
+    return resolve_database_backend(url)[0]
 
 
 def create_pg_pool(
@@ -218,7 +259,10 @@ def init_pg_pool(
     if effective_url is None and app is not None:
         effective_url = app.config.get("DATABASE_URL")
 
-    backend = get_database_backend(effective_url)
+    if app is not None and app.config.get("DB_BACKEND"):
+        backend = app.config["DB_BACKEND"]
+    else:
+        backend = get_database_backend(effective_url)
     if backend != "postgresql" or not effective_url:
         logger.debug("Backend actual es %s; no se inicializa pool de PostgreSQL", backend)
         return None
@@ -441,8 +485,12 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     - Convierte 'INSERT OR REPLACE INTO loyalty_settings ...' a 'INSERT INTO loyalty_settings ... ON CONFLICT (business_id) DO UPDATE SET ...'.
     - Convierte 'datetime('now')' a 'CURRENT_TIMESTAMP'.
     - Convierte 'datetime('now', ?)' a '(CURRENT_TIMESTAMP + (%s)::interval)'.
-    - Reemplaza placeholders '?' por '%s'.
-    - Duplica '%' literales ('%' -> '%%') para el parser de psycopg3.
+    - Transforma comparaciones booleanas SQLite (col = 1/0) a PostgreSQL (col IS TRUE / NOT col).
+    - Corrige placeholders '?' en patrones `(? IS NULL OR col = ?)` para evitar 'could not determine data type of parameter'.
+    - Convierte literales 0/1 en columnas BOOLEAN de INSERT VALUES a FALSE/TRUE.
+    - Convierte params 0/1 para columnas BOOLEAN en UPDATE SET a Python bool.
+    - Reemplaza placeholders '?' por '%s' fuera de comillas.
+    - Duplica '%' literales para el parser de psycopg3.
     """
     if not query:
         return query, params
@@ -450,7 +498,7 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     trimmed = query.strip()
     uppercase_trimmed = trimmed.upper()
 
-    # 1. Omite PRAGMA en PostgreSQL
+    # 1. Omite PRAGMA propias de SQLite
     if uppercase_trimmed.startswith("PRAGMA"):
         return None, None
 
@@ -502,11 +550,19 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
         sql = re.sub(r"datetime\(\s*'now'\s*\)", "CURRENT_TIMESTAMP", sql, flags=re.IGNORECASE)
 
     # 6. Transformar comparaciones booleanas SQLite (col = 1/0) a PostgreSQL (col / NOT col)
-    # Se hace después del reemplazo de placeholders para no interferir con ? en otros contextos
     sql = _adapt_boolean_comparisons(sql)
 
-    # 6b. Convertir 0/1 en INSERT VALUES de columnas BOOLEAN a FALSE/TRUE
-    sql = _adapt_insert_boolean_values(sql)
+    # 6b. Fix para 'could not determine data type of parameter' en patrones comunes
+    # (? IS NULL OR col = ?)  ->  (col IS NULL OR col = ?)
+    # En SQLite, ? IS NULL funciona con cualquier tipo. En PostgreSQL, un placeholder
+    # sin tipo no puede usarse con IS NULL. Reescribimos para inferir el tipo.
+    sql = _adapt_nullable_placeholders(sql)
+
+    # 6c. Convertir 0/1 en INSERT VALUES de columnas BOOLEAN a FALSE/TRUE
+    sql, params = _adapt_insert_boolean_values(sql, params)
+
+    # 6d. Convertir params 0/1 para columnas BOOLEAN en UPDATE SET statements
+    sql, params = _adapt_update_boolean_params(sql, params)
 
     # 7. Reemplazar placeholders '?' por '%s' fuera de comillas
     sql = replace_placeholders(sql)
@@ -517,11 +573,35 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     return sql, params
 
 
+def _adapt_nullable_placeholders(sql: str) -> str:
+    """Rewrites `(? IS NULL OR col = ?)` patterns to avoid PostgreSQL's
+    'could not determine data type of parameter' error.
+
+    In SQLite, `?` used with `IS NULL` works because SQLite uses dynamic typing.
+    PostgreSQL needs the parameter type to be inferrable. We cast the placeholder
+    to TEXT to allow PostgreSQL to infer a type, making `IS NULL` valid.
+
+    Pattern: `? IS NULL OR col = ?` -> `(?::text IS NULL OR col = ?)
+    (Note: uses PostgreSQL ::text cast syntax)
+    """
+    import re
+    # (? IS NULL OR col = ?) -> (CAST(? AS TEXT) IS NULL OR col = ?)
+    pattern = re.compile(
+        r"\(\s*\?\s*IS\s+NULL\s+OR\s+(\w+)\s*=\s*\?\s*\)", re.IGNORECASE
+    )
+    sql = pattern.sub(r"(CAST(? AS TEXT) IS NULL OR \1 = ?)", sql)
+    return sql
+
+
 def _adapt_boolean_comparisons(sql: str) -> str:
     """Convierte comparaciones booleanas estilo SQLite (col = 1 / col = 0) a PostgreSQL nativo.
 
     En SQLite: WHERE active = 1, WHERE active = 0, WHERE is_open = 1, etc.
-    En PostgreSQL: WHERE active, WHERE NOT active, WHERE is_open, WHERE NOT is_open
+    En PostgreSQL: WHERE active IS TRUE, WHERE NOT active, WHERE is_open IS TRUE, etc.
+
+    Se usa 'IS TRUE' en lugar de 'col' por sí solo porque PostgreSQL no puede
+    inferir el tipo de placeholders ? en la misma cláusula WHERE cuando se usa
+    una columna booleana sin operador de comparación explícito.
 
     Esta transformación es segura porque:
     - Solo afecta comparaciones con literales 1 o 0
@@ -544,9 +624,9 @@ def _adapt_boolean_comparisons(sql: str) -> str:
     # Patrón: columna = 1  o  columna = 0  (fuera de comillas)
     # Usamos word boundaries para evitar coincidencias parciales
     for col in boolean_columns:
-        # col = 1  ->  col
+        # col = 1  ->  col IS TRUE
         pattern_eq_1 = re.compile(rf"\b{re.escape(col)}\s*=\s*1\b", re.IGNORECASE)
-        sql = pattern_eq_1.sub(col, sql)
+        sql = pattern_eq_1.sub(f"{col} IS TRUE", sql)
 
         # col = 0  ->  NOT col
         pattern_eq_0 = re.compile(rf"\b{re.escape(col)}\s*=\s*0\b", re.IGNORECASE)
@@ -556,19 +636,22 @@ def _adapt_boolean_comparisons(sql: str) -> str:
         pattern_ne_1 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*1\b", re.IGNORECASE)
         sql = pattern_ne_1.sub(f"NOT {col}", sql)
 
-        # col != 0  ->  col
+        # col != 0  ->  col IS TRUE
         pattern_ne_0 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*0\b", re.IGNORECASE)
-        sql = pattern_ne_0.sub(col, sql)
+        sql = pattern_ne_0.sub(f"{col} IS TRUE", sql)
 
     return sql
 
 
-def _adapt_insert_boolean_values(sql: str) -> str:
+def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any]:
     """Convierte literales 0/1 en columnas BOOLEAN de INSERT VALUES a TRUE/FALSE.
 
     PostgreSQL rechaza 'column "enabled" is of type boolean but expression is of type integer'.
     En SQLite se usa 0/1 para booleanos; en INSERT VALUES se debe convertir explícitamente
     al tipo BOOLEAN de PostgreSQL (0 -> false, 1 -> true) cuando la columna es BOOLEAN.
+
+    Funciona tanto con SQL que tiene valores literales como con consultas parametrizadas
+    (adapta los parámetros en `params` solo para posiciones que usan placeholders).
     """
     boolean_columns = {
         "active",
@@ -587,7 +670,7 @@ def _adapt_insert_boolean_values(sql: str) -> str:
     )
     match = pattern.search(sql)
     if not match:
-        return sql
+        return sql, params
 
     columns_str = match.group(2)
     columns = [c.strip().strip('"').strip("'") for c in columns_str.split(",")]
@@ -602,7 +685,9 @@ def _adapt_insert_boolean_values(sql: str) -> str:
         i += 1
     values_str = sql[values_start : i - 1]
 
+    # Parse values, tracking which are placeholders vs literals
     values = []
+    is_placeholder = []
     current = ""
     in_single = False
     for char in values_str:
@@ -616,26 +701,115 @@ def _adapt_insert_boolean_values(sql: str) -> str:
                 in_single = False
                 current += char
         elif char == "," and not in_single:
-            values.append(current.strip())
+            val = current.strip()
+            values.append(val)
+            # Check if it's a placeholder (? or %s or $n)
+            is_placeholder.append(val in ("?", "%s") or re.match(r"^\$\d+$", val))
             current = ""
         else:
             current += char
     if current.strip():
-        values.append(current.strip())
+        val = current.strip()
+        values.append(val)
+        is_placeholder.append(val in ("?", "%s") or re.match(r"^\$\d+$", val))
 
     if len(columns) != len(values):
-        return sql
+        return sql, params
 
+    # Determine which column indices are boolean AND use placeholders
+    boolean_placeholder_indices = [
+        idx for idx, col in enumerate(columns)
+        if col.lower() in boolean_columns and is_placeholder[idx]
+    ]
+
+    # Adapt params for boolean columns that use placeholders
+    if params is not None and boolean_placeholder_indices:
+        params_list = list(params) if not isinstance(params, list) else params
+        param_idx = 0
+        for col_idx in range(len(columns)):
+            if is_placeholder[col_idx]:
+                if param_idx < len(params_list) and col_idx in boolean_placeholder_indices:
+                    val = params_list[param_idx]
+                    if val == 0 or val is False:
+                        params_list[param_idx] = False
+                    elif val == 1 or val is True:
+                        params_list[param_idx] = True
+                param_idx += 1
+        params = tuple(params_list) if isinstance(params, tuple) else params_list
+
+    # Also adapt literal values in the SQL string (for non-parametrized queries)
     for idx, col in enumerate(columns):
-        if col.lower() in boolean_columns:
+        if col.lower() in boolean_columns and not is_placeholder[idx]:
             val = values[idx].strip()
-            if val == "0":
-                values[idx] = "false"
-            elif val == "1":
-                values[idx] = "true"
+            if val in ("0", "1"):
+                values[idx] = "true" if val == "1" else "false"
 
     new_values_str = ", ".join(values)
-    return sql[:values_start] + new_values_str + sql[i - 1 :]
+    return sql[:values_start] + new_values_str + sql[i - 1 :], params
+
+
+def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any]:
+    """Converts integer/boolean params for known BOOLEAN columns in UPDATE SET.
+
+    PostgreSQL rejects integer values (0/1) for BOOLEAN columns, while SQLite
+    (and much of the app code) uses 0/1. This function inspects UPDATE...SET
+    clauses and converts 0/1/True/False params to Python bool for columns
+    known to be BOOLEAN.
+
+    Only modifies params, not SQL (unlike _adapt_boolean_comparisons which
+    handles WHERE-clause literals).
+    """
+    if not params:
+        return sql, params
+
+    boolean_columns = {
+        "active", "pending", "is_open", "needs_human",
+        "revoked", "enabled", "notifications_enabled",
+    }
+
+    import re
+    # Match patterns like: SET col = ?  or SET col = ?, col2 = ?
+    # We need to find which params correspond to boolean columns
+    # Pattern: "SET col1 = ?, col2 = ?, ..."
+    params_list = list(params)
+
+    # Find SET clause and extract column->param_index mapping
+    set_match = re.search(
+        r"\bSET\s+(.+?)\s*(?:WHERE|$)",
+        sql,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not set_match:
+        return sql, params
+
+    set_clause = set_match.group(1)
+    # Parse assignments: col = ?, col2 = ?, col3 = ?
+    # Also handle col = literal_value
+    assignments = re.findall(
+        r'(\w+)\s*=\s*(\?|%s|[\'"]?\d+[\'"]?)',
+        set_clause,
+        re.IGNORECASE,
+    )
+
+    # Count params before the SET clause to know the offset
+    param_offset = 0
+    # Count ? or %s in the part before SET
+    before_set = sql[:set_match.start()]
+    param_offset = len(re.findall(r"\?|%s", before_set))
+
+    for idx, (col_name, param_val) in enumerate(assignments):
+        if col_name.lower() in boolean_columns and param_val in ("?", "%s"):
+            param_idx = param_offset + idx
+            if 0 <= param_idx < len(params_list):
+                val = params_list[param_idx]
+                if isinstance(val, bool):
+                    params_list[param_idx] = val
+                elif val is True or val == 1:
+                    params_list[param_idx] = True
+                elif val is False or val == 0:
+                    params_list[param_idx] = False
+
+    return sql, tuple(params_list) if isinstance(params, tuple) else params_list
 
 
 class PgRowProxy(dict):

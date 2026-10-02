@@ -18,6 +18,8 @@ ciclo de vida, no la conectividad a un PostgreSQL de verdad.
 """
 
 
+import os
+
 import pytest
 
 from database import database as database_mod
@@ -52,8 +54,16 @@ class _FakePool:
 def _reset_global_pool():
     """`_global_pool` es estado de módulo: se restaura para no filtrar entre tests."""
     previous = pg_pool._global_pool
+    previous_env = {key: os.environ.get(key) for key in ("FLASK_ENV", "DB_BACKEND")}
+    os.environ["FLASK_ENV"] = "development"
+    os.environ.pop("DB_BACKEND", None)
     yield
     pg_pool._global_pool = previous
+    for key, value in previous_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @pytest.fixture
@@ -77,6 +87,8 @@ def test_retry_initializa_pool_antes_de_la_db_y_lo_cierra(monkeypatch, pool_spy)
     import scripts.retry_failed_notifications as retry_runner
 
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(retry_runner, "smtp_configured", lambda: True)
 
     seen = {}
@@ -106,6 +118,8 @@ def test_send_reminders_inicializa_pool_antes_de_la_db_y_lo_cierra(monkeypatch, 
     import scripts.send_reminders as reminder_runner
 
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(reminder_runner, "smtp_configured", lambda: True)
 
     seen = {}
@@ -133,6 +147,8 @@ def test_pool_se_cierra_aunque_la_operacion_falle(monkeypatch, pool_spy, module_
     runner = __import__(f"scripts.{module_name}", fromlist=["_run_once"])
 
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(runner, "smtp_configured", lambda: True)
 
     boom = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db explotó"))  # noqa: E731
@@ -156,6 +172,8 @@ def test_normaliza_postgres_url_legacy(monkeypatch, pool_spy):
     import scripts.send_reminders as reminder_runner
 
     monkeypatch.setenv("DATABASE_URL", "postgres://turnobot:secret@localhost:5432/turnobot")
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(reminder_runner, "smtp_configured", lambda: True)
     monkeypatch.setattr(reminder_runner, "list_all_businesses_scoped", lambda: [])
 
@@ -165,14 +183,16 @@ def test_normaliza_postgres_url_legacy(monkeypatch, pool_spy):
 
 
 def test_sin_database_url_no_se_crea_pool(monkeypatch, pool_spy):
-    """Backend SQLite: no hay nada que inicializar y el worker sigue operando."""
+    """Sin URL el worker falla explícitamente en vez de caer a SQLite."""
     import scripts.send_reminders as reminder_runner
 
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DB_BACKEND", raising=False)
     monkeypatch.setattr(reminder_runner, "smtp_configured", lambda: True)
     monkeypatch.setattr(reminder_runner, "list_all_businesses_scoped", lambda: [])
 
-    assert reminder_runner._run_once() == 0
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        reminder_runner._run_once()
     assert "called" not in pool_spy.created
     assert pool_spy.closed is False
 
@@ -188,6 +208,8 @@ def test_falla_ruidosamente_si_postgres_no_puede_inicializar(monkeypatch):
         raise RuntimeError("no se pudo crear el pool")
 
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(pg_pool, "create_pg_pool", boom)
 
     import scripts.send_reminders as reminder_runner
@@ -204,6 +226,8 @@ def test_el_bug_original_sigue_siendo_reproducible_sin_el_fix(monkeypatch):
     contrato previo estaría probando otra cosa.
     """
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(pg_pool, "_global_pool", None)
 
     assert pg_pool.get_pg_pool() is None
@@ -219,6 +243,8 @@ def test_worker_cli_no_necesita_contexto_flask(monkeypatch, pool_spy):
     import scripts.retry_failed_notifications as retry_runner
 
     monkeypatch.setenv("DATABASE_URL", PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setattr(retry_runner, "smtp_configured", lambda: True)
 
     checked = {}

@@ -201,3 +201,76 @@ def seed_confirmed_appointment(
             ),
         ).fetchone()
     return row[0]
+
+
+def seed_standard_test_data(url: str) -> int:
+    """Seed the test database with standard data matching SQLite migrations.
+
+    Creates:
+    - Business with id=1 (name='El Corte', slug='el-corte')
+    - Business settings for business_id=1
+    - Weekly schedules for business_id=1 (matching 001_initial.sql)
+    - Services for business_id=1 (Corte, Corte + barba, Barba with ids 1,2,3)
+
+    Returns the business_id (always 1).
+    """
+    with connect_autocommit(url) as conn:
+        # Create business with id=1
+        conn.execute(
+            "INSERT INTO businesses (id, name, slug, active, pending, created_at) "
+            "VALUES (1, %s, %s, TRUE, FALSE, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (id) DO NOTHING",
+            ("El Corte", "el-corte"),
+        )
+
+        # Business settings
+        conn.execute(
+            "INSERT INTO business_settings "
+            "(business_name, slot_duration, break_between_slots, business_type, "
+            " business_initials, business_description, timezone, business_id, "
+            " notifications_enabled, notification_email, logo_url, "
+            " primary_color, secondary_color) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (business_id) DO NOTHING",
+            (
+                "El Corte", 60, 0, "Barberia", "EC", "Barberia masculina",
+                "America/Argentina/Buenos_Aires", 1,
+                False, "", "", "", ""
+            ),
+        )
+
+        # Weekly schedules (matching 001_initial.sql)
+        schedules = [
+            (0, True, "09:00", "13:00", "15:00", "20:00"),
+            (1, True, "09:00", "13:00", "15:00", "20:00"),
+            (2, True, "09:00", "13:00", "15:00", "20:00"),
+            (3, True, "09:00", "13:00", "15:00", "20:00"),
+            (4, True, "09:00", "13:00", "15:00", "20:00"),
+            (5, True, "09:00", "13:00", None, None),
+            (6, False, None, None, None, None),
+        ]
+        for day, is_open, morn_start, morn_end, aft_start, aft_end in schedules:
+            conn.execute(
+                "INSERT INTO weekly_schedules "
+                "(day_of_week, is_open, morning_start, morning_end, afternoon_start, "
+                " afternoon_end, business_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (business_id, day_of_week) DO NOTHING",
+                (day, is_open, morn_start, morn_end, aft_start, aft_end, 1),
+            )
+
+        # Services (matching 001_initial.sql)
+        services = [
+            (1, "Corte", "10000", 30),
+            (2, "Corte + barba", "15000", 50),
+            (3, "Barba", "7000", 20),
+        ]
+        for svc_id, name, price, duration in services:
+            conn.execute(
+                "INSERT INTO services (id, name, price, duration, active, business_id) "
+                "VALUES (%s, %s, %s, %s, TRUE, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (svc_id, name, price, duration, 1),
+            )
+
+    return 1

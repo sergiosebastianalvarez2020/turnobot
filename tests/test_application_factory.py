@@ -32,6 +32,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ENV_KEYS = (
     "SECRET_KEY",
     "FLASK_ENV",
+    "DATABASE_URL",
+    "DB_BACKEND",
     "ADMIN_PASSWORD",
     "ADMIN_PASSWORD_HASH",
     "COOKIE_SECURE",
@@ -48,6 +50,9 @@ class _FactoryIsolationMixin:
         self._orig_db = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self._tmp.name) / "factory.db"
         self._orig_env = {key: os.environ.get(key) for key in _ENV_KEYS}
+        os.environ.pop("FLASK_ENV", None)
+        os.environ.pop("DATABASE_URL", None)
+        os.environ["DB_BACKEND"] = "sqlite"
 
     def tearDown(self):
         database.DATABASE_PATH = self._orig_db
@@ -62,6 +67,7 @@ class _FactoryIsolationMixin:
 class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
     # C1 — Factory funcional
     def test_create_app_returns_functional_flask_app(self):
+        os.environ["DB_BACKEND"] = "sqlite"
         new_app = create_app()
         other = create_app()
 
@@ -86,6 +92,7 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
 
     # C2 — URL map
     def test_create_app_registers_expected_url_map(self):
+        os.environ["DB_BACKEND"] = "sqlite"
         new_app = create_app()
         rules = list(new_app.url_map.iter_rules())
         endpoints = {rule.endpoint for rule in rules}
@@ -114,6 +121,7 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
 
     # C3 — Hooks + CSRF
     def test_create_app_registers_hooks_and_csrf(self):
+        os.environ["DB_BACKEND"] = "sqlite"
         new_app = create_app()
 
         before_request = [
@@ -135,6 +143,7 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
 
     # C4 — Security headers
     def test_responses_include_security_headers(self):
+        os.environ["DB_BACKEND"] = "sqlite"
         new_app = create_app()
         response = new_app.test_client().get("/login")
 
@@ -152,6 +161,7 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
     def test_dev_default_config(self):
         for key in _ENV_KEYS:
             os.environ.pop(key, None)
+        os.environ["DB_BACKEND"] = "sqlite"
         os.environ["COOKIE_SECURE"] = "1"
 
         new_app = create_app()

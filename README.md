@@ -20,7 +20,7 @@ TurnoGo is a Flask-based, multi-tenant appointment booking platform. Each busine
 - **Admin panel** — Full business management: services, schedules, appointments, users/roles, loyalty, resources, knowledge base, conversation moderation, and AI analytics
 - **Loyalty & rewards** — Points earned per completed appointment, configurable rules, rewards catalog
 - **Resource scheduling** — Bookable resources (e.g., individual barber chairs) with capacity management
-- **Knowledge base** — FAQ, instructions, and policies with full-text search (FTS5)
+- **Knowledge base** — FAQ, instructions, and policies with full-text search (PostgreSQL `tsvector`/GIN in production; SQLite FTS5 fallback)
 - **Email notifications** — SMTP-based confirmation and reminder emails
 - **Security** — CSRF tokens, scrypt password hashing, SHA-256 session management, security headers, in-memory rate limiting
 - **Health monitoring** — `/health` endpoint with database connectivity check
@@ -33,11 +33,11 @@ TurnoGo is a Flask-based, multi-tenant appointment booking platform. Each busine
 | Framework | Flask 3.1.3 |
 | AI | Google Gemini (`google-genai` 2.18.1) |
 | WSGI Server | Waitress 3.0.2 |
-| Database | SQLite (WAL mode) |
+| Database | PostgreSQL in OCI production; SQLite fallback remains for development/tests |
 | Templates | Jinja2 |
 | Rate Limiting | In-memory sliding window (shared `extensions.py` state) |
 | Authentication | scrypt password hashing, SHA-256 session tokens |
-| Search | SQLite FTS5 (knowledge base) |
+| Search | PostgreSQL `tsvector` + GIN in production; SQLite FTS5 fallback |
 
 ### Dependencies
 
@@ -96,18 +96,24 @@ turnobot/
 │   ├── platform.py                 # Platform identity
 │   └── product.py                  # Onboarding state
 ├── database/
-│   ├── database.py                 # SQLite connection + migration runner
-│   ├── seed_auth.py                # Initial admin/superadmin seeding
-│   └── migrations/                 # 22 SQL schema migrations (001–022)
+│   ├── database.py                 # PostgreSQL connection/init + SQLite fallback
+│   ├── pg_pool.py                  # PostgreSQL connection pool and compatibility layer
+│   ├── migrator.py                 # One-time SQLite → PostgreSQL data migration
+│   └── seed_auth.py                # Initial admin/superadmin seeding
+├── migrations/                     # Legacy SQLite schema migrations (001–023)
+├── migrations_pg/                  # PostgreSQL production schema
 ├── templates/                      # 22 Jinja2 templates
 ├── static/                         # CSS & JavaScript assets
 ├── scripts/                        # Operational scripts
 │   ├── run_production.ps1          # Production startup
 │   ├── check_health.py             # HTTP healthcheck
-│   ├── backup_database.py          # SQLite backup (online, WAL-safe)
-│   ├── verify_backup.py            # Backup integrity verification
-│   ├── restore_database.py         # Database restore
-│   ├── prune_backups.py            # Backup rotation
+│   ├── backup_postgresql.py        # PostgreSQL production backup
+│   ├── verify_backup_postgresql.py # PostgreSQL dump readability check
+│   ├── restore_postgresql.py       # Restore PostgreSQL dump to a target database
+│   ├── backup_database.py          # Legacy SQLite backup (online, WAL-safe)
+│   ├── verify_backup.py            # Legacy SQLite backup verification
+│   ├── restore_database.py         # Legacy SQLite restore
+│   ├── prune_backups.py            # Legacy SQLite backup rotation
 │   ├── send_reminders.py           # 24h appointment reminders
 │   ├── retry_failed_notifications.py
 │   ├── create_superadmin.py        # Superadmin bootstrap
@@ -194,13 +200,21 @@ python -m mypy app.py                    # if mypy installed
 # Health check
 python scripts/check_health.py
 
-# Database backup
-python scripts/backup_database.py
+# PostgreSQL production backup
+python scripts/backup_postgresql.py
 ```
 
 ## Testing
 
-The project maintains **787 tests** across **59 test files** covering:
+The test suite has two database paths:
+
+- `tests/` is the general application suite and currently uses the SQLite
+  backend when `DB_BACKEND=sqlite` is set explicitly. Its results do not by
+  themselves certify PostgreSQL behavior.
+- `tests_pg/` is the live PostgreSQL integration suite. CI runs it against a
+  PostgreSQL service; locally it requires `TURNOBOT_PG_URL`.
+
+The suites cover:
 
 - Multi-tenant isolation (each business's data is isolated)
 - Appointment booking/cancellation/rescheduling with management tokens
@@ -208,10 +222,10 @@ The project maintains **787 tests** across **59 test files** covering:
 - Security (CSRF, password hashing, security headers, token validation)
 - AI chatbot tooling and error handling
 - Email notifications
-- Knowledge base (FTS5 search)
+- Knowledge base (PostgreSQL full-text search and SQLite fallback)
 - Loyalty points and membership tiers
 - Conversation management and human handoff
-- Backup/restore integrity
+- PostgreSQL backup tooling and legacy SQLite backup/restore integrity
 - Onboarding and provisioning
 
 ```bash
@@ -344,7 +358,12 @@ State is process-local via `extensions.py`. Horizontal scaling requires shared s
 
 ## Database
 
-SQLite with WAL mode. 22 schema migrations are applied automatically on startup via `database/database.py:init_database()`.
+OCI production requires a valid PostgreSQL `DATABASE_URL`; its schema is
+initialized from `migrations_pg/`. Missing, empty, malformed, or non-PostgreSQL
+`DATABASE_URL` values stop startup with an explicit error. Production never
+falls back silently to SQLite. In development and tests, select SQLite
+explicitly with `DB_BACKEND=sqlite`. The SQLite implementation (WAL mode) and
+legacy migrations under `migrations/` remain available for that opt-in path.
 
 ### Key Tables
 
@@ -392,18 +411,16 @@ python scripts/check_health.py
 ### Backups
 
 ```bash
-# Backup (uses SQLite online backup API — WAL-safe)
-python scripts/backup_database.py
-
-# Restore (stop app first)
-python scripts/restore_database.py database/backups/appointments-YYYYMMDD-HHMMSS.db
-
-# Verify backup integrity
-python scripts/verify_backup.py database/backups/appointments-YYYYMMDD-HHMMSS.db
-
-# Prune old backups
-python scripts/prune_backups.py
+# PostgreSQL production backup and archive-readability check
+python scripts/backup_postgresql.py
+python scripts/verify_backup_postgresql.py
 ```
+
+`verify_backup_postgresql.py` checks that `pg_restore --list` can read the
+dump; it is not a full restore test. `restore_postgresql.py` is separate and
+targets a database explicitly. The SQLite backup, restore, verify, and prune
+scripts are retained as legacy tooling and are not the production PostgreSQL
+backup path.
 
 ### Notifications
 

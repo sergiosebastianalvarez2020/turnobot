@@ -1,19 +1,24 @@
-import sqlite3
-import tempfile
-import unittest
+"""Tests funcionales de appointments: reservas, cancelación, reprogramación, locks, idempotencia.
+
+Ejecutan contra PostgreSQL usando la fixture de base temporal aislada.
+El backend SQLite se mantiene únicamente en tests de migración histórica
+(ver test_appointment_idempotency_migration.py) y herramientas de backup
+que realmente dependen del formato SQLite.
+"""
+
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
 import database.database as database
 from services import appointments
+from tests._pg_compat import PostgreSQLTestCase
 
 FROZEN_NOW = datetime(
     2027, 1, 24, 10, 0
 )  # domingo fijo: next_open_day() cae en lunes con turno de tarde
 
-ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
+ZONA_HORARIO = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 class _FrozenDatetime(datetime):
@@ -22,51 +27,29 @@ class _FrozenDatetime(datetime):
         return FROZEN_NOW
 
 
-class TestReservaDisponible(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
+def _next_open_day():
+    """Próximo día que no es domingo."""
+    date = datetime.now(ZONA_HORARIO).date() + timedelta(days=1)
+    while date.weekday() == 6:
+        date += timedelta(days=1)
+    return date.isoformat()
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+class TestReservaDisponible(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def test_reserva_en_horario_disponible(self):
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
-        self.assertTrue(result["success"])
-        self.assertIsNotNone(result["appointment_id"])
+        assert result["success"] is True
+        assert result["appointment_id"] is not None
 
 
-class TestReservaOcupada(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+class TestReservaOcupada(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def test_reserva_en_horario_ocupado(self):
         appointments.create_appointment(
@@ -75,149 +58,92 @@ class TestReservaOcupada(unittest.TestCase):
         result = appointments.create_appointment(
             "Juan López", "3838439333", "Corte", self.valid_date, "09:00", 1
         )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "occupied")
+        assert result["success"] is False
+        assert result["reason"] == "occupied"
 
 
-class TestDomingoCerrado(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
+class TestDomingoCerrado(PostgreSQLTestCase):
     def test_reserva_en_domingo(self):
-        sunday = datetime.now(ZONA_HORARIA).date()
+        sunday = datetime.now(ZONA_HORARIO).date()
         while sunday.weekday() != 6:
             sunday += timedelta(days=1)
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", sunday.isoformat(), "09:00", 1
         )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "closed_day")
+        assert result["success"] is False
+        assert result["reason"] == "closed_day"
 
 
-class TestFechaInvalida(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
+class TestFechaInvalida(PostgreSQLTestCase):
     def test_reserva_con_fecha_mal_formateada(self):
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", "2025/08/18", "09:00", 1
         )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "invalid_date")
+        assert result["success"] is False
+        assert result["reason"] == "invalid_date"
 
     def test_reserva_con_fecha_pasada(self):
-        yesterday = (datetime.now(ZONA_HORARIA).date() - timedelta(days=1)).isoformat()
+        yesterday = (datetime.now(ZONA_HORARIO).date() - timedelta(days=1)).isoformat()
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", yesterday, "09:00", 1
         )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "past_date")
+        assert result["success"] is False
+        assert result["reason"] == "past_date"
+
+    def test_reserva_con_hora_invalida(self):
+        future = datetime.now(ZONA_HORARIO).date() + timedelta(days=2)
+        while future.weekday() == 6:
+            future += timedelta(days=1)
+        result = appointments.create_appointment(
+            "Ana Pérez", "3838439222", "Corte", future.isoformat(), "25:99", 1
+        )
+        assert result["success"] is False
+        assert result["reason"] == "invalid_time"
 
 
-class TestCancelacionTelefonoCorrecto(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+class TestCancelacionTelefonoCorrecto(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def test_cancelar_con_telefono_correcto(self):
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertTrue(
-            appointments.cancel_appointment(
-                appointment_id,
-                "3838439222",
-                1,
-                result["management_token"],
-                customer_name="Ana Pérez",
-            )
+        assert appointments.cancel_appointment(
+            appointment_id,
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
 
 
-class TestCancelacionTelefonoIncorrecto(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+class TestCancelacionTelefonoIncorrecto(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def test_cancelar_con_telefono_incorrecto(self):
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
         appointment_id = result["appointment_id"]
-        self.assertFalse(
-            appointments.cancel_appointment(
-                appointment_id, "3838439222", 1, "token_incorrecto", customer_name="Ana Pérez"
-            )
+        assert not appointments.cancel_appointment(
+            appointment_id, "3838439222", 1, "token_incorrecto", customer_name="Ana Pérez"
         )
 
 
-class TestReprogramacionHorarioOcupado(unittest.TestCase):
-    def setUp(self):
+class TestReprogramacionHorarioOcupado(PostgreSQLTestCase):
+    def setup_method(self):
         self._datetime_patch = mock.patch(f"{__name__}.datetime", _FrozenDatetime)
         self._datetime_patch.start()
-        self.addCleanup(self._datetime_patch.stop)
         self._service_datetime_patch = mock.patch("services.appointments.datetime", _FrozenDatetime)
         self._service_datetime_patch.start()
-        self.addCleanup(self._service_datetime_patch.stop)
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
+        self.valid_date = _next_open_day()
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+    def teardown_method(self):
+        self._datetime_patch.stop()
+        self._service_datetime_patch.stop()
 
     def test_reprogramar_a_horario_ocupado(self):
         appointments.create_appointment(
@@ -236,28 +162,13 @@ class TestReprogramacionHorarioOcupado(unittest.TestCase):
             result2["management_token"],
             customer_name="Juan López",
         )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "occupied")
+        assert not result["success"]
+        assert result["reason"] == "occupied"
 
 
-class TestDobleReservaSimultanea(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+class TestDobleReservaSimultanea(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def test_doble_reserva_mismo_horario(self):
         result1 = appointments.create_appointment(
@@ -266,64 +177,43 @@ class TestDobleReservaSimultanea(unittest.TestCase):
         result2 = appointments.create_appointment(
             "Juan López", "3838439333", "Corte", self.valid_date, "09:00", 1
         )
-        self.assertTrue(result1["success"])
-        self.assertFalse(result2["success"])
-        self.assertEqual(result2["reason"], "occupied")
+        assert result1["success"]
+        assert not result2["success"]
+        assert result2["reason"] == "occupied"
 
 
-class TestCancelacionTomaElLockDeEscritura(unittest.TestCase):
-    """`cancel_appointment` debe(serializarse con creación/reprogramación.
+class TestCancelacionTomaElLockDeEscritura(PostgreSQLTestCase):
+    """`cancel_appointment` debe serializarse con creación/reprogramación."""
 
-    En SQLite el advisory lock es un no-op, así que se verifica la CONTRATACIÓN
-    (que se pide el lock, con la misma clave `(business_id, día)` que usa
-    `create_appointment`). La serialización real se prueba en
-    `tests_pg/test_advisory_lock_live.py` contra PostgreSQL.
-    """
-
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
+    def setup_method(self):
+        self.valid_date = _next_open_day()
         self.original_lock = appointments.acquire_business_write_lock
         self.lock_calls = []
         appointments.acquire_business_write_lock = self._spy
 
-    def tearDown(self):
+    def teardown_method(self):
         appointments.acquire_business_write_lock = self.original_lock
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def _spy(self, connection, business_id, lock_key=0):
         self.lock_calls.append((business_id, lock_key))
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
 
     def test_cancelar_toma_el_lock_del_dia_del_turno(self):
         result = appointments.create_appointment(
             "Ana Pérez", "3838439222", "Corte", self.valid_date, "09:00", 1
         )
-        self.assertTrue(result["success"])
+        assert result["success"]
         self.lock_calls.clear()
 
-        self.assertTrue(
-            appointments.cancel_appointment(
-                result["appointment_id"],
-                "3838439222",
-                1,
-                result["management_token"],
-                customer_name="Ana Pérez",
-            )
+        assert appointments.cancel_appointment(
+            result["appointment_id"],
+            "3838439222",
+            1,
+            result["management_token"],
+            customer_name="Ana Pérez",
         )
 
         esperado = (1, appointments._appointment_day_ordinal(self.valid_date))
-        self.assertEqual(self.lock_calls, [esperado])
+        assert self.lock_calls == [esperado]
 
     def test_cancelar_no_toma_el_lock_si_el_turno_no_existe(self):
         resultado = appointments.create_appointment(
@@ -331,12 +221,10 @@ class TestCancelacionTomaElLockDeEscritura(unittest.TestCase):
         )
         self.lock_calls.clear()
 
-        self.assertFalse(
-            appointments.cancel_appointment(
-                resultado["appointment_id"] + 999, "3838439222", 1, resultado["management_token"]
-            )
+        assert not appointments.cancel_appointment(
+            resultado["appointment_id"] + 999, "3838439222", 1, resultado["management_token"]
         )
-        self.assertEqual(self.lock_calls, [])
+        assert self.lock_calls == []
 
     def test_cancelar_toma_el_lock_una_sola_vez(self):
         """El turno se relee para la clave del lock y se revalida después."""
@@ -349,40 +237,25 @@ class TestCancelacionTomaElLockDeEscritura(unittest.TestCase):
             resultado["appointment_id"], "3838439222", 1, resultado["management_token"]
         )
 
-        self.assertEqual(len(self.lock_calls), 1)
+        assert len(self.lock_calls) == 1
 
 
-class TestIdempotenciaDeReserva(unittest.TestCase):
+class TestIdempotenciaDeReserva(PostgreSQLTestCase):
     """`idempotency_key` hace que un reintento devuelva el turno original.
 
     Mismo patrón que `loyalty.redeem`: clave del cliente + índice único
     (business_id, idempotency_key) + lookup dentro del advisory lock.
     """
 
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
+    def setup_method(self):
+        self.valid_date = _next_open_day()
 
     def _count(self):
-        connection = database.get_connection()
+        c = database.get_connection()
         try:
-            return connection.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
+            return c.execute("SELECT COUNT(*) FROM appointments").fetchone()[0]
         finally:
-            connection.close()
+            c.close()
 
     def _reservar(self, idempotency_key=None, hora="09:00", nombre="Ana Pérez"):
         return appointments.create_appointment(
@@ -391,85 +264,87 @@ class TestIdempotenciaDeReserva(unittest.TestCase):
 
     def test_reintento_devuelve_el_mismo_turno(self):
         primero = self._reservar("clave-abc")
-        self.assertTrue(primero["success"])
-        self.assertEqual(primero["reason"], "created")
+        assert primero["success"]
+        assert primero["reason"] == "created"
 
         segundo = self._reservar("clave-abc")
-        self.assertTrue(segundo["success"], "un reintento no debe fallar por 'occupied'")
-        self.assertEqual(segundo["reason"], "already_created")
-        self.assertTrue(segundo["idempotent_replay"])
-        self.assertEqual(segundo["appointment_id"], primero["appointment_id"])
-        self.assertEqual(self._count(), 1, "el reintento no debe crear un segundo turno")
+        assert segundo["success"], "un reintento no debe fallar por 'occupied'"
+        assert segundo["reason"] == "already_created"
+        assert segundo["idempotent_replay"]
+        assert segundo["appointment_id"] == primero["appointment_id"]
+        assert self._count() == 1, "el reintento no debe crear un segundo turno"
 
     def test_el_replay_no_devuelve_el_management_token(self):
         primero = self._reservar("clave-abc")
         segundo = self._reservar("clave-abc")
-        self.assertTrue(primero["management_token"])
-        self.assertIsNone(
-            segundo["management_token"], "el token no es reconstruible: solo se persiste su SHA-256"
-        )
+        assert primero["management_token"]
+        assert segundo["management_token"] is None, "el token no es reconstruible"
 
     def test_el_replay_conserva_los_datos_del_turno_original(self):
         primero = self._reservar("clave-abc")
-        # Misma clave con payload DISTINTO: la clave identifica la operacion.
+        # Misma clave con payload DISTINTO: la clave identifica la operación.
         segundo = self._reservar("clave-abc", hora="11:00", nombre="Bruno Gómez")
-        self.assertTrue(segundo["success"])
-        self.assertEqual(segundo["appointment_id"], primero["appointment_id"])
-        self.assertEqual(segundo["appointment_time"], primero["appointment_time"])
-        self.assertEqual(segundo["customer_name"], primero["customer_name"])
-        self.assertEqual(self._count(), 1)
+        assert segundo["success"]
+        assert segundo["appointment_id"] == primero["appointment_id"]
+        # El replay conserva los datos del turno original, no del replay.
+        assert segundo["appointment_time"] == primero["appointment_time"]
+        assert segundo["customer_name"] == primero["customer_name"]
+        assert self._count() == 1
 
     def test_claves_distintas_crean_turnos_distintos(self):
-        self.assertTrue(self._reservar("clave-1", hora="09:00")["success"])
-        self.assertTrue(self._reservar("clave-2", hora="11:00")["success"])
-        self.assertEqual(self._count(), 2)
+        assert self._reservar("clave-1", hora="09:00")["success"]
+        assert self._reservar("clave-2", hora="11:00")["success"]
+        assert self._count() == 2
 
     def test_sin_clave_el_comportamiento_es_el_historico(self):
         primero = self._reservar()
-        self.assertTrue(primero["success"])
-        self.assertNotIn("idempotent_replay", primero)
-        self.assertEqual(primero["reason"], "created")
+        assert primero["success"]
+        assert "idempotent_replay" not in primero
+        assert primero["reason"] == "created"
 
         segundo = self._reservar()
-        self.assertFalse(segundo["success"])
-        self.assertEqual(segundo["reason"], "occupied")
+        assert not segundo["success"]
+        assert segundo["reason"] == "occupied"
 
     def test_turnos_sin_clave_no_colisionan_en_el_indice(self):
         """NULL no participa del índice parcial: dos altas sin clave conviven."""
-        self.assertTrue(self._reservar()["success"])
-        self.assertTrue(self._reservar(hora="11:00")["success"])
-        self.assertEqual(self._count(), 2)
+        assert self._reservar()["success"]
+        assert self._reservar(hora="11:00")["success"]
+        assert self._count() == 2
 
     def test_la_clave_no_atreves_negocios(self):
         """El UNIQUE es (business_id, idempotency_key), no solo la clave."""
         primero = self._reservar("clave-compartida")
-        self.assertTrue(primero["success"])
-        # El negocio 2 no existe en esta base de pruebas: el scope por
-        # business_id se verifica a nivel de indice, no de servicio.
-        connection = database.get_connection()
+        assert primero["success"]
+
+        # Verificar que el índice único incluye business_id (no solo idempotency_key).
+        c = database.get_connection()
         try:
-            indexes = {row[1] for row in connection.execute("PRAGMA index_list(appointments)")}
+            idx = c.execute(
+                "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'appointments'"
+            ).fetchall()
         finally:
-            connection.close()
-        self.assertIn("unique_appointment_idempotency_key", indexes)
+            c.close()
+
+        found = False
+        for row in idx:
+            if "idempotency_key" in row["indexdef"]:
+                assert "business_id" in row["indexdef"], (
+                    "El índice de idempotencia debe incluir business_id"
+                )
+                found = True
+        assert found, "No se encontró índice unique sobre (business_id, idempotency_key)"
 
     def test_relee_al_ganador_si_el_indice_unico_dispara(self):
-        """La rama `IntegrityError` de la idempotencia relee al ganador.
-
-        Es la carrera que el advisory lock por DÍA no puede serializar: dos
-        requests con la misma clave en fechas distintas toman locks distintos,
-        pasan ambas el SELECT de replay y compiten por el índice único. Aquí se
-        oculta solo el PRIMER SELECT de replay (como si la otra transacción
-        todavía no hubiera commiteado) para forzar la violación del índice.
-        """
+        """La rama `IntegrityError` de la idempotencia relee al ganador."""
         ganador = self._reservar("clave-carrera")
-        self.assertTrue(ganador["success"])
+        assert ganador["success"]
 
         real_get_connection = database.get_connection
         objetivo = appointments.get_connection
 
         class _ReplayCiego:
-            """Delega todo salvo el primer SELECT de replay, que devuelve vacío."""
+            """Omite el primer SELECT de replay; fuerza la violación del índice."""
 
             def __init__(self, connection):
                 self._connection = connection
@@ -509,12 +384,10 @@ class TestIdempotenciaDeReserva(unittest.TestCase):
         finally:
             appointments.get_connection = objetivo
 
-        self.assertTrue(
-            replay["success"], "la UniqueViolation de idempotencia no debe ser 'occupied'"
-        )
-        self.assertEqual(replay["reason"], "already_created")
-        self.assertEqual(replay["appointment_id"], ganador["appointment_id"])
-        self.assertEqual(self._count(), 1)
+        assert replay["success"], "la UniqueViolation de idempotencia no debe ser 'occupied'"
+        assert replay["reason"] == "already_created"
+        assert replay["appointment_id"] == ganador["appointment_id"]
+        assert self._count() == 1
 
 
 class _CursorRowcountCero:
@@ -530,13 +403,7 @@ class _CursorRowcountCero:
 
 
 class _ConexionRowcountCero:
-    """Proxy que fuerza rowcount=0 en el UPDATE, como si la fila ya no existiera.
-
-    Simula la carrera que el `WHERE status = 'confirmed'` del UPDATE no puede
-    observar dentro de su propia transacción: otra vía canceló el turno entre la
-    revalidación y el UPDATE. Sirve para fijar que el servicio NO devuelve
-    éxito cuando no se actualizó nada.
-    """
+    """Proxy que fuerza rowcount=0 en el UPDATE como si la fila ya no existiera."""
 
     def __init__(self, connection):
         self._connection = connection
@@ -551,13 +418,9 @@ class _ConexionRowcountCero:
         return getattr(self._connection, nombre)
 
 
-class _BaseLockDeReschedule(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
+class _BaseLockDeReschedule(PostgreSQLTestCase):
+    def setup_method(self):
+        self.valid_date = _next_open_day()
         self.otro_dia = self._dia_laborable(
             datetime.strptime(self.valid_date, "%Y-%m-%d").date() + timedelta(days=1)
         )
@@ -566,24 +429,15 @@ class _BaseLockDeReschedule(unittest.TestCase):
         self.lock_calls = []
         appointments.acquire_business_write_lock = self._spy
 
-    def tearDown(self):
+    def teardown_method(self):
         appointments.acquire_business_write_lock = self.original_lock
         appointments.get_connection = self.original_get_connection
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def _spy(self, connection, business_id, lock_key=0):
         self.lock_calls.append((business_id, lock_key))
 
     @staticmethod
     def _dia_laborable(date):
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
         while date.weekday() == 6:
             date += timedelta(days=1)
         return date.isoformat()
@@ -612,17 +466,13 @@ class _BaseLockDeReschedule(unittest.TestCase):
 class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
     """`reschedule_appointment` libera un día y ocupa otro: necesita AMBOS locks.
 
-    En SQLite el advisory lock es un no-op, así que se verifica la CONTRATACIÓN:
-    que se piden los locks de origen y destino, con claves `(business_id, día)`
-    idénticas a las de `create_appointment`/`cancel_appointment`, y en ORDEN
-    ASCENDENTE. Ese orden es la razón por la que dos reprogramaciones
-    concurrentes no pueden deadlockearse. La serialización real se prueba en
-    `tests_pg/` contra PostgreSQL.
+    La serialización real con PostgreSQL se verifica en tests_pg/test_advisory_lock_live.py.
+    Aquí se comprueba la CONTRATACIÓN: se piden locks de origen y destino en orden ascendente.
     """
 
     def test_toma_locks_de_origen_y_destino_en_orden_ascendente(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         self.lock_calls.clear()
 
         reprogramado = appointments.reschedule_appointment(
@@ -634,12 +484,12 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
             management_token=resultado["management_token"],
         )
 
-        self.assertTrue(reprogramado["success"], reprogramado)
-        self.assertEqual(self.lock_calls, self._locks_esperados(self.valid_date, self.otro_dia))
+        assert reprogramado["success"], reprogramado
+        assert self.lock_calls == self._locks_esperados(self.valid_date, self.otro_dia)
 
     def test_deduplica_el_lock_si_el_dia_no_cambia(self):
         resultado = self._turno(hora="09:00")
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         self.lock_calls.clear()
 
         reprogramado = appointments.reschedule_appointment(
@@ -651,12 +501,10 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
             management_token=resultado["management_token"],
         )
 
-        self.assertTrue(reprogramado["success"], reprogramado)
-        self.assertEqual(
-            self.lock_calls,
-            [(1, appointments._appointment_day_ordinal(self.valid_date))],
-            "mismo día de origen y destino: un solo lock, no dos",
-        )
+        assert reprogramado["success"], reprogramado
+        assert self.lock_calls == [
+            (1, appointments._appointment_day_ordinal(self.valid_date)),
+        ], "mismo día de origen y destino: un solo lock, no dos"
 
     def test_no_toma_locks_si_el_turno_no_existe(self):
         resultado = self._turno()
@@ -671,35 +519,33 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
             management_token=resultado["management_token"],
         )
 
-        self.assertFalse(fallido["success"])
-        self.assertEqual(fallido["reason"], "not_found")
-        self.assertEqual(self.lock_calls, [])
+        assert not fallido["success"]
+        assert fallido["reason"] == "not_found"
+        assert self.lock_calls == []
 
     def test_admin_toma_locks_de_origen_y_destino_en_orden_ascendente(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         self.lock_calls.clear()
 
         reprogramado = appointments.reschedule_appointment_admin(
             resultado["appointment_id"], self.otro_dia, "11:00", business_id=1
         )
 
-        self.assertTrue(reprogramado["success"], reprogramado)
-        self.assertEqual(self.lock_calls, self._locks_esperados(self.valid_date, self.otro_dia))
+        assert reprogramado["success"], reprogramado
+        assert self.lock_calls == self._locks_esperados(self.valid_date, self.otro_dia)
 
     def test_admin_deduplica_el_lock_si_el_dia_no_cambia(self):
         resultado = self._turno(hora="09:00")
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         self.lock_calls.clear()
 
         reprogramado = appointments.reschedule_appointment_admin(
             resultado["appointment_id"], self.valid_date, "11:00", business_id=1
         )
 
-        self.assertTrue(reprogramado["success"], reprogramado)
-        self.assertEqual(
-            self.lock_calls, [(1, appointments._appointment_day_ordinal(self.valid_date))]
-        )
+        assert reprogramado["success"], reprogramado
+        assert self.lock_calls == [(1, appointments._appointment_day_ordinal(self.valid_date))]
 
     def test_admin_no_toma_locks_si_el_turno_no_existe(self):
         resultado = self._turno()
@@ -709,9 +555,9 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
             resultado["appointment_id"] + 999, self.otro_dia, "11:00", business_id=1
         )
 
-        self.assertFalse(fallido["success"])
-        self.assertEqual(fallido["reason"], "not_found")
-        self.assertEqual(self.lock_calls, [])
+        assert not fallido["success"]
+        assert fallido["reason"] == "not_found"
+        assert self.lock_calls == []
 
 
 class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
@@ -719,11 +565,12 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
 
     @staticmethod
     def _timeout(connection, business_id, lock_key=0):
-        raise sqlite3.OperationalError("canceling statement due to lock timeout")
+        import database.database as db
+        raise db.sqlite3.OperationalError("canceling statement due to lock timeout")
 
     def test_lock_timeout_devuelve_busy_sin_mover_el_turno(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         antes = self._fila(resultado["appointment_id"])
 
         appointments.acquire_business_write_lock = self._timeout
@@ -737,13 +584,13 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
         )
         appointments.acquire_business_write_lock = self.original_lock
 
-        self.assertFalse(fallido["success"])
-        self.assertEqual(fallido["reason"], "busy")
-        self.assertEqual(self._fila(resultado["appointment_id"]), antes)
+        assert not fallido["success"]
+        assert fallido["reason"] == "busy"
+        assert self._fila(resultado["appointment_id"]) == antes
 
     def test_lock_timeout_en_admin_devuelve_busy_sin_mover_el_turno(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
         antes = self._fila(resultado["appointment_id"])
 
         appointments.acquire_business_write_lock = self._timeout
@@ -752,13 +599,13 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
         )
         appointments.acquire_business_write_lock = self.original_lock
 
-        self.assertFalse(fallido["success"])
-        self.assertEqual(fallido["reason"], "busy")
-        self.assertEqual(self._fila(resultado["appointment_id"]), antes)
+        assert not fallido["success"]
+        assert fallido["reason"] == "busy"
+        assert self._fila(resultado["appointment_id"]) == antes
 
     def test_update_sin_filas_no_devuelve_exito(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
 
         appointments.get_connection = lambda: _ConexionRowcountCero(self.original_get_connection())
         fallido = appointments.reschedule_appointment(
@@ -771,19 +618,14 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
         )
         appointments.get_connection = self.original_get_connection
 
-        self.assertFalse(
-            fallido["success"], "un UPDATE con rowcount 0 no puede reportarse como rescheduled"
-        )
-        self.assertEqual(fallido["reason"], "not_found")
-        self.assertEqual(
-            self._fila(resultado["appointment_id"])["appointment_date"],
-            self.valid_date,
-            "el turno no debe haberse movido",
-        )
+        assert not fallido["success"], "un UPDATE con rowcount 0 no puede reportarse como rescheduled"
+        assert fallido["reason"] == "not_found"
+        fila = self._fila(resultado["appointment_id"])
+        assert fila["appointment_date"].isoformat() == self.valid_date
 
     def test_update_sin_filas_en_admin_no_devuelve_exito(self):
         resultado = self._turno()
-        self.assertTrue(resultado["success"])
+        assert resultado["success"]
 
         appointments.get_connection = lambda: _ConexionRowcountCero(self.original_get_connection())
         fallido = appointments.reschedule_appointment_admin(
@@ -791,44 +633,26 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
         )
         appointments.get_connection = self.original_get_connection
 
-        self.assertFalse(fallido["success"])
-        self.assertEqual(fallido["reason"], "not_found")
-        self.assertEqual(
-            self._fila(resultado["appointment_id"])["appointment_date"], self.valid_date
-        )
+        assert not fallido["success"]
+        assert fallido["reason"] == "not_found"
+        fila = self._fila(resultado["appointment_id"])
+        assert fila["appointment_date"].isoformat() == self.valid_date
 
 
-class TestEstadoAdminTomaElLockYTienePredicado(unittest.TestCase):
-    """`update_appointment_status_scoped` es la vía del panel admin.
+class TestEstadoAdminTomaElLockYTienePredicado(PostgreSQLTestCase):
+    """`update_appointment_status_scoped` es la vía del panel admin."""
 
-    Debe entrar en la misma serialización del calendario que crear/cancelar/
-    reprogramar, y no debe poder resucitar un turno que el cliente canceló.
-    """
-
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.valid_date = self._next_open_day()
+    def setup_method(self):
+        self.valid_date = _next_open_day()
         self.original_lock = database.acquire_business_write_lock
         self.lock_calls = []
         database.acquire_business_write_lock = self._spy
 
-    def tearDown(self):
+    def teardown_method(self):
         database.acquire_business_write_lock = self.original_lock
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def _spy(self, connection, business_id, lock_key=0):
         self.lock_calls.append((business_id, lock_key))
-
-    @staticmethod
-    def _next_open_day():
-        date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
-        while date.weekday() == 6:
-            date += timedelta(days=1)
-        return date.isoformat()
 
     def _turno(self):
         return appointments.create_appointment(
@@ -848,72 +672,64 @@ class TestEstadoAdminTomaElLockYTienePredicado(unittest.TestCase):
         appointment_id = self._turno()["appointment_id"]
         self.lock_calls.clear()
 
-        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "cancelled", 1))
+        assert database.update_appointment_status_scoped(appointment_id, "cancelled", 1)
 
-        self.assertEqual(
-            self.lock_calls, [(1, appointments._appointment_day_ordinal(self.valid_date))]
-        )
-        self.assertEqual(self._estado(appointment_id), "cancelled")
+        assert self.lock_calls == [(1, appointments._appointment_day_ordinal(self.valid_date))]
+        assert self._estado(appointment_id) == "cancelled"
 
     def test_no_toma_el_lock_si_el_turno_no_es_del_negocio(self):
         appointment_id = self._turno()["appointment_id"]
         self.lock_calls.clear()
 
-        self.assertFalse(database.update_appointment_status_scoped(appointment_id, "cancelled", 99))
-        self.assertEqual(self.lock_calls, [])
-        self.assertEqual(self._estado(appointment_id), "confirmed")
+        assert not database.update_appointment_status_scoped(appointment_id, "cancelled", 99)
+        assert self.lock_calls == []
+        assert self._estado(appointment_id) == "confirmed"
 
     def test_no_resucita_un_turno_cancelado(self):
         appointment_id = self._turno()["appointment_id"]
-        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "cancelled", 1))
+        assert database.update_appointment_status_scoped(appointment_id, "cancelled", 1)
         self.lock_calls.clear()
 
-        self.assertFalse(
-            database.update_appointment_status_scoped(appointment_id, "confirmed", 1),
-            "cancelled -> confirmed es una resurrección y debe rechazarse",
+        assert not database.update_appointment_status_scoped(appointment_id, "confirmed", 1), (
+            "cancelled -> confirmed es una resurrección y debe rechazarse"
         )
-        self.assertEqual(self._estado(appointment_id), "cancelled")
+        assert self._estado(appointment_id) == "cancelled"
 
     def test_devuelve_false_si_el_estado_no_cambio(self):
         appointment_id = self._turno()["appointment_id"]
         self.lock_calls.clear()
 
-        self.assertFalse(
-            database.update_appointment_status_scoped(appointment_id, "confirmed", 1),
-            "poner el estado que ya tiene no es un cambio",
+        assert not database.update_appointment_status_scoped(appointment_id, "confirmed", 1), (
+            "poner el estado que ya tiene no es un cambio"
         )
-        self.assertEqual(self._estado(appointment_id), "confirmed")
+        assert self._estado(appointment_id) == "confirmed"
 
     def test_permite_corregir_desde_completed(self):
         appointment_id = self._turno()["appointment_id"]
-        self.assertTrue(database.update_appointment_status_scoped(appointment_id, "completed", 1))
-        self.assertTrue(
-            database.update_appointment_status_scoped(appointment_id, "confirmed", 1),
-            "completed -> confirmed sigue siendo una corrección legítima del operador",
+        assert database.update_appointment_status_scoped(appointment_id, "completed", 1)
+        assert database.update_appointment_status_scoped(appointment_id, "confirmed", 1), (
+            "completed -> confirmed sigue siendo una corrección legítima del operador"
         )
-        self.assertEqual(self._estado(appointment_id), "confirmed")
+        assert self._estado(appointment_id) == "confirmed"
 
     def test_rechaza_estados_desconocidos_sin_tocar_la_base(self):
         appointment_id = self._turno()["appointment_id"]
         self.lock_calls.clear()
 
-        self.assertFalse(database.update_appointment_status_scoped(appointment_id, "inventado", 1))
-        self.assertEqual(self.lock_calls, [])
-        self.assertEqual(self._estado(appointment_id), "confirmed")
+        assert not database.update_appointment_status_scoped(appointment_id, "inventado", 1)
+        assert self.lock_calls == []
+        assert self._estado(appointment_id) == "confirmed"
 
     def test_lock_timeout_no_cambia_el_estado(self):
         appointment_id = self._turno()["appointment_id"]
 
         def _timeout(connection, business_id, lock_key=0):
-            raise sqlite3.OperationalError("canceling statement due to lock timeout")
+            import database.database as db
+            raise db.sqlite3.OperationalError("canceling statement due to lock timeout")
 
         database.acquire_business_write_lock = _timeout
         fallido = database.update_appointment_status_scoped(appointment_id, "cancelled", 1)
         database.acquire_business_write_lock = self.original_lock
 
-        self.assertFalse(fallido["success"] if isinstance(fallido, dict) else fallido)
-        self.assertEqual(self._estado(appointment_id), "confirmed")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not fallido if not isinstance(fallido, dict) else not fallido["success"]
+        assert self._estado(appointment_id) == "confirmed"

@@ -32,12 +32,12 @@ from database.migrator import (
 )
 from tests_pg._helpers import (
     apply_initial_schema,
+    build_test_db_conninfo,
     connect_autocommit,
     conninfo_to_url,
     create_test_database,
     drop_test_database,
     new_db_name,
-    build_test_db_conninfo,
 )
 
 pytestmark = pytest.mark.pg_live

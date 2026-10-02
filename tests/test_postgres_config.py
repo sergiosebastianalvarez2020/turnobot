@@ -14,6 +14,7 @@ from database.pg_pool import (
     get_pg_pool,
     init_pg_pool,
     normalize_database_url,
+    resolve_database_backend,
     sanitize_database_url,
 )
 
@@ -23,6 +24,7 @@ class TestPostgresConfig(unittest.TestCase):
         _STRIPPED_ENV_KEYS = (
             "FLASK_ENV",
             "DATABASE_URL",
+            "DB_BACKEND",
             "ADMIN_PASSWORD_HASH",
             "ADMIN_PASSWORD",
             "COOKIE_SECURE",
@@ -58,23 +60,59 @@ class TestPostgresConfig(unittest.TestCase):
         )
         self.assertEqual(sanitize_database_url("sqlite:///app.db"), "sqlite:///app.db")
 
-    def test_database_backend_detection(self):
-        """Verifica la detección correcta del backend segun DATABASE_URL."""
-        self.assertEqual(get_database_backend(None), "sqlite")
-        self.assertEqual(get_database_backend(""), "sqlite")
-        self.assertEqual(get_database_backend("sqlite:///database.db"), "sqlite")
+    def test_postgresql_backend_detection(self):
         self.assertEqual(get_database_backend("postgresql://user:pass@localhost/db"), "postgresql")
         self.assertEqual(get_database_backend("postgres://user:pass@localhost/db"), "postgresql")
 
-    def test_build_config_default_sqlite(self):
-        """Verifica que la app use SQLite por defecto si DATABASE_URL no está configurada."""
+    def test_build_config_requires_explicit_sqlite_opt_in(self):
         os.environ.pop("DATABASE_URL", None)
+        os.environ["DB_BACKEND"] = "sqlite"
         app = Flask(__name__)
         config = build_config(app)
 
         self.assertEqual(config["DB_BACKEND"], "sqlite")
         self.assertIsNone(config["DATABASE_URL_SANITIZED"])
         self.assertEqual(app.config["DB_BACKEND"], "sqlite")
+
+    def test_build_config_production_rejects_missing_empty_sqlite_and_unknown_scheme(self):
+        cases = (None, "", "sqlite:///database.db", "mysql://user:pass@host/db")
+        for url in cases:
+            with self.subTest(url=url):
+                os.environ["FLASK_ENV"] = "production"
+                os.environ.pop("DB_BACKEND", None)
+                if url is None:
+                    os.environ.pop("DATABASE_URL", None)
+                else:
+                    os.environ["DATABASE_URL"] = url
+                with self.assertRaises(RuntimeError):
+                    build_config(Flask(__name__))
+
+    def test_resolver_rejects_malformed_postgresql(self):
+        for url in ("postgresql://", "postgres://host", "postgresql://user@/db", "postgresql://host:99999/db"):
+            with self.subTest(url=url), self.assertRaises(RuntimeError):
+                resolve_database_backend(url, environment="production")
+
+    def test_sqlite_requires_opt_in_outside_production(self):
+        self.assertEqual(
+            resolve_database_backend(
+                "sqlite:///database.db", environment="development", sqlite_opt_in="sqlite"
+            ),
+            ("sqlite", "sqlite:///database.db"),
+        )
+        with self.assertRaises(RuntimeError):
+            resolve_database_backend("sqlite:///database.db", environment="production", sqlite_opt_in="sqlite")
+
+    def test_build_config_and_database_backend_share_resolved_choice(self):
+        os.environ["DATABASE_URL"] = "postgres://user:pass@localhost/db"
+        app = Flask(__name__)
+        config = build_config(app)
+        from database.database import get_backend
+
+        with app.app_context():
+            os.environ["DATABASE_URL"] = "sqlite:///different.db"
+            self.assertEqual(config["DB_BACKEND"], "postgresql")
+            self.assertEqual(get_backend(), app.config["DB_BACKEND"])
+            self.assertEqual(app.config["DATABASE_URL"], "postgresql://user:pass@localhost/db")
 
     def test_build_config_postgresql_sanitized(self):
         """Verifica que build_config cargue DATABASE_URL y oculte credenciales."""

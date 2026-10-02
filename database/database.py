@@ -19,15 +19,17 @@ logger = logging.getLogger("turnobot.db")
 
 
 def get_backend():
-    """Resuelve el backend de base de datos activo.
+    """Devuelve la selección validada en Flask o resuelve el entorno fuera de Flask."""
+    try:
+        from flask import current_app, has_app_context
 
-    Fuente única de verdad: `database.pg_pool.get_database_backend()`, que deriva
-    del entorno (`DATABASE_URL`) — coherente con `app.config["DB_BACKEND"]` que
-    `build_config` expone. Se importa perezosamente para evitar ciclos.
-    """
+        if has_app_context() and current_app.config.get("DB_BACKEND"):
+            return current_app.config["DB_BACKEND"]
+    except ImportError:  # pragma: no cover - Flask is required at runtime
+        pass
     from database.pg_pool import get_database_backend
 
-    return get_database_backend(os.getenv("DATABASE_URL"))
+    return get_database_backend()
 
 
 def get_connection():
@@ -235,8 +237,8 @@ def apply_migrations():
         connection.close()
 
 
-def init_database():
-    backend = get_backend()
+def init_database(backend=None):
+    backend = backend or get_backend()
     if backend == "postgresql":
         _init_postgresql()
     else:

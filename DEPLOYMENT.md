@@ -3,7 +3,13 @@
 ## Configuración
 
 El archivo `.env` debe contener `FLASK_ENV=production`, `COOKIE_SECURE=1`,
-`SECRET_KEY`, `ADMIN_PASSWORD_HASH` y `GEMINI_API_KEY`. Nunca debe publicarse.
+`SECRET_KEY`, `ADMIN_PASSWORD_HASH`, `GEMINI_API_KEY` y, en OCI, un
+`DATABASE_URL` válido de PostgreSQL. Nunca debe publicarse.
+
+OCI producción requiere una `DATABASE_URL` válida de PostgreSQL. Si falta, está
+vacía, malformada o usa un esquema distinto de PostgreSQL, el arranque falla
+con un error explícito; nunca hay fallback silencioso a SQLite. En desarrollo
+y tests, SQLite solo se habilita mediante `DB_BACKEND=sqlite` explícito.
 
 ## Arranque
 
@@ -88,19 +94,36 @@ expone ninguna creación de negocio como endpoint público.
 
 ## Backups
 
-Con la aplicación detenida o en una tarea programada:
+### OCI producción (PostgreSQL)
+
+```powershell
+venv\Scripts\python.exe scripts\backup_postgresql.py
+venv\Scripts\python.exe scripts\verify_backup_postgresql.py
+```
+
+La verificación anterior comprueba que `pg_restore --list` puede leer el dump;
+no equivale a una restauración completa. La prueba de restore debe realizarse
+en una base desechable. No apuntar el restore de prueba a la base productiva.
+
+En OCI, los units `turnobot-backup*` programan el backup y su verificación.
+El timer `turnobot-backup-prune.timer` ejecuta el pruner SQLite sobre
+`database/backups`; no retiene ni elimina dumps de `backups_pg/`.
+
+### SQLite legacy
+
+Los scripts siguientes se conservan para el fallback SQLite y copias históricas;
+no son el mecanismo de backup de PostgreSQL:
 
 ```powershell
 venv\Scripts\python.exe scripts\backup_database.py
-```
-
-Restauración, con la aplicación detenida:
-
-```powershell
+venv\Scripts\python.exe scripts\verify_backup.py
 venv\Scripts\python.exe scripts\restore_database.py database\backups\appointments-YYYYMMDD-HHMMSS.db
+venv\Scripts\python.exe scripts\prune_backups.py
 ```
 
-Conservar varias copias en otra unidad o servicio externo y probar la restauración periódicamente.
+Restaurar una copia SQLite anterior al cutover no recupera ni conserva las
+escrituras que se hayan realizado posteriormente en PostgreSQL; no debe
+considerarse un rollback válido de producción.
 
 ## Health check y pruebas
 

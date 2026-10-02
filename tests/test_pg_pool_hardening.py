@@ -219,7 +219,9 @@ def test_get_connection_fuera_de_contexto_no_levanta_runtime_error(pg_app, monke
     """Regresión del bug app.extensions/_global_pool: get_connection() sin contexto
     Flask debe encontrar el pool de create_app() y noraising RuntimeError."""
     fake = _init_fake_pool(pg_app)
+    monkeypatch.setattr(dbmod, "get_backend", lambda: "postgresql")
     monkeypatch.setenv("DATABASE_URL", _PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
 
     connection = dbmod.get_connection()
     try:
@@ -232,6 +234,8 @@ def test_get_connection_fuera_de_contexto_no_levanta_runtime_error(pg_app, monke
 def test_get_connection_sin_pool_sigue_levantando_runtime_error(monkeypatch):
     """Sin pool no hay conexión: el contrato de error se mantiene."""
     monkeypatch.setenv("DATABASE_URL", _PG_URL)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setattr(dbmod, "get_backend", lambda: "postgresql")
 
     with pytest.raises(RuntimeError, match="no está inicializado"):
         dbmod.get_connection()
@@ -240,6 +244,8 @@ def test_get_connection_sin_pool_sigue_levantando_runtime_error(monkeypatch):
 def test_sqlite_sigue_funcionando_exactamente_igual(monkeypatch, tmp_path):
     """SQLite no se ve afectado: sqlite3.Row, PRAGMAs y ausencia de pool."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
+    monkeypatch.setenv("FLASK_ENV", "development")
     monkeypatch.setattr(dbmod, "DATABASE_PATH", tmp_path / "appointments.db")
 
     connection = dbmod.get_connection()
@@ -399,6 +405,7 @@ def test_teardown_no_se_engancha_a_teardown_appcontext(pg_app):
 # que un FLASK_ENV=production filtrado por otro test no dispare sus RuntimeError.
 _ENV_KEYS = (
     "FLASK_ENV",
+    "DB_BACKEND",
     "SECRET_KEY",
     "ADMIN_PASSWORD",
     "ADMIN_PASSWORD_HASH",
@@ -411,6 +418,8 @@ _ENV_KEYS = (
 def _isolate_env(monkeypatch) -> None:
     for key in _ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("FLASK_ENV", "development")
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
 
 
 @pytest.fixture
@@ -427,11 +436,12 @@ def fake_create_app(monkeypatch, tmp_path):
         "create_pg_pool",
         lambda conninfo, **kw: pools.append(_FakePool(conninfo, **kw)) or pools[-1],
     )
-    monkeypatch.setattr(dbmod, "init_database", lambda: None)
+    monkeypatch.setattr(dbmod, "init_database", lambda backend=None: None)
 
     registrados: list = []
     monkeypatch.setattr(atexit, "register", registrados.append)
     monkeypatch.setenv("DATABASE_URL", _PG_URL)
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
     return pools, registrados
 
 
@@ -458,8 +468,9 @@ def test_create_app_con_sqlite_no_registra_teardown(monkeypatch, tmp_path):
     """SQLite no abre pool ni registra ningún teardown."""
     _isolate_env(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
     monkeypatch.setattr(dbmod, "DATABASE_PATH", tmp_path / "appointments.db")
-    monkeypatch.setattr(dbmod, "init_database", lambda: None)
+    monkeypatch.setattr(dbmod, "init_database", lambda backend=None: None)
     registrados: list = []
     monkeypatch.setattr(atexit, "register", registrados.append)
 

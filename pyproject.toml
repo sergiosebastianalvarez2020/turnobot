@@ -3,7 +3,7 @@ testpaths = ["tests", "."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-ra -q --cov=. --cov-report=term-missing --ignore=test_results.txt"
+addopts = "-ra -q --cov=. --cov-report=term-missing --ignore=test_results.txt --doctest-glob=doctest*.txt"
 markers = [
     "pg_live: suite de integración contra PostgreSQL real (Fase 4H)",
     "pg_typed: escenarios F.5 (E1-E4, E6) que ejercitan la brecha de parámetros tipados (informativo)",
@@ -62,6 +62,7 @@ split-on-trailing-comma = false
 [tool.mypy]
 python_version = "3.12"
 warn_unused_ignores = true
+explicit_package_bases = true
 files = ["services/product.py"]
 # Incremental: solo los módulos listados exigen anotaciones. El resto del
 # código permanece sin tipos hasta que se cubra (ver docs/adr/ADR-0005).

@@ -42,6 +42,8 @@ _PAYLOAD_MARKER = "__STANDALONE_PAYLOAD__:"
 _STRIPPED_ENV_KEYS = (
     "SECRET_KEY",
     "FLASK_ENV",
+    "DATABASE_URL",
+    "DB_BACKEND",
     "ADMIN_PASSWORD",
     "ADMIN_PASSWORD_HASH",
     "COOKIE_SECURE",
@@ -180,6 +182,8 @@ class StandaloneCreateAppTests(unittest.TestCase):
         for key in _STRIPPED_ENV_KEYS:
             env.pop(key, None)
         env["PYTHONPATH"] = str(_PROJECT_ROOT)
+        env["DB_BACKEND"] = "sqlite"
+        env["FLASK_ENV"] = "development"
         env["PYTHONIOENCODING"] = "utf-8"
         env["LOG_DIR"] = self._tmp.name
 

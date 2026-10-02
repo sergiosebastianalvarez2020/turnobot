@@ -10,13 +10,13 @@ import secrets
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from database.pg_pool import get_database_backend, normalize_database_url, sanitize_database_url
+from database.pg_pool import resolve_database_backend, sanitize_database_url
 
 
 def build_config(app, logger=None):
     """Configura la instancia Flask: secret, política de cookies, límites,
-    ProxyFix, lifetime de sesión y configuración de base de datos (Fase 4C).
-    Devuelve los valores re-exportados por app."""
+    ProxyFix, lifetime de sesión y configuración de base de datos. Devuelve los
+    valores re-exportados por app."""
     if os.getenv("FLASK_ENV") == "production" and not os.getenv("SECRET_KEY"):
         raise RuntimeError("SECRET_KEY es obligatoria en producción")
 
@@ -41,9 +41,8 @@ def build_config(app, logger=None):
 
     # Configuración del backend de Base de Datos (Fase 4C)
     raw_db_url = os.getenv("DATABASE_URL")
-    normalized_db_url = normalize_database_url(raw_db_url)
+    db_backend, normalized_db_url = resolve_database_backend(raw_db_url)
     sanitized_db_url = sanitize_database_url(normalized_db_url)
-    db_backend = get_database_backend(normalized_db_url)
 
     app.config["DATABASE_URL"] = normalized_db_url
     app.config["DATABASE_URL_SANITIZED"] = sanitized_db_url

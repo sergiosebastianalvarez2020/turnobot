@@ -84,6 +84,20 @@ def _to_minutes(hm):
     return int(h) * 60 + int(m)
 
 
+def _normalize_date(val):
+    """Normaliza DATE para comparación: str o datetime.date -> 'YYYY-MM-DD'."""
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
+def _normalize_time(val):
+    """Normaliza TIME para comparación: str o datetime.time -> 'HH:MM'."""
+    if isinstance(val, str):
+        return val
+    return val.strftime("%H:%M")
+
+
 class AdminPanelBase(unittest.TestCase):
     """Negocio 1 (slug 'el-corte') con login administrativo por contraseña."""
 
@@ -118,15 +132,6 @@ class AdminPanelBase(unittest.TestCase):
         self.assertTrue(result["success"])
         return result["appointment_id"], date_
 
-    def _status_of(self, appointment_id):
-        c = get_connection()
-        try:
-            return c.execute(
-                "SELECT status FROM appointments WHERE id = ?", (appointment_id,)
-            ).fetchone()["status"]
-        finally:
-            c.close()
-
     def _date_time_of(self, appointment_id):
         c = get_connection()
         try:
@@ -134,7 +139,16 @@ class AdminPanelBase(unittest.TestCase):
                 "SELECT appointment_date, appointment_time FROM appointments WHERE id = ?",
                 (appointment_id,),
             ).fetchone()
-            return row["appointment_date"], row["appointment_time"]
+            return _normalize_date(row["appointment_date"]), _normalize_time(row["appointment_time"])
+        finally:
+            c.close()
+
+    def _status_of(self, appointment_id):
+        c = get_connection()
+        try:
+            return c.execute(
+                "SELECT status FROM appointments WHERE id = ?", (appointment_id,)
+            ).fetchone()["status"]
         finally:
             c.close()
 
