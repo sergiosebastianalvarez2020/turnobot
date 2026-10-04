@@ -8,10 +8,8 @@ a estar permitido.
 """
 
 import re
-import tempfile
 import time
 import unittest
-from pathlib import Path
 
 import app as application
 import database.database as database
@@ -22,15 +20,8 @@ class _RateLimitHTTPBase(unittest.TestCase):
     def setUp(self):
         application.rate_limit_state.clear()
         application.app.config["TESTING"] = True
-        self._tmp = tempfile.TemporaryDirectory()
-        self._original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self._tmp.name) / "rl.db"
         database.init_database()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self._original_database_path
-        self._tmp.cleanup()
 
     def _advance_window(self):
         """Simula el paso de la ventana expirando las entradas de rate limiting."""

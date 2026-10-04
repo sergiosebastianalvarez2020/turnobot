@@ -10,12 +10,16 @@ de la identidad de negocio (`users`/`business_users`/membresías). Cubre:
   superadmin NO entra al panel de un negocio (no tiene membresía).
 - Auditoría de acciones de plataforma.
 - Logout selectivo: cerrar un contexto no destruye el otro.
+
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estándar (negocio 1
+"El Corte"). No hay swap de `DATABASE_PATH` ni SQLite; el aislamiento entre tests es
+el de la base temporal. La comprobacion `WHERE revoked = 1` se mantiene tal cual para
+cubrir de punta a punta la reescritura de predicados booleanos (`= 1` -> `IS TRUE`).
 """
 
 import re
-import tempfile
 import unittest
-from pathlib import Path
 
 from werkzeug.security import generate_password_hash
 
@@ -23,25 +27,23 @@ import app as application
 import database.database as database
 from database.database import get_connection
 from services import platform as platform_service
+from tests._pg_compat import PostgreSQLTestCase
 
 
-class PlatformBase(unittest.TestCase):
-    """Base temporal con negocio 1 (El Corte) y helpers de superadmin."""
+class PlatformBase(unittest.TestCase, PostgreSQLTestCase):
+    """Base con la semilla estandar (negocio 1 "El Corte") y helpers de superadmin."""
 
     SUPERADMIN_EMAIL = "admin@tu-dominio.com"
     SUPERADMIN_PASSWORD = "s3cr3t-strong-pass"
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        # `self.client` lo aporta la fixture `client`: app y base temporal propias
+        # de este test. Sin ella los 18 tests comparten la base de sesion y el
+        # aislamiento entre clases es inexistente.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
     # ---- helpers ----------------------------------------------------------
 
@@ -102,7 +104,7 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
         result = self._create_superadmin()
         self.assertTrue(result["success"])
         rows = self._query(
-            "SELECT email, password_hash FROM platform_users WHERE email = ?",
+            "SELECT email, password_hash FROM platform_users WHERE email = %s",
             (self.SUPERADMIN_EMAIL,),
         )
         self.assertEqual(len(rows), 1)
@@ -120,7 +122,7 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "email_exists")
         rows = self._query(
-            "SELECT COUNT(*) n FROM platform_users WHERE email = ?", (self.SUPERADMIN_EMAIL,)
+            "SELECT COUNT(*) n FROM platform_users WHERE email = %s", (self.SUPERADMIN_EMAIL,)
         )
         self.assertEqual(rows[0]["n"], 1)
 
@@ -158,9 +160,9 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
         user_id = self._make_tenant_user(self.SUPERADMIN_EMAIL, "otra-password-segura", 1, "owner")
         self.assertIsNotNone(user_id)
         sa = self._query(
-            "SELECT COUNT(*) n FROM platform_users WHERE email = ?", (self.SUPERADMIN_EMAIL,)
+            "SELECT COUNT(*) n FROM platform_users WHERE email = %s", (self.SUPERADMIN_EMAIL,)
         )[0]["n"]
-        bu = self._query("SELECT COUNT(*) n FROM users WHERE email = ?", (self.SUPERADMIN_EMAIL,))[
+        bu = self._query("SELECT COUNT(*) n FROM users WHERE email = %s", (self.SUPERADMIN_EMAIL,))[
             0
         ]["n"]
         self.assertEqual((sa, bu), (1, 1))
@@ -268,7 +270,11 @@ class TestAuditoria(PlatformBase):
         self._login_superadmin()
         rows = self._query("SELECT * FROM audit_log")
         for row in rows:
-            blob = " ".join(str(v) for v in row)
+            # `PgRowProxy` (subclase de dict) itera sobre CLAVES, no sobre valores:
+            # con `for v in row` el blob quedaba formado por nombres de columna y
+            # estas aserciones no podian fallar nunca (falso positivo silencioso).
+            # Hay que leer `.values()` para inspeccionar el contenido real de la fila.
+            blob = " ".join(str(v) for v in dict(row).values())
             self.assertNotIn("s3cr3t", blob)
             self.assertNotIn("pbkdf2", blob)
 

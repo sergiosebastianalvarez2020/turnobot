@@ -29,11 +29,16 @@ class SecurityOperationsTests(unittest.TestCase):
             )
             # Insertar horarios abiertos para TODOS los dias para evitar
             # que la prueba dependa del dia de la semana en que se ejecuta.
+            # El seed ya crea el domingo (day_of_week=6) cerrado, por lo que
+            # hace falta un UPSERT real: con DO NOTHING esa fila quedaria
+            # cerrada y create_appointment responderia 'closed_day'.
             for day in range(7):
                 conn.execute(
                     "INSERT INTO weekly_schedules "
                     "(business_id, day_of_week, is_open, morning_start, morning_end) "
-                    "VALUES (1, %s, TRUE, '09:00', '18:00') ON CONFLICT (business_id, day_of_week) DO NOTHING",
+                    "VALUES (1, %s, TRUE, '09:00', '18:00') "
+                    "ON CONFLICT (business_id, day_of_week) DO UPDATE SET "
+                    "is_open = TRUE, morning_start = '09:00', morning_end = '18:00'",
                     (day,),
                 )
             conn.commit()

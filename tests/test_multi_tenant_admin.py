@@ -6,17 +6,19 @@ por logout.
 """
 
 import re
-import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
 
 import app as application
-import database.database as database
-from database.database import get_connection
+from database.database import (
+    create_membership_scoped,
+    create_session_scoped,
+    create_user_scoped,
+    get_connection,
+)
 
 
 def _now_iso():
@@ -32,16 +34,8 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _exec(sql, params=None):
@@ -62,9 +56,9 @@ class BaseMultiTenantAdminTest(unittest.TestCase):
 
     def _make_user(self, email, password, business, role="owner"):
         """Crea un usuario con membresía en un negocio. Devuelve user_id."""
-        user_id = database.create_user_scoped(email, generate_password_hash(password), active=True)
+        user_id = create_user_scoped(email, generate_password_hash(password), active=True)
         self.assertIsNotNone(user_id)
-        database.create_membership_scoped(user_id, business, role)
+        create_membership_scoped(user_id, business, role)
         return user_id
 
     def _valid_date(self):
@@ -250,7 +244,7 @@ class TestSesion(BaseMultiTenantAdminTest):
         # Creamos un usuario y una sesión persistente ya expirada.
         uid = self._make_user("b@test.com", "secreta", 2, "owner")
         token = "sesion-expirada"
-        database.create_session_scoped(
+        create_session_scoped(
             uid, application._hash_session_token(token), _expires_iso(-100)
         )
         # Simula una cookie de sesión HTTP pre-establecida para ese usuario.
@@ -264,7 +258,7 @@ class TestSesion(BaseMultiTenantAdminTest):
     def test_sesion_no_expirada_accede(self):
         uid = self._make_user("b@test.com", "secreta", 2, "owner")
         token = "sesion-activa"
-        database.create_session_scoped(
+        create_session_scoped(
             uid, application._hash_session_token(token), _expires_iso(3600)
         )
         with self.client.session_transaction() as sess:
@@ -315,7 +309,11 @@ class TestSesion(BaseMultiTenantAdminTest):
 class TestModeloDatos(BaseMultiTenantAdminTest):
     def test_tablas_auth_existen(self):
         tablas = {
-            r["name"] for r in self._query("SELECT name FROM sqlite_master WHERE type = 'table'")
+            r["table_name"]
+            for r in self._query(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public'"
+            )
         }
         self.assertTrue({"users", "roles", "business_users", "sessions"} <= tablas)
 

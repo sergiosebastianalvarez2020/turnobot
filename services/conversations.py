@@ -283,7 +283,7 @@ def update_session_status_scoped(session_id, business_id, status):
         cursor = connection.execute(
             """
             UPDATE conversation_sessions
-            SET status = ?, needs_human = CASE WHEN ? = 'needs_human' THEN 1 ELSE 0 END,
+            SET status = ?, needs_human = CASE WHEN ? = 'needs_human' THEN TRUE ELSE FALSE END,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND business_id = ?
             """,
@@ -313,8 +313,8 @@ def track_question_scoped(business_id, question_text, needs_human=0):
             INSERT INTO conversation_analytics (business_id, question_hash, question_text, count, needs_human_count, last_seen_at)
             VALUES (?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(business_id, question_hash) DO UPDATE SET
-                count = count + 1,
-                needs_human_count = needs_human_count + ?,
+                count = conversation_analytics.count + 1,
+                needs_human_count = conversation_analytics.needs_human_count + ?,
                 last_seen_at = CURRENT_TIMESTAMP,
                 question_text = ?
             """,
