@@ -7,13 +7,10 @@ provision_business(), invitations, emails y rate limiting.
 
 import os
 import re
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import app as application
-import database.database as database
 from database.database import get_connection
 from services import notifications
 from services import platform as platform_service
@@ -55,15 +52,7 @@ class RegistroPublicoBase(unittest.TestCase):
     def setUp(self):
         application.rate_limit_state.clear()
         application.app.config["TESTING"] = True
-        self.tmp = tempfile.TemporaryDirectory()
-        self.original_db = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "registro.db"
-        database.init_database()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_db
-        self.tmp.cleanup()
 
     @staticmethod
     def _query(sql, params=None):

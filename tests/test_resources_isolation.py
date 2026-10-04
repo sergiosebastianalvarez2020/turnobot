@@ -1,25 +1,16 @@
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import app as application
 import database.database as database
 
 
 class BaseIsolationTest(unittest.TestCase):
-    """Base con Business A (id=1) y Business B (id=2) en base temporal."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls._original_database_path = database.DATABASE_PATH
+    """Business A (id=1) y Business B (id=2) en la base PostgreSQL que el harness
+    descarta al terminar cada test."""
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
 
         self._execute(
             "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
@@ -29,10 +20,6 @@ class BaseIsolationTest(unittest.TestCase):
         self.resource_a = database.create_resource_scoped(1, "Cancha A1")
         self.resource_a2 = database.create_resource_scoped(1, "Cancha A2")
         self.resource_b = database.create_resource_scoped(2, "Cancha B1")
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _query(sql, params=None):

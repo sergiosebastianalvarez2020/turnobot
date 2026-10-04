@@ -1,5 +1,13 @@
 """Bloque J - Hardening de notificaciones y efectos secundarios.
 
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada
+test recibe una base `turnobot_test_<uuid>` desechable con la semilla estándar
+(negocio 1 "El Corte", con sus horarios y el servicio "Corte"). No hay swap de
+`DATABASE_PATH` ni SQLite: el aislamiento entre tests es el de la base temporal.
+
+`retry_failed_notifications._run_once()` se sigue ejecutando REAL, con su propio
+ciclo de vida de pool de CLI (`_init_cli_pool`/`close_pg_pool`).
+
 Garantías verificadas sobre la relación operación de turno <-> notificación:
 
 - Cancelación (éxito, rechazo, no autorizada): NUNCA genera notificaciones ni
@@ -15,11 +23,9 @@ Garantías verificadas sobre la relación operación de turno <-> notificación:
 """
 
 import os
-import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 
 import app as application
@@ -28,6 +34,7 @@ import scripts.retry_failed_notifications as retry_runner
 from database.database import list_failed_notifications_scoped
 from services import appointments, notifications
 from services.notifications import BUSINESS_CONFIRMATION, CONFIRMATION, send_confirmation_email
+from tests._pg_compat import PostgreSQLTestCase
 
 SMTP_ENV = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587", "EMAIL_FROM": "no-reply@test.com"}
 
@@ -67,26 +74,42 @@ def _next_open_day():
     return date.isoformat()
 
 
-class NotificationsHardeningBase(unittest.TestCase):
+def _fmt_time(value):
+    """Normaliza la columna TIME a 'HH:MM' para la aserción.
+
+    SQLite la devuelve como TEXT y PostgreSQL como `datetime.time`; la
+    comparación es la misma en ambos backends una vez normalizada.
+    """
+    if isinstance(value, str):
+        return value
+    return value.strftime("%H:%M")
+
+
+class NotificationsHardeningBase(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.valid_date = _next_open_day()
-        self.client = application.app.test_client()
+        # `self.client` lo aporta la fixture `client`: app y base temporal propias
+        # de este test (el `test_client` del app de módulo apuntaría a la base de
+        # sesión). El contexto de app se mantiene durante todo el test porque
+        # `_run_once()` abre y cierra su propio pool de CLI, lo que invalida
+        # `_global_pool`; dentro del contexto, las consultas siguen resolviendo
+        # `current_app.extensions["pg_pool"]`, o sea la base de este test.
+        # Compartir `g` entre requests es seguro: `load_current_business()`
+        # re-resuelve el negocio en cada request en vez de leer un valor previo.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
         self._enable_notifications()
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
     def _enable_notifications(self, notification_email=""):
+        # `notifications_enabled = 1` se mantiene deliberadamente: cubre de punta
+        # a punta la adaptación de asignaciones booleanas del seam PostgreSQL
+        # (`SET notifications_enabled = 1` -> `SET notifications_enabled = TRUE`).
         c = database.get_connection()
         c.execute(
             """UPDATE business_settings
-               SET notifications_enabled = 1, notification_email = ?
+               SET notifications_enabled = 1, notification_email = %s
                WHERE business_id = 1""",
             (notification_email,),
         )
@@ -105,14 +128,14 @@ class NotificationsHardeningBase(unittest.TestCase):
         sql = "SELECT COUNT(*) AS n FROM notification_log"
         params = None
         if appointment_id is not None:
-            sql += " WHERE appointment_id = ?"
+            sql += " WHERE appointment_id = %s"
             params = (appointment_id,)
         return self._query(sql, params)[0]["n"]
 
     def _notification_row(self, appointment_id, type_):
         rows = self._query(
             """SELECT status, error, destination FROM notification_log
-               WHERE appointment_id = ? AND type = ?""",
+               WHERE appointment_id = %s AND type = %s""",
             (appointment_id, type_),
         )
         return dict(rows[0]) if rows else None
@@ -156,7 +179,7 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
             aid, "3838439222", 1, result["management_token"], customer_name="Ana Pérez"
         )
         self.assertTrue(ok)
-        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = %s", (aid,))[0]["status"]
         self.assertEqual(status, "cancelled")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -168,7 +191,7 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
                 aid, "3838439222", 1, "token-incorrecto", customer_name="Ana Pérez"
             )
         )
-        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = %s", (aid,))[0]["status"]
         self.assertEqual(status, "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -178,7 +201,7 @@ class TestCancelacionSinEfectosColaterales(NotificationsHardeningBase):
         self.assertFalse(
             appointments.cancel_appointment(aid, "3838439222", 1, None, customer_name="Ana Pérez")
         )
-        status = self._query("SELECT status FROM appointments WHERE id = ?", (aid,))[0]["status"]
+        status = self._query("SELECT status FROM appointments WHERE id = %s", (aid,))[0]["status"]
         self.assertEqual(status, "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -203,10 +226,10 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
             customer_name="Ana Pérez",
         )
         self.assertTrue(res["success"])
-        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
-            0
-        ]
-        self.assertEqual(row["appointment_time"], "10:00")
+        row = self._query(
+            "SELECT appointment_time, status FROM appointments WHERE id = %s", (aid,)
+        )[0]
+        self.assertEqual(_fmt_time(row["appointment_time"]), "10:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -225,10 +248,10 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
         )
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "occupied")
-        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
-            0
-        ]
-        self.assertEqual(row["appointment_time"], "09:00")
+        row = self._query(
+            "SELECT appointment_time, status FROM appointments WHERE id = %s", (aid,)
+        )[0]
+        self.assertEqual(_fmt_time(row["appointment_time"]), "09:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -246,10 +269,10 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
         )
         self.assertFalse(res["success"])
         self.assertEqual(res["reason"], "not_found")
-        row = self._query("SELECT appointment_time, status FROM appointments WHERE id = ?", (aid,))[
-            0
-        ]
-        self.assertEqual(row["appointment_time"], "09:00")
+        row = self._query(
+            "SELECT appointment_time, status FROM appointments WHERE id = %s", (aid,)
+        )[0]
+        self.assertEqual(_fmt_time(row["appointment_time"]), "09:00")
         self.assertEqual(row["status"], "confirmed")
         self.assertEqual(self._log_count(aid), 0)
 
@@ -276,7 +299,7 @@ class TestReprogramacionSinEfectosColaterales(NotificationsHardeningBase):
             customer_name="Ana Pérez",
         )
         rows = self._query(
-            "SELECT COUNT(*) AS n FROM appointments WHERE id = ? AND appointment_time = '12:00'",
+            "SELECT COUNT(*) AS n FROM appointments WHERE id = %s AND appointment_time = '12:00'",
             (aid,),
         )
         self.assertEqual(rows[0]["n"], 1)
@@ -406,8 +429,15 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         self.assertEqual(self._notification_row(aid, CONFIRMATION)["status"], "failed")
 
         c = database.get_connection()
-        c.execute("PRAGMA foreign_keys = OFF")
-        c.execute("DELETE FROM appointments WHERE id = ?", (aid,))
+        # La precondición es "fila `failed` sin turno". SQLite la consecguía con
+        # `PRAGMA foreign_keys = OFF`; PostgreSQL no tiene PRAGMA y el esquema
+        # declara la FK sin `ON DELETE CASCADE`, así que el DELETE sería
+        # rechazado. `session_replication_role = replica` es el equivalente
+        # exacto: desactiva la verificación de FK de la SESIÓN (y el `DEFAULT`
+        # la restaura), sin DDL ni residuos.
+        c.execute("SET session_replication_role = replica")
+        c.execute("DELETE FROM appointments WHERE id = %s", (aid,))
+        c.execute("SET session_replication_role = DEFAULT")
         c.commit()
         c.close()
 
@@ -432,7 +462,7 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
             """INSERT INTO notification_log
                (appointment_id, business_id, type, channel, destination,
                 status, error, last_attempt_at)
-               VALUES (?, 2, ?, 'email', 'b@example.com', 'failed', 'smtp down', '')""",
+               VALUES (%s, 2, %s, 'email', 'b@example.com', 'failed', 'smtp down', NULL)""",
             (aid, CONFIRMATION),
         )
         c.commit()
@@ -454,8 +484,12 @@ class TestRetryConsistenteConEstadoDelTurno(NotificationsHardeningBase):
         retried_counts = []
 
         def run():
-            barrier.wait()
-            retried_counts.append(retry_runner._run_once(business_id=1))
+            # Cada worker necesita su propio contexto de app: `contextvars` no
+            # se heredan a hilos nuevos, y sin contexto `get_connection()`
+            # caería en el pool global en vez de en la base de este test.
+            with self.app.app_context():
+                barrier.wait()
+                retried_counts.append(retry_runner._run_once(business_id=1))
 
         shared_fake = FakeSMTP()
         with (

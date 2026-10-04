@@ -29,19 +29,16 @@ Son pruebas funcionales o de persistencia que necesitan la base temporal Postgre
 | `tests/test_emails_etapa4.py` | 12 | A | Flujo de email con estado de aplicación. | Usar la base temporal PG. |
 | `tests/test_membership_authorization.py` | 22 | A | Autorización con datos/relaciones persistidas. | Usar seed y app PG. |
 | `tests/test_multi_tenant_admin.py` | 18 | A | Administración y aislamiento entre tenants. | Seed de varios negocios en PG. |
-| `tests/test_notifications_hardening.py` | 18 | A | Hardening de notificaciones con DB. | Migrar setup y errores de backend. |
 | `tests/test_observability.py` | 79 | A | Cobertura extensa; incluye estado DB y mocks de locks SQLite. | Auditar por bloques; mantener mocks unitarios útiles y pasar escenarios funcionales a PG. |
 | `tests/test_platform.py` | 18 | A | Estado funcional de plataforma/admin. | Usar DB temporal PG. |
 | `tests/test_provision_business.py` | 21 | A | Provisionamiento con múltiples registros relacionados. | Migrar datos iniciales a PG. |
 | `tests/test_public_api_service_isolation.py` | 84 | A | Pruebas grandes de API/aislamiento con persistencia. | Auditar en bloques y usar seeds PG por tenant. |
 | `tests/test_rate_limit_http.py` | 4 | A | Límites HTTP con cliente/app y estado de aplicación. | Separar estado en memoria de DB y usar PG donde corresponda. |
 | `tests/test_rate_limiting.py` | 8 | A | Incluye `last_insert_rowid()`/errores SQLite en escenarios funcionales. | Migrar inserciones/assertions a resultados PG. |
-| `tests/test_registro_publico.py` | 14 | A | Registro público y persistencia. | Usar client y seed PG. |
-| `tests/test_resources_isolation.py` | 13 | A | Aislamiento de recursos por negocio. | Seed multi-tenant PG. |
 | `tests/test_resources_public_api.py` | 28 | A | API pública con recursos y DB. | Migrar preparación/assertions a PG. |
 | `tests/test_standalone_create_app.py` | 4 | A | El subproceso fuerza `DB_BACKEND=sqlite`; prueba arranque/app funcional. | Pasar una URL temporal PG al subproceso o aislar el contrato de factory sin DB. |
 
-**16 archivos / 375 tests.**
+**13 archivos / 330 tests.**
 
 ## B — PostgreSQL ya cubierto
 
@@ -74,14 +71,17 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_membership_ui.py` | 13 | B | Migrado: UI real de `templates/usuarios.html` sobre PG — visibilidad por rol, CSRF en los 3 formularios, ausencia de `role_id`/`business_id` como campos y rutas con prefijo `/b/<slug>/`. | Mantener como canónica de la UI de membresía. |
 | `tests/test_notifications.py` | 8 | B | Migrado: persistencia y entrega de notificaciones sobre PG. | Mantener como cobertura PG. |
 | `tests/test_notifications_conditional.py` | 7 | B | Migrado: notificaciones condicionadas por estado persistido en PG. | Mantener como cobertura PG. |
+| `tests/test_notifications_hardening.py` | 18 | B | Migrado: usa `PostgreSQLTestCase` con base desechable por test; mantiene `retry_failed_notifications._run_once()` real con su propio pool de CLI, y conserva `SET notifications_enabled = 1` para cubrir de punta a punta la adaptación booleana del seam PG. | Mantener como cobertura PG. |
 | `tests/test_onboarding.py` | 7 | B | Migrado: estado de onboarding persistido en PG. | Mantener como cobertura PG. |
 | `tests/test_password_reset.py` | 13 | B | Migrado: recuperación de contraseña sobre PG — token de un solo uso, contraseña débil rechazada, anti-enumeración de emails y revocación de las sesiones del usuario tras el reset. | Mantener como canónica de recuperación de contraseña. |
 | `tests/test_postgres_config.py` | 12 | B | Resolver/configuración PostgreSQL; el rechazo de SQLite en producción sigue siendo contrato vigente. | Mantener como unit tests de configuración. |
 | `tests/test_postgres_schema.py` | 17 | B | Inspecciona `migrations_pg/001_initial_schema.sql`; las menciones SQLite son assertions negativas del esquema PostgreSQL. | Mantener como validación estática PG. |
 | `tests/test_postgresql_backup_scripts.py` | 4 | B | Prueba builders/sanitización/comandos de backup PostgreSQL; no hace `sqlite3.connect` ni ejecuta SQLite. | Mantener; no hay cobertura equivalente en otro archivo. |
 | `tests/test_provisioning.py` | 2 | B | Provisionamiento atómico (negocio + owner + settings + 7 horarios), unicidad de slug y rollback por email duplicado, sobre PostgreSQL live. | Mantener como cobertura PG. |
+| `tests/test_registro_publico.py` | 14 | B | Migrado: registro público sobre PG — flujo de invitación, entrega de email y rate limiting, con `client` del harness. | Mantener como cobertura PG. |
 | `tests/test_reminders.py` | 3 | B | Runner de recordatorios 24h sobre PostgreSQL live: envío, idempotencia y supresión con notificaciones deshabilitadas o sin email. `_run_once()` resuelve el pool desde `DATABASE_URL`, alineado en el test con la base temporal por test. | Mantener como cobertura PG. |
 | `tests/test_resources_appointments.py` | 13 | B | Migrado: recursos y turnos persistidos sobre PG; el aislamiento por tenant es el de `business_id`, sin swap de `DATABASE_PATH`. | Mantener como cobertura PG. |
+| `tests/test_resources_isolation.py` | 13 | B | Migrado: aislamiento de recursos entre negocios A y B sobre la base temporal que el harness descarta por test. | Mantener como cobertura PG. |
 | `tests/test_security_concurrency.py` | 3 | B | Migrado: ejecución contra PG real de los escenarios de concurrencia de seguridad. | Mantener como cobertura PG. |
 | `tests/test_security_operations.py` | 9 | B | Migrado: operaciones de seguridad y persistencia sobre PG. | Mantener como cobertura PG. |
 | `tests/test_services_isolation.py` | 9 | B | Migrado: aislamiento de servicios por tenant con seed PG por negocio. | Mantener como cobertura PG. |
@@ -158,14 +158,14 @@ Los items por archivo cuentan la expansión parametrizada indicada arriba.
 
 | Categoría | Archivos | Tests/items |
 | --- | ---: | ---: |
-| A — Migrar/normalizar a PostgreSQL | 16 | 375 |
-| B — PostgreSQL ya cubierto | 48 | 545 |
+| A — Migrar/normalizar a PostgreSQL | 13 | 330 |
+| B — PostgreSQL ya cubierto | 51 | 590 |
 | C — Mantener SQLite legítimo | 7 | 36 |
 | D — Consolidación resuelta | 1 | 10 |
 | E — Revisión manual/unit desacoplable | 9 | 123 |
 | **TOTAL** | **81** | **1.089** |
 
-Comprobación: `16 + 48 + 7 + 1 + 9 = 81`; `375 + 545 + 36 + 10 + 123 = 1.089`.
+Comprobación: `13 + 51 + 7 + 1 + 9 = 81`; `330 + 590 + 36 + 10 + 123 = 1.089`.
 
 ## Adaptador de compatibilidad: corrección de `_adapt_boolean_comparisons`
 
