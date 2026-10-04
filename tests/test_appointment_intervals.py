@@ -1,86 +1,96 @@
-import tempfile
+"""Tests funcionales de intervals de turnos: duración, solapamiento, cierre.
+
+Ejecutan contra PostgreSQL usando la fixture de base temporal aislada.
+El backend SQLite se mantiene únicamente en test_appointment_intervals_migration.py
+que valida la migración histórica de esquema SQLite → PostgreSQL.
+"""
+
 import threading
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import database.database as database
 from services import appointments
+from tests._pg_compat import PostgreSQLTestCase
 
 
-def next_open_day():
+def _next_open_day():
+    """Próximo día que no es domingo."""
     date = datetime.now().date() + timedelta(days=1)
     while date.weekday() == 6:
         date += timedelta(days=1)
     return date.isoformat()
 
 
-class BaseIntervalTest(unittest.TestCase):
-    """Business 1 (El Corte) en base temporal. Se configura grilla fina
-    (slot_duration=15) para poder expresar horarios como 09:15."""
+def _day_of_week(date_iso):
+    """Extrae day_of_week (0=lunes..6=domingo) desde una fecha ISO."""
+    return datetime.fromisoformat(date_iso).weekday()
+
+
+class BaseIntervalTest(unittest.TestCase, PostgreSQLTestCase):
+    """Business 1 (El Corte) en base temporal PostgreSQL.
+    Se configura grilla fina (slot_duration=15) para poder expresar horarios como 09:15."""
 
     DATE = None
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        with self.app.app_context():
+            self.valid_date = _next_open_day()
+            BaseIntervalTest.DATE = self.valid_date
 
-        weekday = datetime.now().weekday()
-        while weekday == 6:
-            weekday = (weekday + 1) % 7
-        self._execute(
-            "UPDATE business_settings SET slot_duration = 15, break_between_slots = 0 WHERE business_id = 1"
-        )
-        self._execute(
-            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '12:00', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
-            (weekday,),
-        )
-        self._execute("UPDATE services SET business_id = 1 WHERE id IN (1, 2, 3)")
-        # Servicios con duraciones variadas (misma empresa, negocio 1)
-        self.services = {
-            "S15": self._insert_service("S15", 15),
-            "S20": self._insert_service("S20", 20),
-            "S30": self._insert_service("S30", 30),
-            "S50": self._insert_service("S50", 50),
-            "S60": self._insert_service("S60", 60),
-        }
-        self.valid_date = next_open_day()
-        BaseIntervalTest.DATE = self.valid_date
+            weekday = datetime.now().weekday()
+            while weekday == 6:
+                weekday = (weekday + 1) % 7
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+            self._execute(
+                "UPDATE business_settings SET slot_duration = 15, break_between_slots = 0 "
+                "WHERE business_id = 1"
+            )
+            self._execute(
+                "UPDATE weekly_schedules SET is_open = TRUE, morning_start = '09:00', "
+                "morning_end = '12:00', afternoon_start = NULL, afternoon_end = NULL "
+                "WHERE business_id = 1 AND day_of_week = %s",
+                (weekday,),
+            )
+            self._execute("UPDATE services SET business_id = 1 WHERE id IN (1, 2, 3)")
+            self.services = {
+                "S15": self._insert_service("S15", 15),
+                "S20": self._insert_service("S20", 20),
+                "S30": self._insert_service("S30", 30),
+                "S50": self._insert_service("S50", 50),
+                "S60": self._insert_service("S60", 60),
+            }
 
-    @staticmethod
-    def _execute(sql, params=None):
-        connection = database.get_connection()
-        try:
-            connection.execute(sql, params or ())
-            connection.commit()
-        finally:
-            connection.close()
+    def _execute(self, sql, params=None):
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                connection.execute(sql, params or ())
+                connection.commit()
+            finally:
+                connection.close()
 
-    @staticmethod
-    def _query(sql, params=None):
-        connection = database.get_connection()
-        try:
-            return connection.execute(sql, params or ()).fetchall()
-        finally:
-            connection.close()
+    def _query(self, sql, params=None):
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                return connection.execute(sql, params or ()).fetchall()
+            finally:
+                connection.close()
 
     def _insert_service(self, name, duration):
-        connection = database.get_connection()
-        try:
-            cursor = connection.execute(
-                "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, ?, 1000, ?, 1)",
-                (name, duration),
-            )
-            connection.commit()
-            return cursor.lastrowid
-        finally:
-            connection.close()
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                cursor = connection.execute(
+                    "INSERT INTO services (business_id, name, price, duration, active) "
+                    "VALUES (1, %s, 1000, %s, TRUE)",
+                    (name, duration),
+                )
+                connection.commit()
+                return cursor.lastrowid
+            finally:
+                connection.close()
 
     def _book(self, service_name, time, business_id=1, name="Cliente", phone="123456789"):
         return appointments.create_appointment(
@@ -91,63 +101,63 @@ class BaseIntervalTest(unittest.TestCase):
 class TestDurationAndEnd(BaseIntervalTest):
     def test_duracion_20(self):
         result = self._book("S20", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         row = self._query(
-            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            "SELECT duration, appointment_end FROM appointments WHERE id = %s",
             (result["appointment_id"],),
         )[0]
-        self.assertEqual(row["duration"], 20)
-        self.assertEqual(row["appointment_end"], "09:20")
+        assert row["duration"] == 20
+        assert _fmt_time(row["appointment_end"]) == "09:20"
 
     def test_duracion_30(self):
         result = self._book("S30", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         row = self._query(
-            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            "SELECT duration, appointment_end FROM appointments WHERE id = %s",
             (result["appointment_id"],),
         )[0]
-        self.assertEqual(row["duration"], 30)
-        self.assertEqual(row["appointment_end"], "09:30")
+        assert row["duration"] == 30
+        assert _fmt_time(row["appointment_end"]) == "09:30"
 
     def test_duracion_50(self):
         result = self._book("S50", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         row = self._query(
-            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            "SELECT duration, appointment_end FROM appointments WHERE id = %s",
             (result["appointment_id"],),
         )[0]
-        self.assertEqual(row["duration"], 50)
-        self.assertEqual(row["appointment_end"], "09:50")
+        assert row["duration"] == 50
+        assert _fmt_time(row["appointment_end"]) == "09:50"
 
     def test_duracion_60(self):
         result = self._book("S60", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         row = self._query(
-            "SELECT duration, appointment_end FROM appointments WHERE id = ?",
+            "SELECT duration, appointment_end FROM appointments WHERE id = %s",
             (result["appointment_id"],),
         )[0]
-        self.assertEqual(row["duration"], 60)
-        self.assertEqual(row["appointment_end"], "10:00")
+        assert row["duration"] == 60
+        assert _fmt_time(row["appointment_end"]) == "10:00"
 
 
 class TestOverlap(BaseIntervalTest):
     def setUp(self):
         super().setUp()
-        self._book("S60", "09:00")  # ocupa 09:00-10:00
+        self._book("S60", "09:00")
 
     def test_09_15_a_09_30_rechazar(self):
         result = self._book("S15" if "S15" in self.services else "S20", "09:15")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "occupied")
+        assert result["success"] is False
+        assert result["reason"] == "occupied"
 
     def test_09_30_a_10_00_rechazar(self):
         result = self._book("S30", "09:30")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "occupied")
+        assert result["success"] is False
+        assert result["reason"] == "occupied"
 
     def test_10_00_a_10_30_permitir(self):
         result = self._book("S30", "10:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
 
 
 class TestCrossBusiness(BaseIntervalTest):
@@ -157,70 +167,74 @@ class TestCrossBusiness(BaseIntervalTest):
         )
         for day in range(7):
             self._execute(
-                "INSERT INTO weekly_schedules (business_id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end) "
-                "VALUES (2, ?, 1, '09:00', '12:00', NULL, NULL)",
+                "INSERT INTO weekly_schedules "
+                "(business_id, day_of_week, is_open, morning_start, morning_end, "
+                "afternoon_start, afternoon_end) "
+                "VALUES (2, %s, TRUE, '09:00', '12:00', NULL, NULL)",
                 (day,),
             )
         self._insert_business_b_service("S60 B", 60)
 
         a = self._book("S60", "09:00", business_id=1)
         b = self._book("S60 B", "09:00", business_id=2)
-        self.assertTrue(a["success"])
-        self.assertTrue(b["success"])
+        assert a["success"] is True
+        assert b["success"] is True
 
     def _insert_business_b_service(self, name, duration):
-        connection = database.get_connection()
-        try:
-            cursor = connection.execute(
-                "INSERT INTO services (business_id, name, price, duration, active) VALUES (2, ?, 1000, ?, 1)",
-                (name, duration),
-            )
-            connection.commit()
-            return cursor.lastrowid
-        finally:
-            connection.close()
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                cursor = connection.execute(
+                    "INSERT INTO services (business_id, name, price, duration, active) "
+                    "VALUES (2, %s, 1000, %s, TRUE)",
+                    (name, duration),
+                )
+                connection.commit()
+                return cursor.lastrowid
+            finally:
+                connection.close()
 
 
 class TestHistoricalDuration(BaseIntervalTest):
     def test_cambio_de_duracion_conserva_historia(self):
         result = self._book("S30", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         appointment_id = result["appointment_id"]
 
-        # El admin aumenta la duración del servicio a 60
-        self._execute("UPDATE services SET duration = 60 WHERE id = ?", (self.services["S30"],))
+        self._execute("UPDATE services SET duration = 60 WHERE id = %s", (self.services["S30"],))
 
         row = self._query(
-            "SELECT duration, appointment_end FROM appointments WHERE id = ?", (appointment_id,)
+            "SELECT duration, appointment_end FROM appointments WHERE id = %s", (appointment_id,)
         )[0]
-        self.assertEqual(row["duration"], 30)
-        self.assertEqual(row["appointment_end"], "09:30")
+        assert row["duration"] == 30
+        assert _fmt_time(row["appointment_end"]) == "09:30"
 
 
 class TestClosingTime(BaseIntervalTest):
     def test_termina_exacto_al_cierre_permitido(self):
-        # Reconfigurar día: 09:00-10:00. Un servicio de 60 min que inicia 09:00
-        # termina exactamente al cierre -> permitido.
         self._execute(
-            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '10:00', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
-            (datetime.fromisoformat(self.valid_date).weekday(),),
+            "UPDATE weekly_schedules SET is_open = TRUE, morning_start = '09:00', "
+            "morning_end = '10:00', afternoon_start = NULL, afternoon_end = NULL "
+            "WHERE business_id = 1 AND day_of_week = %s",
+            (_day_of_week(self.valid_date),),
         )
         result = self._book("S60", "09:00")
-        self.assertTrue(result["success"])
+        assert result["success"] is True
         row = self._query(
-            "SELECT appointment_end FROM appointments WHERE id = ?", (result["appointment_id"],)
+            "SELECT appointment_end FROM appointments WHERE id = %s", (result["appointment_id"],)
         )[0]
-        self.assertEqual(row["appointment_end"], "10:00")
+        assert _fmt_time(row["appointment_end"]) == "10:00"
 
     def test_excede_el_cierre_rechazado(self):
         self._execute(
-            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '10:00', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
-            (datetime.fromisoformat(self.valid_date).weekday(),),
+            "UPDATE weekly_schedules SET is_open = TRUE, morning_start = '09:00', "
+            "morning_end = '10:00', afternoon_start = NULL, afternoon_end = NULL "
+            "WHERE business_id = 1 AND day_of_week = %s",
+            (_day_of_week(self.valid_date),),
         )
-        # Un servicio de 60 min que inicia 09:30 terminaría 10:30 > cierre.
         result = self._book("S60", "09:30")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "invalid_time")
+        assert result["success"] is False
+        assert result["reason"] == "invalid_time"
 
 
 class TestConcurrency(BaseIntervalTest):
@@ -239,25 +253,20 @@ class TestConcurrency(BaseIntervalTest):
             t.join()
 
         successes = [r["success"] for r in results]
-        self.assertEqual(successes.count(True), 1)
-        self.assertEqual(len(results), 2)
+        assert successes.count(True) == 1
+        assert len(results) == 2
 
     def test_dos_reprogramaciones_solapadas_simultaneas_solo_una_exitosa(self):
-        """Dos hilos intentan reprogramar turnos al mismo slot simultáneamente."""
         barrier = threading.Barrier(2)
         results = []
 
-        # Crear dos turnos iniciales en horarios distintos
         result_a = self._book("S30", "09:00")
         appointment_id_a = result_a["appointment_id"]
         result_b = self._book("S30", "10:00")
         appointment_id_b = result_b["appointment_id"]
 
-        # Ambos intentan moverse a 10:30
-
         def reschedule(appointment_id, management_token):
             barrier.wait()
-            # Usar el método de reprogramación del cliente (con el management_token del turno)
             result = appointments.reschedule_appointment(
                 appointment_id=appointment_id,
                 new_date=self.valid_date,
@@ -283,38 +292,51 @@ class TestConcurrency(BaseIntervalTest):
             t.join()
 
         successes = [r["success"] for r in results]
-        # Exactamente uno debe tener éxito
-        self.assertEqual(successes.count(True), 1)
-        self.assertEqual(len(results), 2)
+        assert successes.count(True) == 1
+        assert len(results) == 2
 
-        # Verificar estado final en BD: solo un turno a las 10:30
         rows = self._query(
-            "SELECT id, appointment_time FROM appointments WHERE appointment_date = ? AND status = 'confirmed'",
+            "SELECT id, appointment_time FROM appointments "
+            "WHERE appointment_date = %s AND status = 'confirmed'",
             (self.valid_date,),
         )
-        at_1030 = [r for r in rows if r["appointment_time"] == "10:30"]
-        self.assertEqual(len(at_1030), 1, "Solo debe haber un turno a las 10:30")
+        at_1030 = [r for r in rows if _fmt_time(r["appointment_time"]) == "10:30"]
+        assert len(at_1030) == 1
 
 
 class TestInvalidDuration(BaseIntervalTest):
     def test_duracion_cero_rechazada(self):
-        self._execute("UPDATE services SET duration = 0 WHERE id = ?", (self.services["S30"],))
+        self._execute("UPDATE services SET duration = 0 WHERE id = %s", (self.services["S30"],))
         result = self._book("S30", "09:00")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "invalid_duration")
+        assert result["success"] is False
+        assert result["reason"] == "invalid_duration"
 
     def test_duracion_negativa_rechazada(self):
-        self._execute("UPDATE services SET duration = -1 WHERE id = ?", (self.services["S30"],))
+        self._execute("UPDATE services SET duration = -1 WHERE id = %s", (self.services["S30"],))
         result = self._book("S30", "09:00")
-        self.assertFalse(result["success"])
-        self.assertEqual(result["reason"], "invalid_duration")
+        assert result["success"] is False
+        assert result["reason"] == "invalid_duration"
 
     def test_duracion_null_bloqueada_por_esquema(self):
-        with self.assertRaises(Exception):
-            self._execute(
-                "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'S NULL', 1000, NULL, 1)"
-            )
+        sql = (
+            "INSERT INTO services (business_id, name, price, duration, active) "
+            "VALUES (1, 'S NULL', 1000, NULL, TRUE)"
+        )
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                connection.execute(sql)
+                exception = None
+            except Exception as exc:
+                exception = exc
+                connection.execute("ROLLBACK")
+            finally:
+                connection.close()
+            assert exception is not None
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _fmt_time(val):
+    """Normaliza TIME para comparación: str o datetime.time -> 'HH:MM'."""
+    if isinstance(val, str):
+        return val
+    return val.strftime("%H:%M")

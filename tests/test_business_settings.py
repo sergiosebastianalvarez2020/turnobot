@@ -1,22 +1,10 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 import database.database as database
 from services.appointments import DEFAULT_TIMEZONE, get_business_timezone
 
 
 class TestBusinessSettings(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
     def test_devuelve_configuracion_del_negocio(self):
         settings = database.get_business_settings(1)
 

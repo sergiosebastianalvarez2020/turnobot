@@ -1,11 +1,10 @@
 import os
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+import app as application
 import database.database as database
 import scripts.send_reminders as reminder_runner
 from services import appointments, notifications
@@ -38,11 +37,7 @@ class FakeSMTP:
 
 class BaseReminderTest(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self.enable_notifications()
+        self._set_notifications(True)
 
         # "Hoy" fijo: un día futuro que no es domingo. El turno se crea para el
         # día siguiente (nunca domingo). Parcheamos _local_today para que el
@@ -54,20 +49,36 @@ class BaseReminderTest(unittest.TestCase):
         while self.appointment_date.weekday() == 6:
             self.appointment_date += timedelta(days=1)
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+    def _set_notifications(self, enabled):
+        """Toggle del flag de notificaciones preservando el resto de la config.
 
-    def enable_notifications(self):
-        connection = database.get_connection()
-        connection.execute(
-            "UPDATE business_settings SET notifications_enabled = 1 WHERE business_id = 1"
+        Se usa la API en vez de `UPDATE ... SET notifications_enabled = 1/0`
+        porque el adaptador traducía esa forma a `SET col IS TRUE` /
+        `SET NOT col`, que es SQL inválido en PostgreSQL. Los campos que la API
+        escribe de forma incondicional se reenvían desde el estado actual.
+        """
+        current = database.get_business_settings_scoped(1)
+        database.update_business_settings_scoped(
+            1,
+            current["business_name"],
+            current["business_type"],
+            current["business_initials"],
+            current["business_description"],
+            current["timezone"],
+            notifications_enabled=enabled,
         )
-        connection.commit()
-        connection.close()
 
     def _run_with_smtp(self, fake):
-        env = {"SMTP_HOST": "smtp.test", "SMTP_PORT": "587"}
+        # `_run_once()` es un runner de CLI: `_init_cli_pool()` resuelve el pool a
+        # partir de la variable de entorno DATABASE_URL. El harness deja esa
+        # variable apuntando a la base de mantenimiento compartida mientras el pool
+        # de la app sí usa la base temporal del test, así que se alinea el entorno
+        # con la URL por test para que el runner opere sobre la base aislada.
+        env = {
+            "SMTP_HOST": "smtp.test",
+            "SMTP_PORT": "587",
+            "DATABASE_URL": application.app.config["DATABASE_URL"],
+        }
         # El runner calcula "mañana" = _local_today(...). Para que el turno
         # (creado en self.appointment_date) sea candidato, _local_today debe
         # devolver exactamente esa fecha.
@@ -107,12 +118,7 @@ class TestReminderRunner(BaseReminderTest):
         self.assertIn("Recordatorio", str(fake.messages[0][2]))
 
     def test_no_envia_con_notificaciones_deshabilitadas(self):
-        connection = database.get_connection()
-        connection.execute(
-            "UPDATE business_settings SET notifications_enabled = 0 WHERE business_id = 1"
-        )
-        connection.commit()
-        connection.close()
+        self._set_notifications(False)
         self._confirmed("09:00", "ana@example.com")
 
         fake = FakeSMTP()

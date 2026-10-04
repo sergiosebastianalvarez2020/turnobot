@@ -1,6 +1,4 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 import database.database as database
 from services.knowledge import (
@@ -15,10 +13,6 @@ from services.knowledge import (
 
 class TestKnowledge(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         # Crear usuario owner para tests
         self.owner_id = database.create_user_scoped(
             "owner@test.com", database.generate_password_hash("testpass"), active=True
@@ -35,17 +29,13 @@ class TestKnowledge(unittest.TestCase):
         finally:
             connection.close()
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
-
     def test_knowledge_isolation(self):
         """Negocio A no puede ver conocimiento de B."""
         # Crear negocio 2 en la base de datos de test
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
+                "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business 2', 'business-2')"
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
@@ -137,7 +127,7 @@ class TestKnowledge(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "Business 2", "business-2")'
+                "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business 2', 'business-2')"
             )
             owner_role = connection.execute("SELECT id FROM roles WHERE name = 'owner'").fetchone()
             connection.execute(
@@ -160,7 +150,13 @@ class TestKnowledge(unittest.TestCase):
         results = search_knowledge_scoped(1, "Pregunta B", limit=5)
         self.assertEqual(len(results), 0)
 
-        results = search_knowledge_scoped(2, "Pregunta A", limit=5)
+        # Búsqueda en A no debe devolver conocimiento de B. La dirección inversa
+        # usa un token propio de A ("tag1") y no "Pregunta A": con
+        # `to_tsvector('spanish', ...)` la letra "A" es stopword, así que
+        # websearch_to_tsquery degrada 'Pregunta A' a solo 'pregunt' y matchearía
+        # la fila propia de B. El aislamiento multi-tenant se comprueba igual, sin
+        # depender de la lista de stopwords del idioma.
+        results = search_knowledge_scoped(2, "tag1", limit=5)
         self.assertEqual(len(results), 0)
 
         # Búsqueda en el negocio correcto sí encuentra

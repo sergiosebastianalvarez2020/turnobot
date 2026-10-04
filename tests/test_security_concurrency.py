@@ -1,8 +1,6 @@
-import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -50,16 +48,6 @@ def _next_open_slot(business_id=BUSINESS_ID):
 
 
 class AtomicSecurityTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.old_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "test.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.old_path
-        self.tmp.cleanup()
-
     def _invitation(self):
         result = platform.provision_business("Demo", "demo", "owner@example.com")
         approved = platform.approve_business(result["business_id"])

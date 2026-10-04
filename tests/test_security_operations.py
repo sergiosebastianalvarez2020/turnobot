@@ -3,10 +3,8 @@ Tests de seguridad para operaciones de clientes.
 Verifican que un cliente no pueda operar sobre turnos ajenos.
 """
 
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import database.database as database
 from services import appointments
@@ -16,30 +14,26 @@ class SecurityOperationsTests(unittest.TestCase):
     """Tests de seguridad para operaciones de clientes."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
 
         # Configurar negocio y servicios
         conn = database.get_connection()
         try:
             conn.execute(
-                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'Test', 'test')"
+                "INSERT INTO businesses (id, name, slug) VALUES (1, 'Test', 'test') ON CONFLICT (id) DO NOTHING"
             )
             conn.execute(
-                "INSERT OR IGNORE INTO business_settings (business_id, business_name, timezone) VALUES (1, 'Test', 'UTC')"
+                "INSERT INTO business_settings (business_id, business_name, timezone) VALUES (1, 'Test', 'UTC') ON CONFLICT (business_id) DO NOTHING"
             )
             conn.execute(
-                "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Corte', 1000, 30, 1)"
+                "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Corte', 1000, 30, 1) ON CONFLICT (id) DO NOTHING"
             )
             # Insertar horarios abiertos para TODOS los dias para evitar
             # que la prueba dependa del dia de la semana en que se ejecuta.
             for day in range(7):
                 conn.execute(
-                    "INSERT OR REPLACE INTO weekly_schedules "
+                    "INSERT INTO weekly_schedules "
                     "(business_id, day_of_week, is_open, morning_start, morning_end) "
-                    "VALUES (1, ?, 1, '09:00', '18:00')",
+                    "VALUES (1, %s, TRUE, '09:00', '18:00') ON CONFLICT (business_id, day_of_week) DO NOTHING",
                     (day,),
                 )
             conn.commit()
@@ -50,8 +44,7 @@ class SecurityOperationsTests(unittest.TestCase):
         self.future_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        pass
 
     def _create_appointment(self, customer_name, phone, management_token, appointment_time="10:00"):
         """Helper para crear un turno y obtener su management_token."""
@@ -197,13 +190,13 @@ class SecurityOperationsTests(unittest.TestCase):
         try:
             conn.execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Otro', 'otro')")
             conn.execute(
-                "INSERT OR REPLACE INTO business_settings (business_id, business_name, timezone) VALUES (2, 'Otro', 'UTC')"
+                "INSERT INTO business_settings (business_id, business_name, timezone) VALUES (2, 'Otro', 'UTC') ON CONFLICT (business_id) DO UPDATE SET business_name='Otro', timezone='UTC'"
             )
             conn.execute(
                 "INSERT INTO services (business_id, name, price, duration, active) VALUES (2, 'Corte', 1000, 30, 1)"
             )
             conn.execute(
-                "INSERT OR REPLACE INTO weekly_schedules (business_id, day_of_week, is_open, morning_start, morning_end) VALUES (2, 0, 1, '09:00', '18:00')"
+                "INSERT INTO weekly_schedules (business_id, day_of_week, is_open, morning_start, morning_end) VALUES (2, 0, 1, '09:00', '18:00') ON CONFLICT (business_id, day_of_week) DO UPDATE SET is_open=TRUE, morning_start='09:00', morning_end='18:00', afternoon_start=NULL, afternoon_end=NULL"
             )
             conn.commit()
         finally:
@@ -227,7 +220,7 @@ class SecurityOperationsTests(unittest.TestCase):
                 ),
             )
             conn.commit()
-            appt_b_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            appt_b_id = conn.execute("SELECT id FROM appointments ORDER BY id DESC LIMIT 1").fetchone()[0]
         finally:
             conn.close()
 

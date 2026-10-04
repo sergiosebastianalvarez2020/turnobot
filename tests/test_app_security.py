@@ -4,12 +4,12 @@ import unittest
 from werkzeug.security import generate_password_hash
 
 import app as application
+from tests._pg_compat import PostgreSQLTestCase
 
 
-class TestAdminSecurity(unittest.TestCase):
+class TestAdminSecurity(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.client = application.app.test_client()
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
         application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")

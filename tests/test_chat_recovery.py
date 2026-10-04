@@ -1,6 +1,4 @@
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import database.database as database
@@ -13,15 +11,7 @@ from services.conversations import (
 
 class TestChatRecovery(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.client = app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def test_chat_returns_session_data(self):
         """POST /chat devuelve session_id y public_token."""
@@ -69,7 +59,7 @@ class TestChatRecovery(unittest.TestCase):
         connection = database.get_connection()
         try:
             connection.execute(
-                'INSERT INTO businesses (id, name, slug) VALUES (2, "other", "other")'
+                "INSERT INTO businesses (id, name, slug) VALUES (2, 'other', 'other')"
             )
             connection.commit()
         finally:

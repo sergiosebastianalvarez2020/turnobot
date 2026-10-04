@@ -1,3 +1,4 @@
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -25,12 +26,23 @@ class TestAppointmentIntervalsMigration(unittest.TestCase):
             shutil.copy(ROOT / "migrations" / name, self.migrations_dir / name)
         self.original_database_path = database.DATABASE_PATH
         self.original_migrations_dir = database.MIGRATIONS_DIR
+        self._orig_env = {
+            "DATABASE_URL": os.environ.get("DATABASE_URL"),
+            "DB_BACKEND": os.environ.get("DB_BACKEND"),
+        }
+        os.environ.pop("DATABASE_URL", None)
+        os.environ["DB_BACKEND"] = "sqlite"
         database.DATABASE_PATH = self.database_path
         database.MIGRATIONS_DIR = self.migrations_dir
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_database_path
         database.MIGRATIONS_DIR = self.original_migrations_dir
+        for key, value in self._orig_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.temp_dir.cleanup()
 
     def connect(self):

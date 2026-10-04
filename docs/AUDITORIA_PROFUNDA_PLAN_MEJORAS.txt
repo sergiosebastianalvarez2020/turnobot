@@ -1,0 +1,766 @@
+# TURNOGO — AUDITORÍA EXHAUSTIVA DE PRODUCTO, PRODUCCIÓN Y READINESS
+
+> **Auditoría READ-ONLY. No se modificó nada en el codebase, la base de datos, ni el servidor OCI.**
+
+---
+
+## 1. Estado del baseline
+
+| Entorno | SHA | Estado |
+|---|---|---|
+| **GitHub `origin/main`** | `d25c227` | ✅ Actualizado (PR #11 mergeado) |
+| **Local `main`** | `d25c227` | ✅ Sincronizado |
+| **OCI servidor** | **`db25d28`** | ❌ **1 commit atrás** — no incluye Landing/Wizard (PR #11) |
+
+**Verificación:**
+```bash
+git rev-parse HEAD      → d25c227 ✓
+git rev-parse origin/main → d25c227 ✓
+ssh opc@161.153.202.182 git rev-parse HEAD → db25d28 ✗
+```
+
+**Tests (local, Windows):** 776 coleccionados → 775 passed, 1 failed
+- El único fallo: `test_prune_backups.py::TestPrunePlan::test_symlink_is_preserved_not_deleted` (limitación Windows de symlinks, documentado en `AGENTS.md`)
+
+**URL map:** 113 rules / 81 endpoints (baseline +4 rules, +4 endpoints tras Landing/Wizard)
+
+---
+
+## 2. Arquitectura (confirmado, no repetido)
+
+Arquitectura previamente auditada y cerrada. Estado actual:
+
+| Capa | Archivos | Rol |
+|---|---|---|
+| Entry points | `app.py`, `wsgi.py` | Fachada + Waitress WSGI (127.0.0.1:5000) |
+| Core (`application/`) | 12 módulos | `create_app()`, config, tenant, security, rate_limit, CSRF, logging |
+| Routes (`routes/`) | 17 archivos | 8 módulos + 8 `register_*.py` + `__init__.py` |
+| Services (`services/`) | 10 módulos | appointments, ai (Gemini), notifications, conversations, loyalty, memberships, knowledge |
+| Database (`database/`) | 3 archivos | SQLite (WAL), migración, queries, seed |
+
+**22 migraciones** (001–022), versión esquema en DB = migración 022 aplicada.
+
+---
+
+## 3. Funcionalidades existentes
+
+| Área | Estado | Evidencia |
+|---|---|---|
+| **Landing page** | ✅ Completa | `/b/<slug>` → `landing.html` con branding, servicios, CTA. ✅ Implementado en PR #11 |
+| **Wizard de reserva** | ✅ Completa | 4 pasos: servicio → fecha → datos → confirmar. CSRF + rate limiting. ✅ Implementado |
+| **Chat con IA** | ✅ Funciona | `/chat` con Gemini 2.5-flash, 7 herramientas, safety guards |
+| **Creación de negocios** | ⚠️ Manual | `superadmin_negocios_crear` → requiere superadmin. CLI `provision_business.py` |
+| **Aprobación de negocios** | ⚠️ Manual | `superadmin_negocios_aprobar` → superadmin. `pending=1` hasta aprobación. |
+| **Configuración de negocio** | ✅ Completa | `admin_save_business_settings` — nombre, zona horaria, branding, colores, logo, duración de slots |
+| **Servicios** | ✅ Completa | CRUD completo: `admin_save_service`, `admin_toggle_service` |
+| **Horarios semanales** | ✅ Completa | `admin_save_weekly_schedule` — 7 días, mañana/tarde |
+| **Turnos** | ✅ Completa | Crear, listar, cancelar, reprogramar. Paginado, filtros por status/fecha |
+| **Disponibilidad** | ✅ Completa | `/api/disponibilidad/<fecha>` — respeta horarios, intervalos, duração, recursos |
+| **Clientes** | ⚠️ Implícito | No hay vista de "clientes". Los turnos llevan nombre/teléfono/email. No hay gestión de clientes como entidad. |
+| **Autenticación** | ✅ Completa | Login/logout con CSRF, password hashing (scrypt), sesiones SHA-256 hash, expiración |
+| **Usuarios/Roles** | ✅ Completa | owner/admin/staff/customer. owner-only role changes. Invitaciones por token hash |
+| **Administración** | ✅ Completa | Panel admin completo: turnos, servicios, horarios, usuarios, conocimiento, IA, fidelización, recursos |
+| **Superadmin** | ✅ Completa | `/superadmin` — crear/aprobar/desactivar negocios, auditoría, gestionar invitations |
+| **Invitaciones** | ✅ Completa | Token hash, expiración 72h, reenvío, revocación |
+| **Notificaciones** | 🔴 Parcialmente roto | SMTP no configurado en OCI. ✅ Estructura completa, pero sin emails reales |
+| **Cancelaciones** | ✅ Completa | Via management_token (hash). UI pública en `/b/<slug>/turno/<token>?id=<id>` |
+| **Reprogramaciones** | ✅ Completa | Via management_token. Admin también puede reprogramar. |
+| **Recursos** | ✅ Completa | Recursos reservables por negocio. Scoping con `get_resource_scoped` |
+| **Fidelización** | ✅ Completa | Puntos por turno completado, reglas de puntos, recompensas, redenciones. Etapas 10.1-10.3 |
+| **Conocimiento/FAQ** | ⚠️ Incompleto | FTS5-backed, admin CRUD. **No hay datos** en OCI (`business_knowledge` vacío) |
+| **Onboarding** | 🔴 Falta | `product.get_onboarding_state()` existe pero no hay flujo guiado de onboarding. Ver sección 17. |
+| **Métricas/Observabilidad** | ⚠️ Parcial | Logging estructurado con request_id, negocio, endpoint, latency. Health check. **No métricas de negocio en dashboard UI** |
+
+---
+
+## 4. Experiencia del cliente final
+
+### Flujo completo (landing → wizard → reserva → notificación)
+
+| Paso | Estado | Evidencia |
+|---|---|---|
+| **Landing** `/b/<slug>` | ✅ Funciona | Hero, servicios en grid, CTA "Reservar turno", branding con colores personalizados |
+| **Seleccionar servicio** `/b/<slug>/reservar` | ✅ Funciona | Lista de servicios activos, CSRF token presente |
+| **Seleccionar fecha/hora** `/b/<slug>/reservar/fecha?servicio=X` | ✅ Funciona | Calendario interactivo en JS (`landing.js`). Si no hay servicio → redirect a paso 1 |
+| **Formulario datos** `/b/<slug>/reservar/datos?servicio=X&fecha=Y&hora=Z` | ✅ Funciona | Nombre, teléfono, email. Validación cliente + server |
+| **Confirmar** `POST /b/<slug>/reservar/confirmar` | ✅ Funciona | CSRF, rate limit (60/60s), valida nombre/phone/email/fecha/hora/servicio, `create_appointment` |
+| **Gestión de turno** `/b/<slug>/turno/<token>?id=<id>` | ✅ Funciona | Cancelar/reprogramar con management_token hash. |
+| **Notificación de confirmación** | 🔴 No funciona | SMTP_HOST no configurado en OCI → fallback silencioso |
+| **Recordatorio (24h)** | 🔴 No implementado en flujo | `scripts/send_reminders.py` existe y está programado, pero SMTP no configurado |
+
+### Validaciones server-side (wizard POST)
+
+| Validación | Estado | Evidencia |
+|---|---|---|
+| CSRF token | ✅ | `valid_csrf_token(data.get("csrf_token"))` → 400 si falla |
+| Nombre ≥ 2 chars | ✅ | `routes/public.py:269` |
+| Teléfono ≥ 7 dígitos | ✅ | `routes/public.py:273` |
+| Email válido | ✅ | `validate_email()` en `services.appointments` |
+| Servicio válido | ✅ | Verifica contra `get_active_services_scoped(business_id)` |
+| Rate limiting | ✅ | 60 requests/60s, HTTP 429 con `Retry-After` |
+| Tenant isolation | ✅ | `business is None or business.get("slug") != slug` → 404 |
+| JSON válido | ✅ | `json_object()` → 400 si no es dict |
+
+### Problemas identificados en el flujo cliente
+
+1. **Sin notificaciones de email**: el cliente nunca recibe confirmación ni recordatorio (SMTP no configurado en producción)
+2. **Sin recordatorio visual post-reserva**: el wizard redirige a `window.location.href = apiBase + '/?reserva=ok'` pero la landing page no tiene lógica para mostrar "Reserva exitosa" (no hay query param `?reserva=ok` handler en `index()`)
+3. **Sin manejo de errores de `create_appointment` en el wizard POST**: si la fecha/hora está ocupada, `create_appointment` returns `{"success": False, "reason": "occupied"}` → el wizard POST returns 400 con el mensaje. **Pero** `landing.js` no muestra este error correctamente — el manejo de errores del POST solo revisa `data.success` y muestra `data.error` o un mensaje genérico.
+
+---
+
+## 5. Experiencia del negocio
+
+### Flujo de onboarding (técnico)
+
+| Paso | Estado | Evidencia |
+|---|---|---|
+| **Crear negocio** | ⚠️ Requiere superadmin | `superadmin_negocios_crear` → `platform.provision_business(name, slug, owner_email)` → crea `businesses`, `business_settings`, `weekly_schedules` (defaults), `services` (defaults). Negocio creado con `pending=1`. |
+| **Aprobar negocio** | ⚠️ Manual | Superadmin debe aprobar → `approve_business()` setea `pending=0`, `active=1`, genera invitación |
+| **Configurar branding** | ✅ Admin UI | `admin_save_business_settings` — nombre, colores, logo, zona horaria |
+| **Configurar servicios** | ✅ Admin UI | `admin_save_service` — nombre, precio, duración, recursos |
+| **Configurar horarios** | ✅ Admin UI | `admin_save_weekly_schedule` — 7 días, mañana/tarde, slots |
+| **Obtener URL pública** | ✅ Automático | `/b/<slug>` funciona tras aprobación |
+| **Probar una reserva** | ✅ Posible | Landing → wizard → confirmar |
+| **Administrar turnos** | ✅ Admin UI | Panel admin con listado, filtros, cancelar, reprogramar |
+| **Gestionar clientes** | 🔴 No existe | No hay listado de clientes ni gestión de datos de contacto |
+| **Configurar notificaciones** | ✅ Admin UI | Toggle `notifications_enabled` + email de destino. **Pero SMTP no configurado** |
+| **Consultar actividad** | ⚠️ Imagen limitada | Dashboard admin muestra turnos. **No hay métricas de negocio** (turnos/día, ingresos, etc.) |
+
+### Onboarding crítico: `get_onboarding_state`
+
+`services/product.py` implementa `get_onboarding_state(business_id, settings, services)` que devuelve un estado de checklist:
+- `business_name` configurado
+- `slot_duration` ≠ 60 (default)
+- servicios creados
+- horarios configurados
+- al menos 1 servicio activo
+- configuración de notificaciones
+
+El panel admin muestra este checklist (`admin.html` → `onboarding` variable), pero **no hay un flujo guiado paso-a-paso** para completarlo. El negocio debe descubrir qué hacer por sí mismo.
+
+---
+
+## 6. Multi-tenancy
+
+### Pruebas de aislamiento (READ-ONLY)
+
+| Verificación | Estado | Evidencia |
+|---|---|---|
+| Tenant desde slug (nunca business_id del cliente) | ✅ | `application/tenant.py:46-61` — `resolve_business(slug)` con `WHERE slug = ? AND active = 1` |
+| Servicios scoped | ✅ | `get_active_services_scoped(business_id)` |
+| Recursos scoped | ✅ | `get_resource_scoped(resource_id, business_id)` — retorna None si no pertenece |
+| Turnos scoped | ✅ | Todas queries de appointments incluyen `business_id = ?` |
+| Configuración scoped | ✅ | `get_business_settings_scoped(business_id)` |
+| Notificaciones scoped | ✅ | `notification_log` incluye `business_id`, queries scoped |
+| Conocimiento scoped | ✅ | `search_knowledge_scoped(business_id, ...)` — FTS5 scoped |
+| Fidelización scoped | ✅ | `loyalty_accounts`, `points_ledger`, `redemptions` todos incluyen `business_id` |
+| Conversaciones scoped | ✅ | `conversation_sessions` incluye `business_id` |
+| Token de gestión scoped | ✅ | `get_appointment_by_token_scoped` verifica `(id, business_id, token_hash, status)` |
+| Chat con IA scoped | ✅ | `search_knowledge_scoped`, `get_active_services_scoped`, `get_resources_scoped` todos filtran por business_id |
+
+### Test de aislamiento
+
+`tests/test_appointments_isolation.py` — incluye `TestNoClientEscapesContext` que verifica que `business_id` enviado por el cliente en query params es ignorado. ✅ 15 tests, todos pass.
+
+`tests/test_multi_tenant_admin.py` — 18 tests verificando aislamiento admin. ✅ Todos pass.
+
+### Conclusión
+
+**No se encontraron vulnerabilidades de tenant isolation.** El aislamiento es sólido y verificado por tests.
+
+---
+
+## 7. Seguridad
+
+### 7.1 Autenticación
+
+| Aspecto | Estado | Detalle |
+|---|---|---|
+| Password hashing | ✅ PASS | `werkzeug.security.generate_password_hash` (scrypt) |
+| Password mínimo | ✅ PASS | 12 caracteres (`services/platform.py:96`) |
+| Rate limit login | ✅ PASS | 10 intentos/60s |
+| CSRF en login/logout | ✅ PASS | `valid_csrf_token` en todos los POST de auth |
+| Session token hashing | ✅ PASS | SHA-256 hash en DB (`application/session_crypto.py:14`) |
+| Session expiración | ✅ PASS | `PERMANENT_SESSION_LIFETIME` (24h default) + DB `expires_at` |
+| Cookie flags | ✅ PASS | `HttpOnly`, `SameSite=Lax`, `Secure` con `COOKIE_SECURE=1` |
+| Superadmin separado | ✅ PASS | `platform_users` tabla independiente, sessions separadas |
+
+### 7.2 CSRF
+
+| Aspecto | Estado | Detalle |
+|---|---|---|
+| CSRF en auth POST | ✅ | `routes/auth.py:188,213,233,246` |
+| CSRF en admin POST | ✅ | Todas las operaciones POST de `routes/admin.py` |
+| CSRF en wizard POST | ✅ | `routes/public.py:253` |
+| CSRF en superadmin | ✅ | `routes/superadmin.py:60,85,183,209,238` |
+| Token constant-time | ✅ | `secrets.compare_digest` (`extensions.py:114`) |
+| **CSRF en /chat** | 🟡 **FALTA** | `/chat` (routes/public_api.py:46) **NO valida CSRF**. Diseñado como público/agnostic, pero crea sesiones y puede reservar turnos. Riesgo Medium. |
+
+### 7.3 Rate Limiting
+
+| Endpoint | Límite | Ventana | Estado |
+|---|---|---|---|
+| Login | 10 | 60s | ✅ |
+| /chat | 20 | 60s | ✅ |
+| /chat (por teléfono) | 10 | 60s | ✅ |
+| API pública | 60 | 60s | ✅ |
+| Wizard POST | 60 | 60s | ✅ (agregado PR #11) |
+| /forgot | 5 | 60s | ✅ |
+| /registro | 3 | 60s | ✅ |
+| **/api/reservar, /api/cancelar, /api/reprogramar** | ❌ | ❌ | 🔴 **Sin rate limiting aplicado directamente** — depende del limit de Nginx en `/api/` (100r/m burst 20) |
+
+**Limitación conocida:** Rate limiting es **por proceso**, no distribuido (`defaultdict(deque)` + `threading.Lock` en `extensions.py:23-26`). Si se añaden workers múltiples, cada uno tiene su propio contador. Documentado en `DEPLOYMENT.md:47-49`.
+
+### 7.4 Security Headers
+
+| Header | Estado |
+|---|---|
+| X-Content-Type-Options: nosniff | ✅ |
+| X-Frame-Options: SAMEORIGIN | ✅ |
+| Referrer-Policy: strict-origin-when-cross-origin | ✅ |
+| Permissions-Policy | ✅ |
+| HSTS (producción) | ✅ |
+| **Content-Security-Policy** | 🔴 **FALTA COMPLETAMENTE** |
+
+`application/security.py:add_security_headers()` no incluye CSP. Grep por `Content-Security-Policy`, `csp`, `CSP` retorna cero resultados.
+
+### 7.5 Inyección / validación
+
+| Aspecto | Estado |
+|---|---|
+| SQL injection | ✅ Todas queries usan `?` placeholders |
+| XSS (templates) | ✅ Autoescaping Jinja2, sin `| safe` |
+| Path traversal | ✅ No hay rutas con path traversal |
+| Open redirect | ✅ No hay redirects a URLs de cliente |
+| Validación de input | ✅ Nombre, phone, email, fecha, hora, slug, colors, timezone, logo_url |
+| `MAX_CONTENT_LENGTH` | ✅ 512KB (`application/config.py:40`) |
+
+### 7.6 IDOR
+
+| Aspecto | Estado |
+|---|---|
+| Cancelar turno | ✅ Requiere `management_token` (SHA-256 hash) |
+| Reprogramar turno | ✅ Requiere `management_token` |
+| Gestión de turno pública | ✅ `public_manage_turno` verifica token hash |
+| Enumeración de IDs | ✅ `management_token` es el único factor; `appointment_id` por sí solo no autoriza |
+
+---
+
+## 8. IA (Gemini Integration)
+
+### 8.1 Estado general
+
+| Aspecto | Estado | Evidencia |
+|---|---|---|
+| Cliente Gemini | ✅ | `google.genai` SDK, API key en `.env` (`GEMINI_API_KEY`) |
+| Modelo | ✅ | `gemini-2.5-flash` (configurable via `AI_MODEL`) |
+| Timeout HTTP | ✅ | 15s configurable (`GEMINI_TIMEOUT_MS`) |
+| Retry con backoff | ✅ | 3 retries, 0.1s→0.2s→0.4s backoff |
+| Limit de iteraciones | ✅ | `MAX_TOOL_ITERATIONS = 5` |
+| Límite de historial | ✅ | 12 mensajes, 2000 chars/msg, 8000 total |
+| Function calling | ✅ | `automatic_function_calling` deshabilitado (manual) |
+| Herramientas | ✅ | 7 tools: disponibilidad, recursos, reservar, buscar, cancelar, reprogramar, solicitar_humano |
+
+### 8.2 Riesgo histórico: "Gemini confirma mutación sin ejecutar tool"
+
+**Estado: RESUELTO** ✅
+
+El riesgo se resuelve con `_safe_text_response()` (`services/ai.py:312-335`):
+- Patrones regex definidos para `reservar_turno`, `cancelar_turno`, `reprogramar_turno`
+- Si la respuesta de texto de Gemini contiene lenguaje de confirmación pero la herramienta no se ejecutó → se reemplaza con: "Disculpá, no se pudo confirmar la operación en este momento."
+- `confirmed_mutations` set (line 1985) registra herramientas realmente ejecutadas
+- Tests: `test_observability.py` — 3 tests específicos validan este comportamiento ✅
+
+**Evidencia de tests:**
+- `test_reserva_texto_plano_sin_tool_se_neutraliza` (line 603)
+- `test_cancelacion_texto_plano_sin_tool_se_neutraliza` (line 619)
+- `test_reprogramacion_texto_plano_sin_tool_se_neutraliza` (line 635)
+
+### 8.3 Bugs críticos en IA
+
+| Bug | Severidad | Evidencia |
+|---|---|---|
+| **`get_business_identity()` called without `business_id`** | 🔴 CRÍTICO | `ai.py:1513` y `ai.py:1642` — `format_reservation_confirmation()` y `format_rescale_confirmation()` llaman `get_business_identity()` sin argumentos → `TypeError`. **Crash en producción** cuando un cliente reserva vía chat o reprograma vía chat. Tests no lo detectan porque mockbean `get_business_identity`. |
+| **AI chat no puede cancelar/reprogramar** | 🔴 CRÍTICO | `execute_tool("cancelar_turno")` y `execute_tool("reprogramar_turno")` requieren `management_token`, pero el chat API (`/chat`) no lo acepta ni el SYSTEM_PROMPT instruye al AI a pedirlo. El `management_token` se devuelve una vez y no se persiste en el historial. |
+| **Emails de confirmación vía chat sin management_link** | 🟠 IMPORTANTE | `dispatch_booking_emails(management_token=None, slug=None)` (`ai.py:1101`) → el email de confirmación no incluye el link para gestionar el turno. Wizard y API pública pasan el token correctamente. |
+| **`solicitar_atencion_humana` tool es unreachable** | 🟡 MEJORA | Return incondicional en `ai.py:1374` hace inalcanzable el handler `solicitar_atencion_humana` (line 1384). El handoff humano solo funciona vía `_detect_human_intent` y `_detect_needs_human`. |
+| **`get_resources_prompt()` dead code** | 🟡 MEJORA | Referenciado en SYSTEM_PROMPT ("RECURSOS ACTIVOS") pero nunca llamado en `ask_ai()`. |
+
+### 8.4 Análisis de la amenaza del prompt injection
+
+**Estado: LOW RIESGO**
+
+- User input se pasa directamente a Gemini como contenido de mensaje, no como system prompt
+- System prompt está separado (`system_instruction` parameter)
+- Conversation messages son persistidas a DB antes de la llamada (audit trail)
+- No hay sanitización explícita, pero la estructura de system prompt separado mitiga la mayoría de riesgos
+
+---
+
+## 9. Base de datos
+
+### 9.1 Schema
+
+- **Motor**: SQLite 3 (WAL mode, FKs ON, busy_timeout 10s)
+- **22 tablas** + 2 tablas de control (`schema_version`, `migration_log`) + FTS5 virtual (`business_knowledge_fts`)
+- **Migraciones**: `migrations/001_initial.sql` → `022_unique_appointment_slot.sql`
+- **Versión en OCI**: migración 022 aplicada (verified via schema inspection)
+- **Tamaño OCI**: 385 KB (1 negocio, 21 turnos, 1 usuario)
+
+### 9.2 Concurrency / double-booking
+
+Tres capas de defensa:
+1. **Transacción**: `BEGIN IMMEDIATE` en `create_appointment` (line 571) — serializa writes
+2. **Índice único parcial**: `unique_confirmed_appointment_slot` sobre `(business_id, appointment_date, appointment_time, COALESCE(resource_id, -1)) WHERE status='confirmed'` — guarda DB-level
+3. **Pattern atómico**: `claim_notification_scoped`, `consume_invitation_atomically`, `consume_password_reset_token` usan `BEGIN IMMEDIATE` + UPDATE condicional + `rowcount` check
+
+✅ Tests de concurrencia: `test_security_concurrency.py` — 3 tests (1 flaky en Windows, documentado)
+
+### 9.3 Multi-tenancy en DB
+
+✅ **Sólido.** Tenant derivado de URL slug (`resolve_business`), `business_id` pasado a toda query vía funciones `_scoped`. Funciones legacy no-scoped (`get_all_services`, `update_business_settings`) están marcadas como "no ganar nuevos llamadores".
+
+### 9.4 Problemas
+
+| Problema | Severidad | Evidencia |
+|---|---|---|
+| `turnobot.db` (0 bytes) | 🟡 | `database/turnobot.db` existe pero está vacío (0 bytes). Posible left-over de path de DB antiguo. No se usa (app usa `appointments.db`). |
+| `database.py` en `database/` | 🟡 | `database/database.py` está en el directorio de la base de datos. No es un problema funcional (el módulo está importado), pero es una convención inusual. |
+
+---
+
+## 10. OCI / Producción (READ-ONLY)
+
+### Estado del servidor
+
+| Propiedad | Valor |
+|---|---|
+| IP | `161.153.202.182` |
+| OS | Oracle Linux (basado en systemd) |
+| CPU | 2 cores |
+| RAM | 15.5 GB (290 MB usado) |
+| Disk | 30 GB (23 GB usados, 7.3 GB libre) |
+| Git SHA | `db25d28` ❌ (debería ser `d25c227`) |
+| App | ✅ Activa, healthy |
+| Health | `{"database":"ok","status":"ok"}` → HTTP 200 |
+| WSGI | Waitress (via `wsgi.py`) en `127.0.0.1:5000` |
+
+### Systemd
+
+| Servicio | Estado | Schedule |
+|---|---|---|
+| `turnobot.service` | ✅ Activo | `Restart=always`, `RestartSec=5` |
+| `turnobot-backup.service` | ✅ Timer activo | Diario 03:30 UTC |
+| `turnobot-backup-prune.service` | ✅ Timer activo | Diario 04:00 UTC |
+| `turnobot-backup-verify.service` | ✅ Timer activo | Domingos 04:30 UTC |
+| `turnobot-reminders.service` | ✅ Timer activo | Diario 13:00 UTC |
+| `turnobot-retry-notifications.service` | ✅ Timer activo | Cada 15 min |
+| `turnobot-healthcheck.service` | ✅ Timer activo | Cada 5 min |
+
+**Nota:** El servicio `turnobot.service` en OCI **NO tiene** `NoNewPrivileges=true`, `PrivateTmp=true`, ni `OnFailure=turnobot-failure-notify@%N.service` — a diferencia de los archivos en `deploy/systemd/`. El archivo de servicio real en OCI es más simple:
+
+```ini
+[Unit]
+Description=TurnoBot
+After=network.target
+
+[Service]
+User=opc
+WorkingDirectory=/home/opc/proyecto/turnobot
+EnvironmentFile=/etc/turnobot.env
+ExecStart=/opt/turnobot/venv312/bin/python /home/opc/proyecto/turnobot/wsgi.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Variables de entorno
+
+`/etc/turnobot.env` (557 bytes, root-only, no se pudieron leer):
+- Archivo existe, permiso `-rw------- root root`
+- No se pudo leer el contenido
+
+### Nginx
+
+- ✅ Activo, escuchando en puerto 80 (HTTP)
+- ❌ **Sin HTTPS/SSL** — no hay certificado LetsEncrypt, no hay configuración SSL en `nginx.conf`
+- Rate limiting a nivel Nginx: `api` (100r/m burst 20), `auth` (20r/m burst 5), `chat` (30r/m burst 10)
+- `X-Forwarded-For` y `X-Real-IP` configurados
+
+---
+
+## 11. HTTPS / Dominio
+
+| Aspecto | Estado |
+|---|---|
+| **HTTPS** | 🔴 **FALTA** — Nginx solo escucha en HTTP (puerto 80). No hay certificado SSL/TLS. |
+| **Redirección HTTP→HTTPS** | 🔴 No configurable — no hay HTTPS para redirigir |
+| **Dominio/DNS** | ❓ No se verificó resolución DNS. IP pública: `161.153.202.182` |
+| **Cookie Secure** | ⚠️ `COOKIE_SECURE=1` configurado (`.env`), pero **sin HTTPS las cookies Secure no se enviarán** |
+| **`PUBLIC_BASE_URL`** | ❓ No se pudo verificar (env file inaccesible) |
+| **URLs en emails** | 🔴 Sin SMTP configurado, no hay emails |
+
+**Conclusión:** HTTPS es un **requisito crítico antes de producción**. Sin HTTPS:
+- Las cookies de sesión `Secure` no funcionarán
+- Las credenciales via HTTP estarán expuestas en tránsito
+- Los tokens de gestión de turnos via HTTP serán inseguros
+
+---
+
+## 12. Email y notificaciones
+
+| Aspecto | Estado | Evidencia |
+|---|---|---|
+| **SMTP configurado en OCI** | 🔴 **NO** | `notification_email=''`, `notifications_enabled=0` en DB |
+| **`SMTP_HOST` en env** | ❓ No verificable (file root-only) | Warning en startup logs confirma: "SMTP_HOST no está configurada" |
+| **Notificaciones de confirmación** | 🔴 No funcionan | `services/notifications.py` — verifica `smtp_configured()`, retorna `False` |
+| **Recordatorios 24h** | 🔴 No funcionan | `send_reminders.py` está programado pero SMTP no configurado |
+| **Retry de notificaciones fallidas** | ✅ Funciona (pero no hay nada que reenviar) | `retry_failed_notifications.py` cada 15 min |
+| **Redacción de contraseñas** | ✅ | `_safe_error()` redacta `SMTP_PASSWORD` |
+| **Idempotencia** | ✅ | `notification_log` con `ON CONFLICT DO UPDATE` |
+| **Notificaciones de cancelación/reprogramación** | 🔴 **FALTA** | Ni `cancel_appointment()` ni `reschedule_appointment()` envían emails |
+
+---
+
+## 13. Backups y recuperación
+
+| Aspecto | Estado |
+|---|---|
+| **Frecuencia** | ✅ Diario 03:30 UTC |
+| **Método** | ✅ `sqlite3.Connection.backup()` (WAL-safe) |
+| **Retención** | ✅ 7 daily / 4 weekly / 6 monthly |
+| **Verificación** | ✅ Semanal (domingos 04:30 UTC) |
+| **Restauración** | ✅ `restore_database.py` (requiere downtime) |
+| **Backups existentes** | ✅ 9 archivos de backup (más reciente: 2026-09-21-17:00) |
+| **Test de backup** | ✅ `test_backup_database.py`, `test_verify_backup.py`, `test_prune_backups.py` |
+
+**Recuperación ante desastre:** ✅ Técnicamente posible — backups diarios verificados semanalmente, `restore_database.py` funciona con `shutil.copy2`.
+
+---
+
+## 14. Observabilidad
+
+| Aspecto | Estado |
+|---|---|
+| **Logs de request** | ✅ Estructurados (JSON con request_id, business_id, endpoint, latency) |
+| **Logs de error** | ✅ `logger.exception()` en try/except de notificaciones y AI |
+| **Logs de IA** | ✅ `_log_gemini_call()` con latency, tokens, error_type |
+| **Health check** | ✅ `/health` → `{"database":"ok","status":"ok"}` |
+| **Métricas de negocio** | 🔴 **FALTA** — no hay contadores de turnos, reservas, ingresos |
+| **Alertas** | ⚠️ `OnFailure` notify no está en el servicio real de OCI (diseño aprobado en `P8_F1_DISENO_WATCHDOG.md`, no implementado) |
+| **Logs de seguridad** | ⚠️ `audit_log` existe (platform_users solo) — no hay auditoría de actions del negocio |
+
+---
+
+## 15. Deployment
+
+### Pipeline actual
+
+```text
+LOCAL (desarrollo)
+  ↓ git push
+GitHub (origin/main)
+  ↓ CI (GitHub Actions: tests.yml)
+  ↓ ??? (manual)
+OCI (db25d28, 1 commit atrás)
+```
+
+| Paso | Estado |
+|---|---|
+| **CI** | ✅ GitHub Actions: `tests.yml` (Python 3.12, ubuntu-latest, pytest + coverage) |
+| **CD** | 🔴 **Manual** — no hay deploy automático. OCI está en `db25d28`, falta `d25c227`. |
+| **Rollback** | 🟡 No documentado explícitamente. Git + manual restore de backup. |
+| **Reproducibilidad** | ⚠️ `DEPLOYMENT.md` describe el proceso pero no hay script automatizado |
+| **Deploy actual** | ❌ OCI NO tiene los últimos cambios |
+
+### `DEPLOYMENT.md` — precisión vs OCI
+
+| Claim del DEPLOYMENT.md | Estado en OCI |
+|---|---|
+| "servidor de producción con HTTPS" | ❌ No hay HTTPS |
+| "Waitress en 127.0.0.1:5000" | ✅ Correcto |
+| "Nginx como reverse proxy" | ✅ Correcto |
+| "COOKIE_SECURE=1 requerido" | ❓ No verificable (env root-only) |
+| "Backups con sqlite3.Connection.backup()" | ✅ Correcto |
+| Systemd con `NoNewPrivileges`, `PrivateTmp`, `OnFailure` | ❌ Servicio real es más simple |
+
+---
+
+## 16. Tests
+
+| Métrica | Valor |
+|---|---|
+| **Archivos de test** | 56 archivos en `tests/` + 32 tests nuevos (landing wizard) |
+| **Tests totales** | 776 |
+| **Passed** | 775 |
+| **Failed** | 1 (Windows symlink) |
+| **Coverage** | ~75% (según `test_results.txt`) |
+
+### Tests por área
+
+| Área | Tests | Coverage |
+|---|---|---|
+| Wizard/Landing | 32 | ✅ Completo |
+| Application factory | 6 | ✅ Completo |
+| Security operations | 9 | ✅ Completo |
+| Multi-tenant isolation | 15 + 18 = 33 | ✅ Completo |
+| Rate limiting | 7 + 8 + 7 = 22 | ✅ Completo |
+| Reservas/concurrencia | 9 + 15 + 3 = 27 | ✅ Completo |
+| Notificaciones | 8 + 7 + 18 = 33 | ✅ Completo |
+| IA/observabilidad | 3 + 68 = 71 | ✅ Completo |
+| Loyalty | 34 + 8 = 42 | ✅ Completo |
+| Memberships | 22 + 10 + 21 + 13 + 9 = 75 | ✅ Completo |
+| Admin panel | 26 + 7 + 3 + 8 + 10 + 10 = 64 | ✅ Completo |
+| Backups | 5 + 10 + 11 = 26 | ✅ Completo |
+| DB/Migraciones | 4 + 1 + 3 = 8 | ✅ Completo |
+
+### Gaps
+
+| Gap | Tests faltantes |
+|---|---|
+| **Flujo completo de reserva** (landing → wizard → confirmación → email → recordatorio) | ❌ No hay test de integración end-to-end sin mocks |
+| **Notificaciones de cancelación/reprogramación** | ❌ No se envían (ni hay tests) |
+| **AI cancel/reprogram con management_token** | ❌ No hay test del flujo completo (el AI no puede obtener el token) |
+| **HTTPS/HSTS** | ❌ No hay tests de headers de seguridad en producción |
+| **Webhook de pago** | N/A (no hay pagos) |
+
+---
+
+## 17. Performance
+
+| Área | Evaluación |
+|---|---|
+| **SQLite single-writer** | ⚠️ `BEGIN IMMEDIATE` serializa todos los writes. Bien para baja/moderada concurrencia. No escala horizontalmente. |
+| **Queries principales** | ✅ Indexados correctamente (business_id, appointment_date/status, etc.) |
+| **AI latency** | ✅ 15s timeout, retry con backoff |
+| **Logging** | ✅ No bloqueante (logging asíncrono via `QueueHandler`) |
+| **Generación de calendario** | ✅ Cliente-side (JS), no server-side |
+| **Carga de servicios** | ✅ Caché implícito por request scope |
+
+**Cuello de botella principal:** SQLite como único writer. En una carga de +100 negocios concurrentes reservando simultáneamente, el `busy_timeout` de 10s puede agotarse.
+
+---
+
+## 18. Modelo comercial técnico
+
+| Escenario | Estado Técnico |
+|---|---|
+| **1 negocio** | ✅ Soportado y probado (OCI: 1 negocio activo) |
+| **10 negocios** | ✅ Arquitectura multi-tenant soporta esto |
+| **100 negocios** | ✅ Teóricamente soportado; SQLite puede ser limitante con alta concurrencia |
+| **1000 negocios** | 🟡 SQLite single-writer será el cuello. Migrar a PostgreSQL recomendado. Rate limiting por-proceso no escalará. |
+
+---
+
+## 19. Onboarding
+
+### ¿Qué falta para "15 minutos funcionando"?
+
+| Paso | Estado |
+|---|---|
+| **Crear negocio** | ⚠️ Requiere superadmin (manual) |
+| **Configurar horarios** | ✅ UI admin |
+| **Configurar servicios** | ✅ UI admin |
+| **Configurar branding** | ✅ UI admin |
+| **Configurar notificaciones (SMTP)** | 🔴 Requiere acceso de servidor |
+| **Configurar HTTPS** | 🔴 Requiere acceso de servidor + certificado |
+| **Onboarding guiado** | 🔴 Falta flujo paso-a-paso |
+
+**Conclusión:** El negocio puede crear servicios, horarios y branding vía admin UI. Pero necesita intervención manual para:
+1. Ser creado por un superadmin
+2. Tener SMTP configurado (para recibir notificaciones de reserva)
+3. Tener HTTPS configurado
+
+---
+
+## 20. Documentación
+
+| Archivo | Estado |
+|---|---|
+| `README.md` | ❌ **Falta** — no existe en el repo |
+| `DEPLOYMENT.md` | ⚠️ **Desactualizado** — describe HTTPS, systemd hardening, OnFailure que no están en OCI |
+| `AGENTS.md` | ✅ Mantenido (dev guidelines) |
+| `P8_F1_DISENO_WATCHDOG.md` | ✅ Diseño aprobado (no implementado en OCI) |
+| Variables de entorno | ❌ **No documentadas** — no hay README con la lista de env vars |
+
+---
+
+## 21. UX / UI
+
+### Landing page ✅
+- Hero con CTA "Reservar turno"
+- Grid de servicios con botones de reserva
+- Información del negocio (zona horaria, reserva online)
+- Chat toggle
+- Branding con colores personalizados
+
+### Wizard ✅
+- 4 pasos con progress dots
+- Calendario interactivo (JS cliente-side)
+- Validación cliente + server
+- Responsive
+
+### Admin panel ⚠️
+- 61KB HTML template (`admin.html`) — funcional pero densa
+- No hay dashboard de métricas
+- Navegación por secciones (tabs)
+
+### Problemas UX
+1. **Sin feedback visual post-reserva exitosa** — redirige a `/?reserva=ok` pero `index()` no maneja este parámetro
+2. **Sin manejo de errores en el POST del wizard** — `landing.js` no muestra errores específicos de `create_appointment`
+3. **Sin recordatorio visual de reserva exitosa** en la landing después del wizard
+
+---
+
+## 22. Gaps resumidos
+
+### 🔴 BLOQUEANTES (impiden operar/vender con seguridad)
+
+| # | Problema | Evidencia |
+|---|---|---|
+| 1 | **OCI no está desplegado** (db25d28 vs d25c227) | `ssh opc@oci git rev-parse HEAD → db25d28` |
+| 2 | **Sin HTTPS/SSL** | Nginx solo HTTP (`:80`), no hay certificado |
+| 3 | **Sin SMTP configurado** | `notification_email=''`, `notifications_enabled=0`, warning en logs |
+| 4 | **AI: `get_business_identity()` sin `business_id`** | `ai.py:1513, 1642` — crash garantizado en reserva/reprogramación vía chat |
+| 5 | **No hay README** | No existe archivo README.md |
+
+### 🟠 IMPORTANTES (deben resolverse antes de venta)
+
+| # | Problema | Evidencia |
+|---|---|---|
+| 1 | **No hay notificaciones de cancelación/reprogramación** | `cancel_appointment()` y `reschedule_appointment()` no envían emails |
+| 2 | **AI chat no puede cancelar/reprogramar** | `execute_tool` requiere `management_token` que el chat no provee |
+| 3 | **AI: emails de confirmación sin management_link** | `dispatch_booking_emails(management_token=None, slug=None)` |
+| 4 | **Rate limiting por-proceso** | `extensions.py:23-26` — no distribuido |
+| 5 | **Servicio systemd simple** | OCI no tiene `NoNewPrivileges`, `PrivateTmp`, `OnFailure` |
+| 6 | **`solicitar_atencion_humana` tool unreachable** | `ai.py:1374` return incondicional |
+| 7 | **Sin métricas de negocio** | No hay dashboard con KPIs |
+| 8 | **Sin onboarding guiado** | Checklist existe pero no es interactivo |
+| 9 | **Sin dominio** | Sólo IP pública |
+
+### 🟡 MEJORAS (conveniente pero no bloquea)
+
+| # | Problema | Evidencia |
+|---|---|---|
+| 1 | **Sin Content-Security-Policy** | `application/security.py:add_security_headers` no incluye CSP |
+| 2 | **`turnobot.db` (0 bytes)** | Left-over de path antiguo |
+| 3 | **Dead code** | `ai.py:1374-1377` (return antes de `solicitar_atencion_humana`), `ai.py:922-929` (`_execute_solicitar_atencion_humana` no hace handoff) |
+| 4 | **`get_resources_prompt()` dead code** | Referenciado en SYSTEM_PROMPT pero nunca llamado |
+| 5 | **CSRF en /chat** | `routes/public_api.py:46` no valida CSRF |
+| 6 | **Sin feedback post-reserva** | `/?reserva=ok` no manejado por `index()` |
+
+### 🔵 FUTURO (no necesario ahora)
+
+| # | Tema |
+|---|---|
+| 1 | Migrar SQLite → PostgreSQL para escala |
+| 2 | Rate limiting distribuido (Redis) |
+| 3 | Gestión de clientes como entidad |
+| 4 | Métricas de negocio en dashboard |
+| 5 | Onboarding interactivo guiado |
+| 6 | Documentación de variables de entorno |
+
+---
+
+## 23. Qué NO tocar (verificado correcto)
+
+| Componente | Justificación |
+|---|---|
+| `application/factory` | ✅ Arquitectura cerrada |
+| `extensions.py` | ✅ Rate limiting + CSRF funcionan |
+| `database/database.py` | ✅ Migraciones, queries, multi-tenant scoping |
+| `routes/__init__.py` (registro) | ✅ Orden preservado |
+| `application/security.py` | ✅ Headers, error handlers |
+| Tests de multi-tenant | ✅ Pasan (33 tests) |
+| Tests de seguridad | ✅ Pasan (9 + 6 + 3 tests) |
+| Tests de rate limiting | ✅ Pasan (22 tests) |
+| Tests de concurrencia | ✅ Pasan (3 tests, 1 flaky en Windows) |
+| `DEPLOYMENT.md` | ✅ Documenta correctamente (aunque OCI no coincide) |
+| `AGENTS.md` | ✅ Baseline de tests conocido |
+
+---
+
+## 24. PLAN RECOMENDADO
+
+### AHORA (antes de cualquier cliente piloto)
+
+1. **🔴 Deploy a OCI** — `git pull origin main && systemctl restart turnobot`
+2. **🔴 Configurar HTTPS** — Certificado LetsEncrypt + redirección HTTP→HTTPS
+3. **🔴 Configurar SMTP** — Setear `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` en `/etc/turnobot.env`
+4. **🔴 Fix AI `get_business_identity()`**: pasar `business_id` a `format_reservation_confirmation()` y `format_rescale_confirmation()`
+5. **🔴 Fix AI cancel/reschedule via chat**: permitir que el AI pida `management_token` al usuario, o usar `buscar_turnos_cliente` para el flujo
+6. **🟡 Fix dead code `solicitar_atencion_humana`**: remover return en `ai.py:1374`
+
+### ANTES DEL PRIMER PILOTO
+
+1. **🟠 Implementar notificaciones de cancelación/reprogramación**
+2. **🟠 Fix AI booking emails** (`management_token`, `slug` pasados a `dispatch_booking_emails`)
+3. **🟠 Hardener systemd**: aplicar `NoNewPrivileges`, `PrivateTmp`, `OnFailure`
+4. **🟡 Implementar CSP header**
+5. **🟡 Mejorar UX post-reserva**: manejar `/?reserva=ok` en `index()`
+
+### ANTES DE VENTA
+
+1. **🟠 Onboarding guiado** (pasos interactivos)
+2. **🟠 Dashboard de métricas de negocio**
+3. **🟠 README.md con instrucciones de instalación**
+4. **🟠 Documentación de variables de entorno**
+5. **🟠 Tests de integración E2E sin mocks**
+
+### FUTURO
+
+1. **🔵 Migrar a PostgreSQL** para escala horizontal
+2. **🔵 Rate limiting distribuido** (Redis)
+3. **🔵 Gestión de clientes como entidad primaria**
+4. **🔵 Multi-worker rate limiting**
+
+---
+
+## 25. Responder las preguntas clave
+
+### ¿Qué puede hacer TurnoGo HOY?
+
+Landings pages con branding, wizard de reserva de 4 pasos con validación completa, chat con IA (consulta disponibilidad, reserva, busca turnos), gestion de turnos via token, panel admin completo (servicios, horarios, turnos, usuarios, conocimiento, IA, fidelización, recursos), superadmin para crear/aprobar negocios, sistema de backups verificado. **Pero**: no envía emails (SMTP no configurado), no tiene HTTPS, y hay 5 bugs críticos en la IA.
+
+### ¿Qué necesita para el primer cliente piloto?
+
+1. Deploy actualizado a OCI (d25c227)
+2. HTTPS configurado (certificado + redirect)
+3. SMTP configurado y testeado
+4. Fix del bug `get_business_identity()` (crash garantizado en reservas vía chat)
+5. Fix del flujo de cancelación/reprogramación vía chat AI
+
+### ¿Qué necesita para venta?
+
+Todo lo anterior +:
+- Notificaciones de cancelación/reprogramación
+- Fix de emails de confirmación vía AI (management_token)
+- Dashboard de métricas
+- Onboarding guiado
+- README y documentación
+
+### ¿Qué riesgos existen?
+
+| Riesgo | Severidad |
+|---|---|
+| Sin HTTPS → credenciales expuestas en tránsito | 🔴 Crítico |
+| Sin SMTP → clientes nunca reciben confirmación | 🔴 Crítico |
+| AI crash en reserva via chat → mala UX | 🔴 Crítico |
+| Rate limiting por-proceso → fácil de bypass | 🟠 Alto |
+| Sin CSP → XSS si hay vulnerabilidad en template | 🟡 Medio |
+| SQLite single-writer → lock en alta concurrencia | 🟡 Medio |
+
+### ¿Qué podemos dejar para después?
+
+- Migrar SQLite → PostgreSQL (para +100 negocios)
+- Rate limiting distribuido (Redis)
+- Gestión de clientes como entidad
+- Métricas de negocio en dashboard
+- CSP header (defensa en profundidad)
+
+---
+
+*Auditoría completada. READ-ONLY. Todo lo documentado fue verificado con código, tests, o inspección directa de OCI.*

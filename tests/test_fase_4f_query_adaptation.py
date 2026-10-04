@@ -1,8 +1,10 @@
 """Tests de adaptación de queries SQL y proxies para PostgreSQL (Fase 4F)."""
 
 import unittest
+import uuid
 from unittest import mock
 
+from database.database import create_user_scoped, get_connection, revoke_all_sessions_scoped
 from database.pg_pool import (
     PgConnectionProxy,
     PgCursorProxy,
@@ -311,6 +313,185 @@ class TestFase4FQueryAdaptation(unittest.TestCase):
         result_sql, result_params = _adapt_update_boolean_params(sql, params)
         self.assertEqual(result_sql, sql)
         self.assertEqual(result_params, (5,))
+
+
+class TestBooleanLiteralsPorContexto(unittest.TestCase):
+    """El literal 0/1 de una columna BOOLEAN se adapta SEGÚN SU CONTEXTO.
+
+    En un predicado PostgreSQL exige `IS TRUE` / `NOT col` (no existe el operador
+    `boolean = integer`); en una asignación SET exige `col = TRUE` / `col = FALSE`
+    (`SET col IS TRUE` es un error de sintaxis y `SET col = 1` no castea).
+
+    Estos casos comparan el SQL adaptado; la ejecución real contra un servidor
+    PostgreSQL la cubren los tests de `TestBooleanLiteralsContraPostgresqlReal`.
+    """
+
+    def test_set_booleano_1_se_convierte_en_asignacion_valida(self):
+        sql, _ = adapt_query_for_postgres(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0", (7,)
+        )
+        self.assertIn("SET revoked = TRUE", sql)
+        self.assertNotIn("SET revoked IS TRUE", sql)
+        self.assertIn("AND NOT revoked", sql)
+
+    def test_set_booleano_0_se_convierte_en_asignacion_valida(self):
+        sql, _ = adapt_query_for_postgres(
+            "UPDATE weekly_schedules SET is_open = 0, morning_start = NULL WHERE business_id = ?",
+            (1,),
+        )
+        self.assertIn("SET is_open = FALSE", sql)
+        self.assertNotIn("SET NOT is_open", sql)
+        self.assertNotIn("SET is_open IS TRUE", sql)
+
+    def test_set_booleano_en_on_conflict_do_update(self):
+        sql, _ = adapt_query_for_postgres(
+            "INSERT INTO loyalty_settings (business_id, enabled) VALUES (?, ?) "
+            "ON CONFLICT (business_id) DO UPDATE SET enabled = 1",
+            (1, False),
+        )
+        self.assertIn("DO UPDATE SET enabled = TRUE", sql)
+
+    def test_predicados_booleanos_siguen_usando_is_true_y_not(self):
+        self.assertEqual(
+            adapt_query_for_postgres("SELECT * FROM knowledge WHERE active = 1")[0],
+            "SELECT * FROM knowledge WHERE active IS TRUE",
+        )
+        self.assertEqual(
+            adapt_query_for_postgres("SELECT * FROM knowledge WHERE active = 0")[0],
+            "SELECT * FROM knowledge WHERE NOT active",
+        )
+
+    def test_predicado_con_calificador_conserva_la_columna_completa(self):
+        """`NOT` debe preceder a la columna completa: `a.active = 0` -> `NOT a.active`."""
+        sql, _ = adapt_query_for_postgres(
+            "SELECT * FROM a JOIN b ON a.id = b.user_id AND b.revoked = 1 WHERE a.active = 0"
+        )
+        self.assertIn("b.revoked IS TRUE", sql)
+        self.assertIn("WHERE NOT a.active", sql)
+        self.assertNotIn("a.NOT active", sql)
+
+    def test_update_sin_where_tambien_adapta_el_set(self):
+        self.assertEqual(
+            adapt_query_for_postgres("UPDATE businesses SET active = 1")[0],
+            "UPDATE businesses SET active = TRUE",
+        )
+
+    def test_columnas_no_booleanas_no_se_adaptan(self):
+        sql, _ = adapt_query_for_postgres("UPDATE services SET price = 0, duration = 0 WHERE id = ?")
+        self.assertIn("SET price = 0, duration = 0", sql)
+        self.assertNotIn("TRUE", sql)
+        self.assertNotIn("NOT", sql)
+
+    def test_select_con_set_en_literal_no_se_trata_como_clausula_set(self):
+        sql, _ = adapt_query_for_postgres("SELECT 'SET' FROM sessions WHERE revoked = 0")
+        self.assertIn("WHERE NOT revoked", sql)
+        self.assertIn("'SET'", sql)
+
+
+class TestBooleanLiteralsContraPostgresqlReal(unittest.TestCase):
+    """Ejecuta los literales booleanos contra un PostgreSQL REAL.
+
+    Un cursor MagicMock acepta cualquier cadena, así que el SQL inválido
+    (`SET revoked IS TRUE`) nunca se detecta en los tests unitarios del adapter:
+    solo el servidor lo rechaza. Estos tests envían la sentencia completa a través
+    del mismo camino que usa producción (adaptación + PgConnectionProxy).
+    """
+
+    def setUp(self):
+        self.connection = get_connection()
+        self.user_id = create_user_scoped(
+            f"bool-{uuid.uuid4().hex[:10]}@test.com", "hash-de-prueba", active=True
+        )
+        self.assertIsNotNone(self.user_id)
+
+    def tearDown(self):
+        try:
+            self.connection.execute("DELETE FROM sessions WHERE user_id = ?", (self.user_id,))
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+        finally:
+            self.connection.close()
+
+    def _new_session(self, revoked=False):
+        """Crea una sesión y devuelve (id, revoked) como quedaron en la base."""
+        cursor = self.connection.execute(
+            "INSERT INTO sessions (user_id, token_hash, expires_at, revoked) VALUES (?, ?, ?, ?)",
+            (self.user_id, uuid.uuid4().hex, "2099-01-01 00:00:00", 1 if revoked else 0),
+        )
+        self.connection.commit()
+        session_id = cursor.lastrowid
+        row = self.connection.execute(
+            "SELECT revoked FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return session_id, row["revoked"]
+
+    def test_update_set_booleano_1_con_where_booleano_0(self):
+        """UPDATE ... SET revoked = 1 WHERE ... revoked = 0 se ejecuta y revoca."""
+        session_id, revoked = self._new_session()
+        self.assertIs(revoked, False)
+
+        cursor = self.connection.execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0", (self.user_id,)
+        )
+        self.connection.commit()
+
+        self.assertEqual(cursor.rowcount, 1)
+        row = self.connection.execute(
+            "SELECT revoked FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        self.assertIs(row["revoked"], True)
+
+        # Reejecutar no vuelve a afectar la fila: el predicado ya es falso.
+        cursor = self.connection.execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0", (self.user_id,)
+        )
+        self.connection.commit()
+        self.assertEqual(cursor.rowcount, 0)
+
+    def test_update_set_booleano_0_con_where_booleano_1(self):
+        """UPDATE ... SET revoked = 0 WHERE ... revoked = 1 se ejecuta y revierte."""
+        session_id, _ = self._new_session(revoked=True)
+        row = self.connection.execute(
+            "SELECT revoked FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        self.assertIs(row["revoked"], True)
+
+        cursor = self.connection.execute(
+            "UPDATE sessions SET revoked = 0 WHERE user_id = ? AND revoked = 1", (self.user_id,)
+        )
+        self.connection.commit()
+
+        self.assertEqual(cursor.rowcount, 1)
+        row = self.connection.execute(
+            "SELECT revoked FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        self.assertIs(row["revoked"], False)
+
+    def test_revocar_todas_las_sesiones_usa_la_api_de_produccion(self):
+        """`revoke_all_sessions_scoped` es la ruta de logout: debe funcionar en PG."""
+        self._new_session()
+        self._new_session()
+        revoke_all_sessions_scoped(self.user_id)
+
+        rows = self.connection.execute(
+            "SELECT revoked FROM sessions WHERE user_id = ?", (self.user_id,)
+        ).fetchall()
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertIs(row["revoked"], True)
+
+    def test_predicado_booleano_en_select_contra_postgresql(self):
+        """El mismo predicado `= 1` / `= 0` funciona como SELECT."""
+        self._new_session()
+        cursor = self.connection.execute(
+            "SELECT id FROM sessions WHERE user_id = ? AND revoked = 0", (self.user_id,)
+        )
+        self.assertEqual(len(cursor.fetchall()), 1)
+        cursor = self.connection.execute(
+            "SELECT id FROM sessions WHERE user_id = ? AND revoked = 1", (self.user_id,)
+        )
+        self.assertEqual(len(cursor.fetchall()), 0)
 
 
 if __name__ == "__main__":

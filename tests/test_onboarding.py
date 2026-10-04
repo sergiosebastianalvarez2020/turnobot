@@ -4,9 +4,7 @@ Valida que un owner nuevo ve un checklist granular que refleja el estado
 real de configuración del negocio, derivado de las tablas existentes.
 """
 
-import tempfile
 import unittest
-from pathlib import Path
 
 import app as application
 import database.database as database
@@ -21,15 +19,7 @@ class OnboardingBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.tmp = tempfile.TemporaryDirectory()
-        self.original_db = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "onboarding.db"
-        database.init_database()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_db
-        self.tmp.cleanup()
 
     def _query(self, sql, params=None):
         c = get_connection()

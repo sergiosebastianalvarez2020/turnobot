@@ -13,10 +13,8 @@ Cubre (según ETAPA10_DISENO_FIDELIZACION.md sección 12 y decisión de identida
 
 import re
 import sqlite3
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 
 from werkzeug.security import generate_password_hash
@@ -65,10 +63,6 @@ class LoyaltyBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
 
         # Business B para pruebas de aislamiento multi-tenant.
         self._execute(
@@ -100,8 +94,6 @@ class LoyaltyBase(unittest.TestCase):
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     # ---- helpers ----------------------------------------------------------
 

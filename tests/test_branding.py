@@ -7,12 +7,9 @@
 """
 
 import re
-import tempfile
 import unittest
-from pathlib import Path
 
 import app as application
-import database.database as database
 from database.database import get_connection
 
 
@@ -22,15 +19,7 @@ class BrandingBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.tmp = tempfile.TemporaryDirectory()
-        self.original_db = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "branding.db"
-        database.init_database()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_db
-        self.tmp.cleanup()
 
     @staticmethod
     def _csrf(page):

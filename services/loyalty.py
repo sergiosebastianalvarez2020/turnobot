@@ -430,9 +430,11 @@ def retention_candidates(business_id):
         result = []
         for item in grouped.values():
             try:
-                item["days_since_last"] = (
-                    today - date.fromisoformat(item["last_completed_date"])
-                ).days
+                last_date = item["last_completed_date"]
+                if isinstance(last_date, date):
+                    item["days_since_last"] = (today - last_date).days
+                else:
+                    item["days_since_last"] = (today - date.fromisoformat(last_date)).days
             except ValueError:
                 continue
             if item["completed_count"] >= 2 and item["days_since_last"] >= 60:

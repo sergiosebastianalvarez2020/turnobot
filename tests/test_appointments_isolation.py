@@ -1,8 +1,6 @@
 import re
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
@@ -10,6 +8,7 @@ from werkzeug.security import generate_password_hash
 import app as application
 import database.database as database
 from services import appointments
+from tests._pg_compat import PostgreSQLTestCase
 
 
 def next_open_day():
@@ -19,46 +18,41 @@ def next_open_day():
     return date.isoformat()
 
 
-class BaseAppointmentIsolationTest(unittest.TestCase):
-    """Business A (id=1) y Business B (id=2) en base temporal."""
+class BaseAppointmentIsolationTest(unittest.TestCase, PostgreSQLTestCase):
+    """Business A (id=1) y Business B (id=2) en DB PostgreSQL aislada."""
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        self.original_hash = application.ADMIN_PASSWORD_HASH
+        self.original_password = application.ADMIN_PASSWORD
+        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD = None
+        self.valid_date = next_open_day()
 
         # Business B
         self._execute(
-            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
+            "INSERT INTO businesses (id, name, slug, active, pending) "
+            "VALUES (%s, %s, %s, TRUE, FALSE)",
+            (2, "Business B", "business-b"),
         )
         # Business B necesita servicios propios para reservar
         self._execute(
-            "INSERT INTO services (business_id, name, price, duration, active) "
-            "VALUES (2, 'Corte B', 12000, 30, 1)"
+            "INSERT INTO services (id, business_id, name, price, duration, active) "
+            "VALUES (4, %s, %s, %s, %s, TRUE)",
+            (2, "Corte B", 12000, 30),
         )
         # Business B necesita horarios semanales para generar slots
         for day in range(7):
             self._execute(
                 "INSERT INTO weekly_schedules "
                 "(business_id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end) "
-                "VALUES (2, ?, 1, '09:00', '13:00', '15:00', '19:00')",
+                "VALUES (2, %s, TRUE, '09:00', '13:00', '15:00', '19:00')",
                 (day,),
             )
-        self.valid_date = next_open_day()
-
-        self.client = application.app.test_client()
-        self.original_hash = application.ADMIN_PASSWORD_HASH
-        self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
-        application.ADMIN_PASSWORD = None
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def login(self, business_id):
         business = {
@@ -69,31 +63,30 @@ class BaseAppointmentIsolationTest(unittest.TestCase):
         token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
         self.client.post("/login", data={"password": "correcta", "csrf_token": token})
         with patch.object(application, "resolve_business", return_value=business):
-            with application.app.test_request_context("/"):
+            with self.app.test_request_context("/"):
                 application.load_current_business()
                 self.csrf_token = token
 
-    @staticmethod
-    def _query(sql, params=None):
-        connection = database.get_connection()
-        try:
-            return connection.execute(sql, params or ()).fetchall()
-        finally:
-            connection.close()
+    def _query(self, sql, params=None):
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                return connection.execute(sql, params or ()).fetchall()
+            finally:
+                connection.close()
 
-    @staticmethod
-    def _execute(sql, params=None):
-        connection = database.get_connection()
-        try:
-            connection.execute(sql, params or ())
-            connection.commit()
-        finally:
-            connection.close()
+    def _execute(self, sql, params=None):
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                connection.execute(sql, params or ())
+                connection.commit()
+            finally:
+                connection.close()
 
-    @staticmethod
-    def _business_id_of(appointment_id):
-        return BaseAppointmentIsolationTest._query(
-            "SELECT business_id FROM appointments WHERE id = ?", (appointment_id,)
+    def _business_id_of(self, appointment_id):
+        return self._query(
+            "SELECT business_id FROM appointments WHERE id = %s", (appointment_id,)
         )[0]["business_id"]
 
 
@@ -179,7 +172,7 @@ class TestCancelIsolation(BaseAppointmentIsolationTest):
         )["appointment_id"]
         cancelado = appointments.cancel_appointment(turno_b, "3838439333", business_id=1)
         self.assertFalse(cancelado)
-        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_b,))[0][
+        estado = self._query("SELECT status FROM appointments WHERE id = %s", (turno_b,))[0][
             "status"
         ]
         self.assertEqual(estado, "confirmed")
@@ -190,7 +183,7 @@ class TestCancelIsolation(BaseAppointmentIsolationTest):
         )["appointment_id"]
         cancelado = appointments.cancel_appointment(turno_a, "3838439222", business_id=2)
         self.assertFalse(cancelado)
-        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_a,))[0][
+        estado = self._query("SELECT status FROM appointments WHERE id = %s", (turno_a,))[0][
             "status"
         ]
         self.assertEqual(estado, "confirmed")
@@ -273,7 +266,7 @@ class TestAdminStatusIsolation(BaseAppointmentIsolationTest):
         )["appointment_id"]
         actualizado = database.update_appointment_status_scoped(turno_b, "cancelled", 1)
         self.assertFalse(actualizado)
-        estado = self._query("SELECT status FROM appointments WHERE id = ?", (turno_b,))[0][
+        estado = self._query("SELECT status FROM appointments WHERE id = %s", (turno_b,))[0][
             "status"
         ]
         self.assertEqual(estado, "confirmed")

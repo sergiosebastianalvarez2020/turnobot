@@ -9,9 +9,7 @@
 """
 
 import re
-import tempfile
 import unittest
-from pathlib import Path
 
 import app as application
 import database.database as database
@@ -20,6 +18,9 @@ from services import platform as platform_service
 
 
 class StaffInvitationBase(unittest.TestCase):
+    """Negocio 'test-staff-biz' provisionado por el propio test sobre la base
+    PostgreSQL que el harness descarta al terminar cada test."""
+
     OWNER_EMAIL = "owner@test-staff.com"
     OWNER_PASSWORD = "clave-segura-123"
     STAFF_EMAIL = "staff@test-staff.com"
@@ -27,15 +28,7 @@ class StaffInvitationBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.tmp = tempfile.TemporaryDirectory()
-        self.original_db = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "staff.db"
-        database.init_database()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_db
-        self.tmp.cleanup()
 
     @staticmethod
     def _csrf(page):

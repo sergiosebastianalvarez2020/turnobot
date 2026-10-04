@@ -1,5 +1,12 @@
 """Etapa 1: recursos reservables — comportamiento de reservas.
 
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada
+test recibe una base `turnobot_test_<uuid>` desechable con el esquema aplicado y
+la semilla estándar (`seed_standard_test_data`), que aporta el negocio 1
+"El Corte" con sus horarios semanales y el servicio "Corte" de 30 minutos.
+No hay swap de `DATABASE_PATH` ni SQLite: el aislamiento por tenant es el de la
+base temporal, no el de un archivo temporal.
+
 Cubre:
 - Negocio sin recursos mantiene el comportamiento anterior.
 - Dos recursos distintos pueden reservarse simultáneamente.
@@ -10,10 +17,8 @@ Cubre:
 - Cancelación y reprogramación conservan el resource_id.
 """
 
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import database.database as database
 from database.database import get_connection
@@ -23,6 +28,7 @@ from services.appointments import (
     get_available_times,
     reschedule_appointment_admin,
 )
+from tests._pg_compat import PostgreSQLTestCase
 
 
 def _next_open_day():
@@ -32,21 +38,29 @@ def _next_open_day():
     return date.isoformat()
 
 
-class BaseResourceBookingTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._original_database_path = database.DATABASE_PATH
+def _fmt_time(value):
+    """Normaliza la columna TIME a 'HH:MM' para la aserción.
+
+    SQLite la devuelve como TEXT y PostgreSQL como `datetime.time`; la
+    comparación es la misma en ambos backends una vez normalizada.
+    """
+    if isinstance(value, str):
+        return value
+    return value.strftime("%H:%M")
+
+
+class BaseResourceBookingTest(unittest.TestCase, PostgreSQLTestCase):
+    """Negocio 1 (semilla estándar) sobre una base PostgreSQL aislada por test."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.date = _next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        # Un único contexto de app por test: los servicios de appointments
+        # resuelven el pool mediante `flask.current_app`, así que crear,
+        # cancelar, reprogramar y consultar disponibilidad deben correr dentro
+        # del contexto de la app que apunta a la base temporal de este test.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
     def _create(
         self, business_id=1, time="09:00", resource_id=None, service="Corte", name="Cliente Test"
@@ -54,6 +68,9 @@ class BaseResourceBookingTest(unittest.TestCase):
         return create_appointment(
             name, "111111111", service, self.date, time, business_id, resource_id=resource_id
         )
+
+    def _create_resource(self, name, business_id=1):
+        return database.create_resource_scoped(business_id, name)
 
     @staticmethod
     def _query(sql, params=None):
@@ -88,8 +105,8 @@ class TestBusinessWithoutResources(BaseResourceBookingTest):
 class TestBusinessWithResources(BaseResourceBookingTest):
     def setUp(self):
         super().setUp()
-        self.court1 = database.create_resource_scoped(1, "Cancha 1")
-        self.court2 = database.create_resource_scoped(1, "Cancha 2")
+        self.court1 = self._create_resource("Cancha 1")
+        self.court2 = self._create_resource("Cancha 2")
 
     def test_dos_recursos_distintos_mismo_horario(self):
         r1 = self._create(resource_id=self.court1)
@@ -144,7 +161,7 @@ class TestBusinessWithResources(BaseResourceBookingTest):
 class TestResourceLifecycle(BaseResourceBookingTest):
     def setUp(self):
         super().setUp()
-        self.court1 = database.create_resource_scoped(1, "Cancha 1")
+        self.court1 = self._create_resource("Cancha 1")
 
     def test_cancelacion_no_altera_resource_id(self):
         result = self._create(resource_id=self.court1, time="09:00")
@@ -159,7 +176,8 @@ class TestResourceLifecycle(BaseResourceBookingTest):
         )
         self.assertTrue(cancelado)
         fila = self._query(
-            "SELECT resource_id, status FROM appointments WHERE id = ?", (result["appointment_id"],)
+            "SELECT resource_id, status FROM appointments WHERE id = %s",
+            (result["appointment_id"],),
         )[0]
         self.assertEqual(fila["resource_id"], self.court1)
         self.assertEqual(fila["status"], "cancelled")
@@ -174,11 +192,11 @@ class TestResourceLifecycle(BaseResourceBookingTest):
         self.assertTrue(reschedule["success"])
         self.assertEqual(reschedule["resource_id"], self.court1)
         fila = self._query(
-            "SELECT resource_id, appointment_time FROM appointments WHERE id = ?",
+            "SELECT resource_id, appointment_time FROM appointments WHERE id = %s",
             (result["appointment_id"],),
         )[0]
         self.assertEqual(fila["resource_id"], self.court1)
-        self.assertEqual(fila["appointment_time"], "11:00")
+        self.assertEqual(_fmt_time(fila["appointment_time"]), "11:00")
 
     def test_reprogramacion_de_recurso_respeta_solapamiento(self):
         r1 = self._create(resource_id=self.court1, time="09:00")

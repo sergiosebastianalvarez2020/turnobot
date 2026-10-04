@@ -1,7 +1,5 @@
 import re
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
@@ -15,16 +13,8 @@ class BaseIsolationTest(unittest.TestCase):
 
     UNIQUE_BUSINESS_B = False
 
-    @classmethod
-    def setUpClass(cls):
-        cls._original_database_path = database.DATABASE_PATH
-
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
 
         self._execute(
             "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
@@ -39,8 +29,6 @@ class BaseIsolationTest(unittest.TestCase):
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def login(self, business_id):
         business = {

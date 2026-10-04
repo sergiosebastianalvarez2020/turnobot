@@ -7,9 +7,7 @@ Verifica aislamiento estricto por negocio de:
 - count_owners_scoped
 """
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from werkzeug.security import generate_password_hash
 
@@ -18,18 +16,11 @@ from database.database import get_connection
 
 
 class MembershipManagementTests(unittest.TestCase):
-    """Negocio 1 y negocio 2 en base temporal, sin alterar la DB real."""
+    """Negocio 1 (sembrado por el harness) y negocio 2 (creado aquí) en la
+    base PostgreSQL que el harness descarta al terminar cada test."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _exec(sql, params=None):
@@ -37,14 +28,6 @@ class MembershipManagementTests(unittest.TestCase):
         try:
             c.execute(sql, params or ())
             c.commit()
-        finally:
-            c.close()
-
-    @staticmethod
-    def _query(sql, params=None):
-        c = get_connection()
-        try:
-            return c.execute(sql, params or ()).fetchall()
         finally:
             c.close()
 

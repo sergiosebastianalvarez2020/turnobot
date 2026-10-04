@@ -6,6 +6,8 @@ El backend SQLite se mantiene únicamente en tests de migración histórica
 que realmente dependen del formato SQLite.
 """
 
+import threading
+import unittest
 from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -180,6 +182,160 @@ class TestDobleReservaSimultanea(PostgreSQLTestCase):
         assert result1["success"]
         assert not result2["success"]
         assert result2["reason"] == "occupied"
+
+
+class _BaseConcurrencyAppointments(unittest.TestCase, PostgreSQLTestCase):
+    """Preparación compartida de calendario para concurrencia PostgreSQL real."""
+
+    def setUp(self):
+        self.valid_date = _next_open_day()
+        self.business_id = 1
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                connection.execute(
+                    "UPDATE business_settings SET slot_duration = %s, break_between_slots = %s "
+                    "WHERE business_id = %s",
+                    (15, 0, self.business_id),
+                )
+                connection.execute(
+                    "UPDATE weekly_schedules SET is_open = TRUE, morning_start = %s, "
+                    "morning_end = %s, afternoon_start = NULL, afternoon_end = NULL "
+                    "WHERE business_id = %s AND day_of_week = %s",
+                    (
+                        "09:00",
+                        "12:00",
+                        self.business_id,
+                        datetime.fromisoformat(self.valid_date).weekday(),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+    def _book(self, time_, resource_id=None):
+        with self.app.app_context():
+            return appointments.create_appointment(
+                "Cliente",
+                "123456789",
+                "Corte",
+                self.valid_date,
+                time_,
+                self.business_id,
+                resource_id=resource_id,
+            )
+
+    def _run_concurrently(self, workers):
+        """Cada worker opera simultáneamente y obtiene su conexión del pool PG."""
+        barrier = threading.Barrier(len(workers))
+        results = [None] * len(workers)
+
+        def run(index, worker):
+            try:
+                with self.app.app_context():
+                    barrier.wait(timeout=15)
+                    results[index] = worker()
+            except Exception as exc:  # noqa: BLE001 - propaga el fallo en la assertion
+                results[index] = exc
+
+        threads = [
+            threading.Thread(target=run, args=(index, worker))
+            for index, worker in enumerate(workers)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert all(not thread.is_alive() for thread in threads), "un worker quedó bloqueado"
+        assert all(not isinstance(result, Exception) for result in results), str(results)
+        return results
+
+
+class TestConcurrentBookings(_BaseConcurrencyAppointments):
+    def test_slots_distintos_simultaneos_ambas_exitosas(self):
+        results = self._run_concurrently(
+            [lambda: self._book("09:00"), lambda: self._book("09:30")]
+        )
+        assert [result["success"] for result in results] == [True, True]
+
+    def test_dos_slots_libres_alrededor_de_uno_ocupado(self):
+        assert self._book("10:00")["success"]
+        results = self._run_concurrently(
+            [lambda: self._book("09:00"), lambda: self._book("10:30")]
+        )
+        assert [result["success"] for result in results] == [True, True]
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                rows = connection.execute(
+                    "SELECT id FROM appointments "
+                    "WHERE appointment_date = %s AND status = 'confirmed'",
+                    (datetime.fromisoformat(self.valid_date).date(),),
+                ).fetchall()
+            finally:
+                connection.close()
+        assert len(rows) == 3
+
+
+class TestConcurrentResourceIsolation(_BaseConcurrencyAppointments):
+    def setUp(self):
+        super().setUp()
+        with self.app.app_context():
+            self.resource_a = database.create_resource_scoped(self.business_id, "Silla A")
+            self.resource_b = database.create_resource_scoped(self.business_id, "Silla B")
+
+    def test_mismo_slot_distintos_recursos_ambas_exitosas(self):
+        results = self._run_concurrently(
+            [
+                lambda: self._book("09:00", resource_id=self.resource_a),
+                lambda: self._book("09:00", resource_id=self.resource_b),
+            ]
+        )
+        assert [result["success"] for result in results] == [True, True]
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                rows = connection.execute(
+                    "SELECT resource_id FROM appointments "
+                    "WHERE appointment_date = %s AND status = 'confirmed'",
+                    (datetime.fromisoformat(self.valid_date).date(),),
+                ).fetchall()
+            finally:
+                connection.close()
+        assert {row["resource_id"] for row in rows} == {self.resource_a, self.resource_b}
+
+    def test_mismo_slot_mismo_recurso_solo_una_exitosa(self):
+        results = self._run_concurrently(
+            [
+                lambda: self._book("09:00", resource_id=self.resource_a),
+                lambda: self._book("09:00", resource_id=self.resource_a),
+            ]
+        )
+        assert [result["success"] for result in results].count(True) == 1
+
+    def test_recurso_y_global_conflictivos_solo_una_exitosa(self):
+        results = self._run_concurrently(
+            [lambda: self._book("09:00", resource_id=self.resource_a), lambda: self._book("09:00")]
+        )
+        assert [result["success"] for result in results].count(True) == 1
+        with self.app.app_context():
+            connection = database.get_connection()
+            try:
+                rows = connection.execute(
+                    "SELECT id FROM appointments "
+                    "WHERE appointment_date = %s AND status = 'confirmed'",
+                    (datetime.fromisoformat(self.valid_date).date(),),
+                ).fetchall()
+            finally:
+                connection.close()
+        assert len(rows) == 1
+
+    def test_recurso_no_conflicto_con_otro_recurso_similar(self):
+        first = self._book("09:00", resource_id=self.resource_a)
+        assert first["success"]
+        second = self._book("09:15", resource_id=self.resource_b)
+        assert second["success"]
 
 
 class TestCancelacionTomaElLockDeEscritura(PostgreSQLTestCase):

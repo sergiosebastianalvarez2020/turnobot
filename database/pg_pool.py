@@ -63,6 +63,23 @@ PG_SESSION_TIMEZONE = "UTC"
 #     responden con el mismo código HTTP que en SQLite en vez de colgarse.
 PG_LOCK_TIMEOUT = "5s"
 
+# Columnas BOOLEAN del esquema PostgreSQL (ver migrations_pg/001_initial_schema.sql).
+# El esquema las declara BOOLEAN mientras que el código de aplicación —heredado de
+# SQLite— las manipula con los literales enteros 0/1. Vive en UN solo lugar porque las
+# tres adaptaciones que dependen de esta lista (predicados, asignaciones SET y
+# parámetros) deben coincidir exactamente: si divergen, se genera SQL inválido.
+_BOOLEAN_COLUMNS = frozenset(
+    {
+        "active",
+        "pending",
+        "is_open",
+        "needs_human",
+        "revoked",
+        "enabled",
+        "notifications_enabled",
+    }
+)
+
 
 def configure_pg_session(connection: Any) -> None:
     """Fija la configuración de sesión obligatoria en una conexión nueva del pool.
@@ -593,8 +610,8 @@ def _adapt_nullable_placeholders(sql: str) -> str:
     return sql
 
 
-def _adapt_boolean_comparisons(sql: str) -> str:
-    """Convierte comparaciones booleanas estilo SQLite (col = 1 / col = 0) a PostgreSQL nativo.
+def _rewrite_boolean_predicates(sql: str) -> str:
+    """Convierte comparaciones booleanas estilo SQLite (col = 1 / col = 0) a predicados PostgreSQL.
 
     En SQLite: WHERE active = 1, WHERE active = 0, WHERE is_open = 1, etc.
     En PostgreSQL: WHERE active IS TRUE, WHERE NOT active, WHERE is_open IS TRUE, etc.
@@ -603,44 +620,124 @@ def _adapt_boolean_comparisons(sql: str) -> str:
     inferir el tipo de placeholders ? en la misma cláusula WHERE cuando se usa
     una columna booleana sin operador de comparación explícito.
 
-    Esta transformación es segura porque:
-    - Solo afecta comparaciones con literales 1 o 0
-    - No afecta placeholders (? o %s) ni columnas numéricas reales
-    - Las columnas BOOLEAN en PostgreSQL aceptan IS TRUE / IS FALSE / NOT col
+    NO debe aplicarse a una cláusula SET: allí `col = 1` es una ASIGNACIÓN y la
+    forma correcta es `col = TRUE` (ver _adapt_boolean_assignments).
     """
     import re
 
-    # Lista de columnas conocidas como BOOLEAN en el esquema PostgreSQL
-    boolean_columns = {
-        "active",
-        "pending",
-        "is_open",
-        "needs_human",
-        "revoked",
-        "enabled",
-        "notifications_enabled",
-    }
+    # `NOT` debe preceder a la columna COMPLETA (calificador incluido): una
+    # sustitución que solo reemplaza el nombre deja `a.NOT active`, que es SQL
+    # inválido. Para las formas `col IS TRUE` el calificador queda fuera del
+    # match y se preserva solo, por eso no necesitan este tratamiento.
+    def _not_predicate(col):
+        def replace(match):
+            qualifier = f"{match.group(1)}." if match.group(1) else ""
+            return f"NOT {qualifier}{col}"
+
+        return replace
 
     # Patrón: columna = 1  o  columna = 0  (fuera de comillas)
     # Usamos word boundaries para evitar coincidencias parciales
-    for col in boolean_columns:
+    for col in _BOOLEAN_COLUMNS:
         # col = 1  ->  col IS TRUE
         pattern_eq_1 = re.compile(rf"\b{re.escape(col)}\s*=\s*1\b", re.IGNORECASE)
         sql = pattern_eq_1.sub(f"{col} IS TRUE", sql)
 
-        # col = 0  ->  NOT col
-        pattern_eq_0 = re.compile(rf"\b{re.escape(col)}\s*=\s*0\b", re.IGNORECASE)
-        sql = pattern_eq_0.sub(f"NOT {col}", sql)
+        # [alias.]col = 0  ->  NOT [alias.]col
+        pattern_eq_0 = re.compile(rf"(?:(\w+)\.)?\b{re.escape(col)}\s*=\s*0\b", re.IGNORECASE)
+        sql = pattern_eq_0.sub(_not_predicate(col), sql)
 
-        # col != 1  ->  NOT col  (poco común pero por completitud)
-        pattern_ne_1 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*1\b", re.IGNORECASE)
-        sql = pattern_ne_1.sub(f"NOT {col}", sql)
+        # [alias.]col != 1  ->  NOT [alias.]col  (poco común pero por completitud)
+        pattern_ne_1 = re.compile(
+            rf"(?:(\w+)\.)?\b{re.escape(col)}\s*(?:!=|<>)\s*1\b", re.IGNORECASE
+        )
+        sql = pattern_ne_1.sub(_not_predicate(col), sql)
 
         # col != 0  ->  col IS TRUE
         pattern_ne_0 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*0\b", re.IGNORECASE)
         sql = pattern_ne_0.sub(f"{col} IS TRUE", sql)
 
     return sql
+
+
+def _adapt_boolean_assignments(sql: str) -> str:
+    """Convierte literales 1/0 asignados a columnas BOOLEAN dentro de una cláusula SET.
+
+    `SET revoked = 1` -> `SET revoked = TRUE`; `SET revoked = 0` -> `SET revoked = FALSE`.
+
+    Una asignación NO admite la forma de predicado: PostgreSQL rechaza
+    `SET col IS TRUE` (sintaxis) y `SET col = 1` (el entero no castea a boolean),
+    de modo que la única forma válida es `SET col = <TRUE|FALSE>`.
+    """
+    import re
+
+    for col in _BOOLEAN_COLUMNS:
+        sql = re.sub(
+            rf"\b({re.escape(col)})\s*=\s*1\b", r"\1 = TRUE", sql, flags=re.IGNORECASE
+        )
+        sql = re.sub(
+            rf"\b({re.escape(col)})\s*=\s*0\b", r"\1 = FALSE", sql, flags=re.IGNORECASE
+        )
+
+    return sql
+
+
+def _update_set_clause_span(sql: str) -> tuple[int, int] | None:
+    """Localiza la cláusula SET de un UPDATE y la separa del resto de la sentencia.
+
+    Devuelve (inicio, fin) del span que contiene la lista de asignaciones, desde
+    la palabra clave SET hasta el inicio del WHERE siguiente, o hasta el final de
+    la sentencia si no hay WHERE. Devuelve None si la sentencia no tiene SET.
+
+    Solo se considera SET en un UPDATE (o en el `DO UPDATE` de un ON CONFLICT):
+    un SELECT puede contener la palabra "SET" dentro de un literal y no debe
+    arrastrar una adaptación de asignaciones.
+    """
+    import re
+
+    statement = sql.lstrip()
+    is_update = statement[:6].upper() == "UPDATE" or bool(
+        re.search(r"\bDO\s+UPDATE\b", statement, re.IGNORECASE)
+    )
+    if not is_update:
+        return None
+
+    set_match = re.search(r"\bSET\b", sql, re.IGNORECASE)
+    if set_match is None:
+        return None
+
+    where_match = re.search(r"\bWHERE\b", sql[set_match.end() :], re.IGNORECASE)
+    end = set_match.end() + where_match.start() if where_match else len(sql)
+    return set_match.start(), end
+
+
+def _adapt_boolean_comparisons(sql: str) -> str:
+    """Adapta los literales booleanos 1/0 de una sentencia al dialecto PostgreSQL.
+
+    La conversión depende del CONTEXTO, y es lo que hace falta para no generar SQL
+    inválido:
+
+    - Predicados (WHERE/ON/JOIN): `col = 1` -> `col IS TRUE`, `col = 0` -> `NOT col`.
+      Necesario porque PostgreSQL no define el operador `boolean = integer`.
+    - Asignaciones (SET de un UPDATE): `col = 1` -> `col = TRUE`, `col = 0` -> `col = FALSE`.
+      Aquí la forma de predicado sería un error de SINTAXIS (`SET col IS TRUE`) y
+      dejar el `1` sin castear también lo sería (`boolean = integer`).
+
+    Antes esta función aplicaba el mismo predicado a toda la sentencia, lo que
+    producía `UPDATE sessions SET revoked IS TRUE ...`: sintaxis inválida que solo
+    se manifiesta contra un servidor PostgreSQL real (con un cursor Mago/MagicMock
+    nunca se parsea la sentencia).
+    """
+    set_span = _update_set_clause_span(sql)
+    if set_span is None:
+        return _rewrite_boolean_predicates(sql)
+
+    start, end = set_span
+    return (
+        _rewrite_boolean_predicates(sql[:start])
+        + _adapt_boolean_assignments(sql[start:end])
+        + _rewrite_boolean_predicates(sql[end:])
+    )
 
 
 def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any]:
@@ -653,15 +750,7 @@ def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any
     Funciona tanto con SQL que tiene valores literales como con consultas parametrizadas
     (adapta los parámetros en `params` solo para posiciones que usan placeholders).
     """
-    boolean_columns = {
-        "active",
-        "pending",
-        "is_open",
-        "needs_human",
-        "revoked",
-        "enabled",
-        "notifications_enabled",
-    }
+    boolean_columns = _BOOLEAN_COLUMNS
 
     import re
 
@@ -762,10 +851,7 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
     if not params:
         return sql, params
 
-    boolean_columns = {
-        "active", "pending", "is_open", "needs_human",
-        "revoked", "enabled", "notifications_enabled",
-    }
+    boolean_columns = _BOOLEAN_COLUMNS
 
     import re
     # Match patterns like: SET col = ?  or SET col = ?, col2 = ?

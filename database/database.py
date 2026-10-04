@@ -821,7 +821,11 @@ def update_business_settings_scoped(
                 business_initials,
                 business_description,
                 timezone,
-                (1 if notifications_enabled else 0) if notifications_enabled is not None else None,
+                (
+                    bool(notifications_enabled)
+                    if notifications_enabled is not None
+                    else None
+                ),
                 (notification_email or "").strip() if notification_email is not None else None,
                 slot_duration if slot_duration is not None else None,
                 break_between_slots if break_between_slots is not None else None,

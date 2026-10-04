@@ -160,7 +160,7 @@ def seed_business_with_settings(pg_test_database: str, seed_business: int) -> in
 
 
 @pytest.fixture(autouse=True)
-def pg_isolate_module_app():
+def pg_isolate_module_app(request):
     """Reconfigura el pool del module-level app (application.app) a la base de tests.
 
     Tests unittest que usan `import app as application; application.app.test_client()`
@@ -175,6 +175,13 @@ def pg_isolate_module_app():
     ese fixture crea una app nueva con su propio pool.
     """
     if not TURNOBOT_PG_URL:
+        yield
+        return
+
+    # Los tests que solicitan el fixture `app` ya reciben una instancia y una
+    # base PostgreSQL propias. No hace falta crear además otra base para la
+    # fachada global importada por compatibilidad (por ejemplo, para parches).
+    if "app" in request.fixturenames:
         yield
         return
 

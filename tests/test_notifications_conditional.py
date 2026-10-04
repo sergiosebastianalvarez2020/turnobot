@@ -1,8 +1,6 @@
 import os
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 
 import app as application
@@ -21,16 +19,8 @@ def _next_open_day():
 class ConditionalEmailBase(unittest.TestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.client = application.app.test_client()
         self.date = _next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def set_notifications(self, business_id, enabled):
         connection = database.get_connection()

@@ -42,23 +42,9 @@ class TestAIResourcePrompts(unittest.TestCase):
     """Regresión: prompts de contexto no deben lanzar NameError."""
 
     def setUp(self):
-        import tempfile
-        from pathlib import Path
-
         import app as application
-        import database.database as database
 
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         application.rate_limit_state.clear()
-
-    def tearDown(self):
-        import database.database as database
-
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     def test_get_resources_prompt_sin_recursos_devuelve_string(self):
         from services.ai import get_resources_prompt

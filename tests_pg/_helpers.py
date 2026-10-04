@@ -14,6 +14,7 @@ from urllib.parse import quote
 import psycopg
 import psycopg.conninfo as _conninfo
 import psycopg_pool
+from psycopg import sql
 
 from database.pg_pool import PgConnectionProxy
 
@@ -65,12 +66,19 @@ def apply_initial_schema(test_url: str) -> None:
 
     El archivo contiene su propio BEGIN/COMMIT y NO es idempotente; por eso se
     aplica una única vez contra una base recién creada.
+
+    Tras aplicar el schema se sincronizan las secuencias IDENTITY porque el propio
+    archivo siembra `roles` con ids explícitos (1..4) y PostgreSQL no avanza la
+    secuencia en ese caso. Es el punto común de todos los caminos del harness que
+    crean una base (schema-only y schema+seed), de modo que ninguna base queda con
+    secuencias desincronizadas por el `INSERT ... VALUES (id, ...)` del schema.
     """
     schema = INITIAL_SCHEMA_PATH.read_text(encoding="utf-8")
     if not schema.strip():
         raise RuntimeError(f"El archivo de schema está vacío: {INITIAL_SCHEMA_PATH}")
     with connect_autocommit(test_url) as conn:
         conn.execute(schema)
+        sync_identity_sequences(conn)
 
 
 def new_db_name() -> str:
@@ -203,6 +211,50 @@ def seed_confirmed_appointment(
     return row[0]
 
 
+def sync_identity_sequences(conn) -> None:
+    """Reposiciona cada secuencia IDENTITY de `public` en el MAX(id) real.
+
+    PostgreSQL NO avanza una secuencia cuando se le inserta un id explícito, y el
+    proyecto siembra así en tres lugares:
+
+    - `migrations_pg/001_initial_schema.sql` -> `roles` (ids 1..4)
+    - `seed_standard_test_data()` -> `businesses` (id 1) y `services` (ids 1..3)
+
+    El siguiente `INSERT` sin `id` (p. ej. `provision_business()`) generaba por
+    tanto un id ya ocupado y PostgreSQL respondía `duplicate key value violates
+    unique constraint`. El arreglo es de raíz: en vez de un `ALTER TABLE ...
+    RESTART WITH N` por test, cada secuencia se sincroniza con el máximo real de
+    su columna.
+
+    Es genérico a propósito: no conoce qué tablas se siembran ni con qué ids, así
+    que sigue siendo correcto si el seed crece, se reduce o cambia de ids. Fija la
+    secuencia en `MAX(id) + 1` con `is_called = false`, de modo que el siguiente
+    id generado es ese valor; en una tabla vacía (`MAX(id) IS NULL`) queda en 1.
+    No toca columnas sin identity.
+    """
+    tables = conn.execute(
+        """
+        SELECT table_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND column_name = 'id'
+          AND is_identity = 'YES'
+        ORDER BY table_name
+        """
+    ).fetchall()
+    for (table_name,) in tables:
+        sequence = conn.execute(
+            "SELECT pg_get_serial_sequence(%s, 'id')", (f"public.{table_name}",)
+        ).fetchone()[0]
+        if not sequence:
+            continue
+        conn.execute(
+            sql.SQL(
+                "SELECT setval({}, COALESCE((SELECT MAX(id) FROM {}), 0) + 1, false)"
+            ).format(sql.Literal(sequence), sql.Identifier(table_name))
+        )
+
+
 def seed_standard_test_data(url: str) -> int:
     """Seed the test database with standard data matching SQLite migrations.
 
@@ -233,7 +285,11 @@ def seed_standard_test_data(url: str) -> int:
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (business_id) DO NOTHING",
             (
-                "El Corte", 60, 0, "Barberia", "EC", "Barberia masculina",
+                # `002_business_configuration.sql` añade business_type/description con
+                # DEFAULT acentuado y SQLite rellena la fila existente con ese valor;
+                # `007` la reconstruye copiando los datos, de modo que los acentos se
+                # conservan. Los DEFAULT sin acento de 007 solo aplican a filas nuevas.
+                "El Corte", 60, 0, "Barbería", "EC", "Barbería masculina",
                 "America/Argentina/Buenos_Aires", 1,
                 False, "", "", "", ""
             ),
@@ -272,5 +328,9 @@ def seed_standard_test_data(url: str) -> int:
                 "ON CONFLICT (id) DO NOTHING",
                 (svc_id, name, price, duration, 1),
             )
+
+        # Los ids explícitos de arriba (y los de `roles` en el schema) no mueven
+        # las secuencias IDENTITY; se sincronizan una sola vez aquí.
+        sync_identity_sequences(conn)
 
     return 1

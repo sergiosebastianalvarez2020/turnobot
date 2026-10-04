@@ -1,21 +1,9 @@
-import tempfile
 import unittest
-from pathlib import Path
 
 import database.database as database
 
 
 class ProvisioningTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.original_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.tmp.name) / "appointments.db"
-        database.init_database()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_path
-        self.tmp.cleanup()
-
     def test_creates_business_owner_settings_and_schedules_atomically(self):
         result = database.create_business_with_owner(
             "Negocio Nuevo", "owner@example.com", "una-clave-segura"

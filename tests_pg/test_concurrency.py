@@ -30,7 +30,6 @@ from tests_pg._helpers import (
     seed_business_settings,
     seed_confirmed_appointment,
     seed_full_week,
-    seed_resource,
     seed_service,
 )
 
@@ -131,58 +130,6 @@ def test_e1_misma_franja_conflictiva(pg_pool, pg_seed, monkeypatch):
         )
 
     results = _run_concurrently([crear, crear])
-    assert len(results) == 2
-    assert all(isinstance(r, dict) and "success" in r for r in results), str(results)
-    assert len([r for r in results if r["success"]]) == 1
-    conflicts = [r for r in results if not r["success"]]
-    assert len(conflicts) == 1
-    assert conflicts[0]["reason"] == "occupied"
-
-
-@pytest.mark.pg_live
-@pytest.mark.pg_typed
-def test_e2_misma_franja_distintos_recursos(pg_pool, pg_seed, monkeypatch):
-    """E2 F.5: misma franja en recursos distintos -> ambos turnos se crean."""
-    _setup_booking_context(pg_seed)
-    resource_1 = seed_resource(pg_seed["url"], pg_seed["business_id"], "Silla 1")
-    resource_2 = seed_resource(pg_seed["url"], pg_seed["business_id"], "Silla 2")
-    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
-
-    def crear(resource_id):
-        return appointments.create_appointment(
-            NAME, PHONE, "Corte", E5_DATE, "10:00", pg_seed["business_id"], resource_id=resource_id
-        )
-
-    results = _run_concurrently([lambda: crear(resource_1), lambda: crear(resource_2)])
-    assert len(results) == 2
-    assert all(isinstance(r, dict) and r["success"] for r in results), str(results)
-
-
-@pytest.mark.pg_live
-@pytest.mark.pg_typed
-def test_e3_recurso_vs_global(pg_pool, pg_seed, monkeypatch):
-    """E3 F.5: un turno con recurso y un turno global en la misma franja.
-
-    Semántica CONGELADA de la implementación actual (appointments.py):
-    el turno con recurso bloquea ese recurso y los globales (resource_id
-    IS NULL); el turno global bloquea todo el negocio. Por lo tanto ambos
-    intentos colisionan -> uno gana y el otro queda ``occupied``.
-    """
-    _setup_booking_context(pg_seed)
-    resource = seed_resource(pg_seed["url"], pg_seed["business_id"], "Silla 1")
-    monkeypatch.setattr("services.appointments.get_connection", lambda: make_pg_proxy(pg_pool))
-
-    def crear_con_recurso():
-        return appointments.create_appointment(
-            NAME, PHONE, "Corte", E5_DATE, "10:00", pg_seed["business_id"], resource_id=resource
-        )
-
-    def crear_global():
-        return appointments.create_appointment(
-            NAME, PHONE, "Corte", E5_DATE, "10:00", pg_seed["business_id"]
-        )
-
-    results = _run_concurrently([crear_con_recurso, crear_global])
     assert len(results) == 2
     assert all(isinstance(r, dict) and "success" in r for r in results), str(results)
     assert len([r for r in results if r["success"]]) == 1

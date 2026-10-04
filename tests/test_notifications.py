@@ -1,10 +1,8 @@
 import os
-import tempfile
 import unittest
 from datetime import datetime, timedelta
 from email import policy
 from email.parser import BytesParser
-from pathlib import Path
 from unittest import mock
 
 import database.database as database
@@ -49,15 +47,7 @@ class FakeSMTP:
 
 class BaseNotificationTest(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.valid_date = self._next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _next_open_day():
