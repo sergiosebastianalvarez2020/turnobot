@@ -1,4 +1,3 @@
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta
@@ -32,14 +31,14 @@ class _BaseTestCase(unittest.TestCase):
         return date.isoformat()
 
     def _count_connections(self, target):
-        real_connect = sqlite3.connect
+        """Cuenta checkouts de conexión (get_connection) sea SQLite o PostgreSQL."""
         counted = {"n": 0}
 
-        def counting_connect(*args, **kwargs):
+        def counting_get_connection(*args, **kwargs):
             counted["n"] += 1
-            return real_connect(*args, **kwargs)
+            return database.get_connection(*args, **kwargs)
 
-        with mock.patch("database.database.sqlite3.connect", side_effect=counting_connect):
+        with mock.patch("services.appointments.get_connection", side_effect=counting_get_connection):
             target()
 
         return counted["n"]

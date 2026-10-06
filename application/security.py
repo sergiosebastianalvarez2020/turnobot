@@ -11,7 +11,7 @@ from time import monotonic
 from flask import abort, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
-from application.logging_config import logger
+from application.logging_config import logger, redact_sensitive_path
 
 _ERROR_MESSAGES = {
     400: "Solicitud inválida.",
@@ -130,7 +130,7 @@ def add_security_headers(response):
         logger.info(
             "HTTP %s %s -> %s (%sms)",
             request.method,
-            request.path,
+            redact_sensitive_path(request.path),
             response.status_code,
             latency_ms,
             extra={"status_code": response.status_code, "latency_ms": latency_ms},

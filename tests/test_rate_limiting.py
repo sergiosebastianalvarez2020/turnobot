@@ -120,25 +120,13 @@ if __name__ == "__main__":
 
 
 class ForeignKeyEnforcementTests(unittest.TestCase):
-    """Tests que verifican que SQLite rechaza referencias inválidas
-    cuando PRAGMA foreign_keys = ON (configuración de la app)."""
+    """Tests que verifican que las FK rechazan referencias inválidas."""
 
     def setUp(self):
-        import tempfile
-        from pathlib import Path
-
-        import database.database as database
-
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        pass
 
     def tearDown(self):
-        import database.database as database
-
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        pass
 
     def test_foreign_key_rejects_invalid_business_id(self):
         """INSERT con business_id inexistente debe fallar por FK."""
@@ -176,8 +164,6 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
 
     def test_foreign_key_rejects_invalid_resource_id(self):
         """INSERT con resource_id inexistente debe fallar por FK."""
-        import sqlite3
-
         import database.database as database
 
         # Primero crear un negocio y servicio válidos
@@ -187,7 +173,6 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
                 "INSERT INTO services (business_id, name, price, duration, active) VALUES (1, 'Test', 1000, 30, 1)"
             )
             conn.commit()
-            conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         finally:
             conn.close()
 
@@ -224,16 +209,14 @@ class ForeignKeyEnforcementTests(unittest.TestCase):
 
     def test_foreign_key_cascade_delete_business(self):
         """Eliminar negocio debe fallar si tiene citas (restrict)."""
-        import sqlite3
-
         import database.database as database
 
         conn = database.get_connection()
         try:
             # Crear negocio y cita
-            conn.execute("INSERT INTO businesses (name, slug) VALUES ('Test', 'test')")
+            cursor = conn.execute("INSERT INTO businesses (name, slug) VALUES ('Test', 'test')")
             conn.commit()
-            biz_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            biz_id = cursor.lastrowid
 
             conn.execute(
                 """

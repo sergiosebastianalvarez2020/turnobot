@@ -114,4 +114,23 @@ jobs:
             exit 1
           fi
       - name: Run general tests
-        run: python -m pytest tests -p no:cacheprovider
+        id: tests
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: python -m pytest tests -p no:cacheprovider 2>&1 | tee /tmp/tests_output.txt
+      - name: Guard - tests must not be skipped/deselected
+        if: steps.tests.outcome == 'success'
+        run: |
+          output_file="/tmp/tests_output.txt"
+          if grep -qE "no tests ran|0 tests" "$output_file"; then
+            echo "FALLO: tests no registró tests ejecutados"
+            exit 1
+          fi
+          if grep -q "skipped" "$output_file"; then
+            echo "FALLO: tests quedaron con SKIP en CI"
+            exit 1
+          fi
+          if grep -q "deselected" "$output_file"; then
+            echo "FALLO: tests quedaron con DESELECTED en CI"
+            exit 1
+          fi

@@ -82,14 +82,34 @@ class LoyaltyBase(unittest.TestCase):
         finally:
             c.close()
 
+        # El login ya NO acepta ADMIN_PASSWORD_HASH: se provisiona un owner real
+        # con credenciales conocidas y se neutraliza la credencial estatica.
+        from database.seed_auth import provision_owner_from_bootstrap
+
+        self._owner_email = "owner@test.local"
+        self._owner_password = "correcta"
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
+
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
         self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+        self.client.post(
+            "/login",
+            data={
+                "email": self._owner_email,
+                "password": self._owner_password,
+                "csrf_token": self.csrf_token,
+            },
+        )
+        # El login regenera el CSRF (anti session-fixation): se relee tras el login.
+        admin_page = self.client.get("/admin")
+        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text).group(1)
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash

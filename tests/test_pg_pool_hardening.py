@@ -187,6 +187,97 @@ def test_init_pg_pool_reinicializa_despues_del_teardown(pg_app, monkeypatch):
     assert pg_app.extensions["pg_pool"] is segundo
 
 
+def _patch_pool_factory(monkeypatch):
+    """Sustituye create_pg_pool() por dobles y devuelve la lista de pools creados."""
+    creados: list[_FakePool] = []
+
+    def fake_create(conninfo, **kwargs):
+        pool = _FakePool(conninfo, **kwargs)
+        creados.append(pool)
+        return pool
+
+    monkeypatch.setattr(pg_pool_mod, "create_pg_pool", fake_create)
+    return creados
+
+
+def test_init_pg_pool_sin_app_reutiliza_el_pool_global(monkeypatch):
+    """Regresión PG-001: init_pg_pool(None, conninfo=...) repetido no crea pools huérfanos.
+
+    Sin contexto Flask no hay `extensions` donde registrar el pool, así que el
+    respaldo global ES el pool vigente. Cada llamada anterior creaba un pool nuevo
+    que pisaba `_global_pool` sin cerrar el anterior: el pool viejo quedaba sin
+    ninguna referencia que lo cerrara, con sus conexiones abiertas en el servidor.
+    """
+    creados = _patch_pool_factory(monkeypatch)
+
+    primero = init_pg_pool(None, conninfo=_PG_URL, open=False)
+    segundo = init_pg_pool(None, conninfo=_PG_URL, open=False)
+    tercero = init_pg_pool(None, conninfo=_PG_URL, open=False)
+
+    assert primero is not None
+    assert primero is segundo is tercero
+    assert len(creados) == 1, "la reentrada creó pools adicionales"
+    assert pg_pool_mod._global_pool is primero
+    assert primero.closed is False
+
+
+def test_init_pg_pool_sin_app_cierra_el_pool_global_previo_si_cambia_el_conninfo(monkeypatch):
+    """Un conninfo distinto sí necesita un pool nuevo, y el anterior se cierra."""
+    creados = _patch_pool_factory(monkeypatch)
+    otro_url = "postgresql://usr:pwd@localhost:5432/otra_base"
+
+    primero = init_pg_pool(None, conninfo=_PG_URL, open=False)
+    segundo = init_pg_pool(None, conninfo=otro_url, open=False)
+
+    assert primero is not None and segundo is not None
+    assert primero is not segundo
+    assert len(creados) == 2
+    assert primero.closed is True, "el pool reemplazado quedó abierto (huérfano)"
+    assert primero.close_timeouts, "el pool huérfano no llegó a cerrarse"
+    assert segundo.closed is False
+    assert pg_pool_mod._global_pool is segundo
+
+
+def test_init_pg_pool_sin_app_no_cierra_el_pool_de_una_app(pg_app, monkeypatch):
+    """El pool de una app viva no se cierra al reemplazarlo como respaldo global.
+
+    Ese pool sigue registrado en `app.extensions` y lo cierra el teardown de la app;
+    cerrarlo desde `init_pg_pool()` le rompería el servicio en caliente.
+    """
+    creados = _patch_pool_factory(monkeypatch)
+    otro_url = "postgresql://usr:pwd@localhost:5432/otra_base"
+
+    pool_de_app = init_pg_pool(pg_app, open=False)
+    reemplazo = init_pg_pool(None, conninfo=otro_url, open=False)
+
+    assert pool_de_app is not None and reemplazo is not None
+    assert pool_de_app is not reemplazo
+    assert pool_de_app.closed is False, "se cerró un pool que sigue en uso por la app"
+    assert pg_app.extensions["pg_pool"] is pool_de_app
+    assert pg_pool_mod._global_pool is reemplazo
+    assert len(creados) == 2
+
+
+def test_init_pg_pool_sin_app_no_cede_el_pool_de_una_app(pg_app, monkeypatch):
+    """Regresión PG-001: un caller sin app NO recibe el pool de una app.
+
+    El contrato de este path es que el caller cierra lo que recibe
+    (`close_pg_pool(pool)`). Si `init_pg_pool(None, conninfo=...)` devolviera el pool
+    de una app —aun con el mismo conninfo—, ese cierre dejaría a la app apuntando a un
+    pool cerrado y sus siguientes consultas morirían con `PoolClosed`.
+    """
+    creados = _patch_pool_factory(monkeypatch)
+
+    pool_de_app = init_pg_pool(pg_app, open=False)
+    entregado = init_pg_pool(None, conninfo=_PG_URL, open=False)
+
+    assert pool_de_app is not None and entregado is not None
+    assert entregado is not pool_de_app, "un caller sin app recibió el pool de la app"
+    assert pool_de_app.closed is False
+    assert pg_app.extensions["pg_pool"] is pool_de_app
+    assert len(creados) == 2
+
+
 def test_init_pg_pool_no_crea_pool_con_sqlite():
     """Con backend SQLite no hay pool, ni en extensions ni en el respaldo global."""
     app = Flask("sqlite_app")

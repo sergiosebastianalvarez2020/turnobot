@@ -1,19 +1,22 @@
 """Pruebas de Fase 2: ejecución real de herramientas de IA y respuestas malformadas.
 
+Ejecutan contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estandar (negocio 1
+"El Corte", horario semanal, servicios "Corte"/"Corte + barba"/"Barba"). No hay swap de
+`DATABASE_PATH` ni SQLite; el aislamiento entre tests es el de la base temporal.
+
 Cubre:
 - `consultar_recursos`, `consultar_disponibilidad` y `buscar_turnos_cliente`
   ejecutados contra DB real a través de `execute_tool` (sin mockear el dispatch).
 - aislamiento por negocio de las herramientas.
-- contrato de `execute_tool` (cen contexto, herramienta desconocida).
+- contrato de `execute_tool` (sin contexto, herramienta desconocida).
 - respuestas malformadas de Gemini (sin candidates / sin texto) -> mensaje seguro.
 - rama `ask_ai` que formatea "no encontramos turnos" cuando la búsqueda
   de turnos del cliente devuelve vacío.
 """
 
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest import mock
 
 import app as application
@@ -21,6 +24,7 @@ import database.database as database
 import services.ai as ai
 from services import appointments
 from services.ai import execute_tool
+from tests._pg_compat import PostgreSQLTestCase
 
 
 def next_open_day():
@@ -30,19 +34,18 @@ def next_open_day():
     return date.isoformat()
 
 
-class BaseAIToolsTest(unittest.TestCase):
+class BaseAIToolsTest(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        # `self.client` lo aporta la fixture `client`: app y base temporal propias
+        # de este test. Sin ella los 14 tests compartirian la base de sesion y el
+        # aislamiento entre tests seria inexistente, que es justo lo que verifica
+        # `test_no_expone_turnos_de_otro_negocio` por otra via.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
         self.business_id = 1
         self.valid_date = next_open_day()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
 
 class TestConsultarRecursosTool(BaseAIToolsTest):

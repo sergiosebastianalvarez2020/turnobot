@@ -10,6 +10,7 @@ el import de la factory barato): las rutas se importan dentro de create_app().
 """
 
 import os
+from datetime import date, datetime
 
 from flask import Flask
 
@@ -26,6 +27,26 @@ from application.logging_config import (
 
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_PACKAGE_DIR)
+
+
+def fmt_datetime(value):
+    """Formatea una columna de fecha/hora para las plantillas.
+
+    PostgreSQL devuelve `datetime`/`date` en las columnas TIMESTAMP y DATE,
+    mientras que SQLite las devuelve como texto. Las plantillas asumían texto y
+    concatenaban por slicing (`valor[:16]`), lo que con PostgreSQL revienta con
+    `TypeError: 'datetime.datetime' object is not subscriptable`.
+
+    Devuelve siempre 'YYYY-MM-DD HH:MM' (o '—' si no hay valor), sea cual sea
+    el backend activo.
+    """
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")[:16]
+    if isinstance(value, date):
+        return value.isoformat()[:16]
+    return str(value)[:16].replace("T", " ")
 
 
 def create_app():
@@ -100,6 +121,7 @@ def create_app():
     from extensions import csrf_token
 
     app.jinja_env.globals["csrf_token"] = csrf_token
+    app.jinja_env.globals["fmt_datetime"] = fmt_datetime
 
     # Registro de blueprints/rutas (import lazy para evitar ciclos)
     from routes import register_blueprints

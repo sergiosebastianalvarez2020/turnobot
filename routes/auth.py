@@ -38,24 +38,7 @@ from database.database import (
     is_session_valid_scoped,
     revoke_all_sessions_scoped,
 )
-from database.seed_auth import migrate_owner_from_module_hash
 from extensions import csrf_token, valid_csrf_token
-
-
-def _get_admin_password_hash():
-    """Lee ADMIN_PASSWORD_HASH dinámicamente desde app para permitir
-    hot-reload en tests que mutan application.ADMIN_PASSWORD_HASH."""
-    from app import ADMIN_PASSWORD_HASH
-
-    return ADMIN_PASSWORD_HASH
-
-
-def _get_admin_password():
-    """Lee ADMIN_PASSWORD dinámicamente desde app para permitir
-    hot-reload en tests que mutan application.ADMIN_PASSWORD."""
-    from app import ADMIN_PASSWORD
-
-    return ADMIN_PASSWORD
 
 
 def get_current_business_id():
@@ -80,32 +63,44 @@ def _clear_business_session():
 def _establish_session(user_id):
     """Crea una sesión persistente tras un login exitoso.
 
-    Limpia selectivamente la sesión de NEGOCIO (user_id/session_token) pero
-    PRESERVA la sesión de PLATAFORMA (superadmin) y el token CSRF.
+    Previene session fixation: limpia completamente la sesión anterior
+    y establece una nueva. Preserva únicamente el contexto legítimo
+    de plataforma (superadmin).
     """
-    old_csrf = session.get("csrf_token")
+    # Preservar solo datos legítimos de plataforma (superadmin)
     platform_user_id = session.get("platform_user_id")
     platform_token = session.get("platform_session_token")
-    session.pop("user_id", None)
-    session.pop("session_token", None)
-    session["user_id"] = user_id
-    token = secrets.token_urlsafe(48)
-    session["session_token"] = token
-    session.permanent = True
-    lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
-    expires_at = (datetime.datetime.now(datetime.UTC) + lifetime).strftime("%Y-%m-%d %H:%M:%S")
-    create_session_scoped(user_id, _hash_session_token(token), expires_at)
-    session["csrf_token"] = old_csrf or csrf_token()
+
+    # Limpiar sesión completa e iniciar una nueva
+    session.clear()
+
+    # Restaurar solo datos legítimos de plataforma (superadmin)
     if platform_user_id is not None:
         session["platform_user_id"] = platform_user_id
     if platform_token is not None:
         session["platform_session_token"] = platform_token
+
+    # Establecer nueva sesión de negocio con nuevo token
+    session["user_id"] = user_id
+    token = secrets.token_urlsafe(48)
+    session["session_token"] = token
+    session.permanent = True
+    session["csrf_token"] = csrf_token()
+
+    lifetime = current_app.config["PERMANENT_SESSION_LIFETIME"]
+    expires_at = (datetime.datetime.now(datetime.UTC) + lifetime).strftime("%Y-%m-%d %H:%M:%S")
+    create_session_scoped(user_id, _hash_session_token(token), expires_at)
 
 
 def _authenticate_login(business, email, password):
     """
     Autentica email+password contra users/business_users para el negocio dado.
     Retorna (user_id, None) o (None, mensaje_error).
+
+    NOTA: La migración del hash de bootstrap (ADMIN_PASSWORD_HASH) a un owner
+    real ya NO ocurre aquí. La migración debe ejecutarse explícitamente vía
+    script CLI o durante el provisioning inicial. Esto evita que la credencial
+    de bootstrap permita takeover del owner tras el provisioning inicial.
     """
     from services.memberships import ROLE_CUSTOMER, get_membership_scoped
 
@@ -113,7 +108,7 @@ def _authenticate_login(business, email, password):
         return None, "Demasiados intentos. Esperá unos minutos."
 
     if business is None:
-        return None, "Negocio no encontrado."
+        return None, "Credenciales inválidas."
 
     email = (email or "").strip().lower()
     user = get_user_by_email_scoped(email) if email else None
@@ -123,18 +118,11 @@ def _authenticate_login(business, email, password):
             return None, "Credenciales inválidas."
         membership = get_membership_scoped(user["id"], business["id"])
         if not membership or membership["role_name"] == ROLE_CUSTOMER:
-            return None, "No tenés acceso administrativo a este negocio."
+            return None, "Credenciales inválidas."
         if not password or not check_password_hash(user["password_hash"], password):
             return None, "Credenciales inválidas."
         return user["id"], None
 
-    # --- Bootstrap de migración (negocio 1 solamente) -------------------------
-    admin_hash = _get_admin_password_hash()
-    if business["id"] == 1 and admin_hash:
-        if password and check_password_hash(admin_hash, password):
-            user_id = migrate_owner_from_module_hash(1, email or "admin@turnobot.local", admin_hash)
-            if user_id is not None:
-                return user_id, None
     return None, "Credenciales inválidas."
 
 

@@ -16,19 +16,20 @@ HTTP traduzcan la respuesta sin reproducir la política.
 """
 
 from database.database import (
-    change_membership_role_scoped,
-    count_owners_scoped,
+    acquire_business_write_lock,
     create_membership_scoped,
+    get_backend,
+    get_connection,
     get_membership_scoped,
     get_role_id_scoped,
     list_members_scoped,
-    revoke_membership_scoped,
 )
 
 ROLE_OWNER = "owner"
 ROLE_ADMIN = "admin"
 ROLE_STAFF = "staff"
 ROLE_CUSTOMER = "customer"
+_MEMBERSHIP_WRITE_LOCK_KEY = -530001
 
 # Roles que el owner puede asignar. Excluye explícitamente `owner` para
 # impedir la creación/escalada de owners mediante esta capa.
@@ -88,22 +89,9 @@ def change_role(actor_user_id, business_id, target_user_id, new_role_name):
         return _denied("no tienes permisos para gestionar memberships")
     if new_role_name not in ASSIGNABLE_BY_OWNER:
         return _denied("rol destino no permitido")
-
-    target = get_membership_scoped(target_user_id, business_id)
-    if not target:
-        return _denied("el miembro no existe en este negocio")
-
-    new_role_id = _role_name_to_id(new_role_name)
-    if new_role_id is None:
-        return _denied("rol destino no válido")
-
-    if target["role_name"] == ROLE_OWNER and new_role_name != ROLE_OWNER:
-        if count_owners_scoped(business_id) <= 1:
-            return _denied("no se puede degradar al último owner del negocio")
-
-    if not change_membership_role_scoped(target_user_id, business_id, new_role_id):
-        return _denied("no se pudo cambiar el rol")
-    return {"success": True, "reason": None}
+    return _change_or_revoke_membership(
+        actor_user_id, business_id, target_user_id, new_role_name=new_role_name
+    )
 
 
 def revoke_membership(actor_user_id, business_id, target_user_id):
@@ -115,15 +103,84 @@ def revoke_membership(actor_user_id, business_id, target_user_id):
         return _denied("no tienes permisos para gestionar memberships")
     if target_user_id == actor_user_id:
         return _denied("no puedes revocar tu propia membresía")
+    return _change_or_revoke_membership(actor_user_id, business_id, target_user_id)
 
-    target = get_membership_scoped(target_user_id, business_id)
-    if not target:
-        return _denied("el miembro no existe en este negocio")
 
-    if target["role_name"] == ROLE_OWNER:
-        if count_owners_scoped(business_id) <= 1:
-            return _denied("no se puede revocar al último owner del negocio")
+def _change_or_revoke_membership(actor_user_id, business_id, target_user_id, new_role_name=None):
+    """Atomically enforce owner authorization and the last-owner invariant.
 
-    if not revoke_membership_scoped(target_user_id, business_id):
-        return _denied("no se pudo revocar la membresía")
-    return {"success": True, "reason": None}
+    PostgreSQL serializes all membership mutations for a business with one
+    transaction-scoped advisory lock. SQLite uses its native write lock.
+    """
+    connection = get_connection()
+    try:
+        if get_backend() != "postgresql":
+            connection.execute("BEGIN IMMEDIATE")
+        acquire_business_write_lock(connection, business_id, _MEMBERSHIP_WRITE_LOCK_KEY)
+        actor = connection.execute(
+            """
+            SELECT r.name AS role_name FROM business_users bu
+            JOIN roles r ON r.id = bu.role_id
+            WHERE bu.user_id = ? AND bu.business_id = ?
+            """,
+            (actor_user_id, business_id),
+        ).fetchone()
+        if not actor or actor["role_name"] != ROLE_OWNER:
+            connection.rollback()
+            return _denied("no tienes permisos para gestionar memberships")
+
+        target = connection.execute(
+            """
+            SELECT r.name AS role_name FROM business_users bu
+            JOIN roles r ON r.id = bu.role_id
+            WHERE bu.user_id = ? AND bu.business_id = ?
+            """,
+            (target_user_id, business_id),
+        ).fetchone()
+        if not target:
+            connection.rollback()
+            return _denied("el miembro no existe en este negocio")
+
+        if target["role_name"] == ROLE_OWNER:
+            owner_count = connection.execute(
+                """
+                SELECT COUNT(*) FROM business_users bu
+                JOIN roles r ON r.id = bu.role_id
+                WHERE bu.business_id = ? AND r.name = 'owner'
+                """,
+                (business_id,),
+            ).fetchone()[0]
+            if owner_count <= 1:
+                connection.rollback()
+                reason = (
+                    "no se puede degradar al último owner del negocio"
+                    if new_role_name
+                    else "no se puede revocar al último owner del negocio"
+                )
+                return _denied(reason)
+
+        if new_role_name:
+            role = connection.execute(
+                "SELECT id FROM roles WHERE name = ?", (new_role_name,)
+            ).fetchone()
+            if not role:
+                connection.rollback()
+                return _denied("rol destino no válido")
+            cursor = connection.execute(
+                "UPDATE business_users SET role_id = ? WHERE user_id = ? AND business_id = ?",
+                (role["id"], target_user_id, business_id),
+            )
+            failure_reason = "no se pudo cambiar el rol"
+        else:
+            cursor = connection.execute(
+                "DELETE FROM business_users WHERE user_id = ? AND business_id = ?",
+                (target_user_id, business_id),
+            )
+            failure_reason = "no se pudo revocar la membresía"
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return _denied(failure_reason)
+        connection.commit()
+        return {"success": True, "reason": None}
+    finally:
+        connection.close()

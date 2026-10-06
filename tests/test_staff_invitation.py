@@ -10,6 +10,8 @@
 
 import re
 import unittest
+from unittest.mock import patch
+from urllib.parse import urlsplit
 
 import app as application
 import database.database as database
@@ -183,6 +185,49 @@ class TestStaffInvitationAccept(StaffInvitationBase):
         page = self.client.get(f"/b/test-staff-biz/invitacion-staff/{token}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(self.STAFF_EMAIL, page.text)
+
+    def test_staff_invitation_email_uses_canonical_origin_not_request_host(self):
+        self._provision_and_approve()
+        application.app.config["PUBLIC_BASE_URL"] = "https://canonical.example"
+        host_headers = {"Host": "evil.example"}
+
+        page = self.client.get("/b/test-staff-biz/login", headers=host_headers)
+        csrf = self._csrf(page)
+        login = self.client.post(
+            "/b/test-staff-biz/login",
+            headers=host_headers,
+            data={
+                "email": self.OWNER_EMAIL,
+                "password": self.OWNER_PASSWORD,
+                "csrf_token": csrf,
+            },
+        )
+        self.assertEqual(login.status_code, 302)
+
+        page = self.client.get("/b/test-staff-biz/admin/usuarios", headers=host_headers)
+        csrf = self._csrf(page)
+        with patch(
+            "routes.invitation.send_staff_invitation_email", return_value=(True, None)
+        ) as send_invitation:
+            response = self.client.post(
+                self._invitar_url(),
+                headers=host_headers,
+                data={
+                    "email": self.STAFF_EMAIL,
+                    "role_name": "staff",
+                    "csrf_token": csrf,
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        sent_link = send_invitation.call_args.args[1]
+        canonical = urlsplit(application.app.config["PUBLIC_BASE_URL"])
+        parsed_link = urlsplit(sent_link)
+        self.assertEqual(
+            (parsed_link.scheme, parsed_link.netloc), (canonical.scheme, canonical.netloc)
+        )
+        self.assertTrue(parsed_link.path.startswith("/b/test-staff-biz/invitacion-staff/"))
+        self.assertNotIn("evil.example", sent_link)
 
     def test_staff_invitation_invalid_token_returns_404(self):
         page = self.client.get("/b/test-staff-biz/invitacion-staff/token-invalido")

@@ -11,11 +11,27 @@ import datetime
 import json
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 
 from flask import g, has_request_context, request
 
 USE_JSON_LOGS = os.getenv("LOG_FORMAT", "plain").lower() == "json"
+
+
+def redact_sensitive_path(path):
+    """Hide bearer tokens embedded in public URL paths before logging them."""
+    if not isinstance(path, str):
+        return "-"
+    patterns = (
+        (r"(/reset/)[^/]+", r"\1[REDACTED]"),
+        (r"(/b/[^/]+/invitacion(?:-staff)?/)[^/]+", r"\1[REDACTED]"),
+        (r"(/b/[^/]+/turno/)[^/]+", r"\1[REDACTED]"),
+        (r"(/api/conversations/)[^/]+(/messages)", r"\1[REDACTED]\2"),
+    )
+    for pattern, replacement in patterns:
+        path = re.sub(pattern, replacement, path)
+    return path
 
 
 class RequestContextFilter(logging.Filter):
@@ -66,7 +82,9 @@ class RequestContextFilter(logging.Filter):
                 record.method = "-"
 
             try:
-                record.path = getattr(g, "path", None) or request.path or "-"
+                record.path = redact_sensitive_path(
+                    getattr(g, "path", None) or request.path or "-"
+                )
             except Exception:
                 record.path = "-"
         else:

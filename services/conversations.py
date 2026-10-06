@@ -9,6 +9,7 @@ Proporciona helpers para:
 
 import hashlib
 import re
+import secrets
 import sqlite3
 import uuid
 
@@ -426,38 +427,37 @@ def get_opportunities_scoped(business_id, limit=20):
         connection.close()
 
 
-def get_or_create_public_conversation_session_scoped(business_id):
+def get_or_create_public_conversation_session_scoped(business_id, visitor_token=None):
     """Crea o recupera una sesión pública anónima para un negocio.
 
-    Genera un public_token UUID impredecible que se devuelve al frontend
-    para reconstruir el historial sin exponer IDs secuenciales.
+    Reutiliza una sesión solo cuando el visitante presenta su token opaco,
+    ligado al negocio. Sin token válido crea una sesión independiente.
     """
     connection = get_connection()
     try:
-        row = connection.execute(
-            """
-            SELECT id, business_id, customer_phone, customer_name, customer_email,
-                   status, needs_human, human_requested_at, resolved_at, created_at, updated_at,
-                   public_token
-            FROM conversation_sessions
-            WHERE business_id = ? AND public_token IS NOT NULL
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (business_id,),
-        ).fetchone()
-
-        if row and row["public_token"]:
-            return dict(row)
+        if isinstance(visitor_token, str) and 1 <= len(visitor_token) <= 200:
+            row = connection.execute(
+                """
+                SELECT id, business_id, customer_phone, customer_name, customer_email,
+                       status, needs_human, human_requested_at, resolved_at, created_at, updated_at,
+                       public_token
+                FROM conversation_sessions
+                WHERE business_id = ? AND public_token = ?
+                """,
+                (business_id, visitor_token),
+            ).fetchone()
+            if row:
+                return dict(row)
 
         anon_phone = f"anon_{uuid.uuid4().hex}"
+        public_token = secrets.token_urlsafe(32)
         cursor = connection.execute(
             """
             INSERT INTO conversation_sessions
                 (business_id, customer_phone, customer_name, customer_email, status, needs_human, public_token)
             VALUES (?, ?, ?, ?, 'active', 0, ?)
             """,
-            (business_id, anon_phone, None, None, uuid.uuid4().hex),
+            (business_id, anon_phone, None, None, public_token),
         )
         connection.commit()
         session_id = cursor.lastrowid

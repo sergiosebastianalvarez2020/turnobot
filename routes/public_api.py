@@ -126,6 +126,9 @@ def chat():
             if isinstance(data.get("customer_email"), str)
             else ""
         )
+        visitor_token = data.get("session_id")
+        if not isinstance(visitor_token, str):
+            visitor_token = None
 
         if customer_phone and not is_chat_phone_request_allowed(
             customer_phone, get_current_business_id()
@@ -145,6 +148,7 @@ def chat():
             customer_phone=customer_phone,
             customer_name=customer_name,
             customer_email=customer_email,
+            public_token=visitor_token,
         )
 
         payload = {"success": True, "response": response}
@@ -311,14 +315,16 @@ def _get_public_points_response(business_id):
     if not settings or not settings.get("enabled"):
         return jsonify({"success": True, "enabled": False, "balance": 0})
 
-    phone = (request.args.get("phone") or "").strip()
-    account = loyalty.get_account(business_id, phone) if phone else None
+    # A phone number is an identifier, not proof of ownership. Preserve the
+    # numeric response field for existing clients but never query its balance
+    # without an authenticated verification flow.
     return jsonify(
         {
             "success": True,
             "enabled": True,
             "points_per_completed": settings.get("points_per_completed_appointment"),
-            "balance": account["points_balance"] if account else 0,
+            "balance": 0,
+            "verification_required": True,
         }
     )
 
@@ -702,7 +708,9 @@ def _create_public_appointment_response(business_id):
             try:
                 current = getattr(g, "current_business", None) or {}
                 slug = current.get("slug") or None
-                base_url = request.url_root.rstrip("/")
+                from application.public_urls import public_url
+
+                base_url = public_url("").rstrip("/")
                 appointment_data = {
                     "id": resultado.get("appointment_id"),
                     "customer_name": resultado.get("customer_name"),

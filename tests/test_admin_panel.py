@@ -7,6 +7,7 @@ Cubre:
 - Separación de métricas (upcoming / completed / no_show).
 """
 
+import os
 import re
 import tempfile
 import unittest
@@ -106,23 +107,66 @@ class AdminPanelBase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+
+        # Usar backend SQLite para esta prueba aislada
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        os.environ["DB_BACKEND"] = "sqlite"
+        os.environ.pop("DATABASE_URL", None)
+
         database.init_database()
 
-        self.client = application.app.test_client()
+        # Asegura que el negocio 1 (slug 'el-corte') exista antes de provisionar owner
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'El Corte', 'el-corte')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Provisiona un owner real con credenciales conocidas en lugar de
+        # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
+        from database.seed_auth import provision_owner_from_bootstrap
+        self._owner_email = "owner@test.local"
+        self._owner_password = "testpass123"
+        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+
+        # Crear una nueva instancia de la app para aislar esta prueba
+        # (evita el pool compartido del module-level app configurado por pg_isolate_module_app)
+        from application import create_app
+        self.app = create_app()
+        self.client = self.app.test_client()
+
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+        self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+
+        # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
+        admin_page = self.client.get("/admin")
+        csrf_match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        self.csrf_token = csrf_match.group(1) if csrf_match else self.csrf_login
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
         database.DATABASE_PATH = self.original_database_path
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
         self.temp_dir.cleanup()
+
+    def _get_admin_csrf(self):
+        """Obtiene un CSRF token fresco de la página admin."""
+        admin_page = self.client.get("/admin")
+        match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        return match.group(1) if match else self.csrf_login
 
     def _create_turno(self, date_=None, time_="09:00"):
         date_ = date_ or _next_open_day()
@@ -397,17 +441,44 @@ class TestAdminPagination(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+
+        # Usar backend SQLite para esta prueba aislada
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        os.environ["DB_BACKEND"] = "sqlite"
+        os.environ.pop("DATABASE_URL", None)
+
         database.init_database()
 
-        self.client = application.app.test_client()
+        # Asegura que el negocio 1 (slug 'el-corte') exista antes de provisionar owner
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'El Corte', 'el-corte')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Provisiona un owner real con credenciales conocidas en lugar de
+        # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
+        from database.seed_auth import provision_owner_from_bootstrap
+        self._owner_email = "owner@test.local"
+        self._owner_password = "testpass123"
+        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+
+        # Crear una nueva instancia de la app para aislar esta prueba
+        from application import create_app
+        self.app = create_app()
+        self.client = self.app.test_client()
+
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
         self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_token})
 
         # Crear 16 turnos (8 por día en 2 días hábiles consecutivos con horario de tarde, solo horas en punto)
         date_ = _next_open_weekday_with_afternoon()
@@ -437,6 +508,10 @@ class TestAdminPagination(unittest.TestCase):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
         database.DATABASE_PATH = self.original_database_path
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
         self.temp_dir.cleanup()
 
     def test_get_appointments_pagination(self):
@@ -498,23 +573,65 @@ class TestAdminAJAX(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+
+        # Usar backend SQLite para esta prueba aislada
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        os.environ["DB_BACKEND"] = "sqlite"
+        os.environ.pop("DATABASE_URL", None)
+
         database.init_database()
 
-        self.client = application.app.test_client()
+        # Asegura que el negocio 1 (slug 'el-corte') exista antes de provisionar owner
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'El Corte', 'el-corte')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Provisiona un owner real con credenciales conocidas en lugar de
+        # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
+        from database.seed_auth import provision_owner_from_bootstrap
+        self._owner_email = "owner@test.local"
+        self._owner_password = "testpass123"
+        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+
+        # Crear una nueva instancia de la app para aislar esta prueba
+        from application import create_app
+        self.app = create_app()
+        self.client = self.app.test_client()
+
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+        self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+
+        # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
+        admin_page = self.client.get("/admin")
+        csrf_match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        self.csrf_token = csrf_match.group(1) if csrf_match else self.csrf_login
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
         database.DATABASE_PATH = self.original_database_path
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
         self.temp_dir.cleanup()
+
+    def _get_admin_csrf(self):
+        """Obtiene un CSRF token fresco de la página admin."""
+        admin_page = self.client.get("/admin")
+        match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        return match.group(1) if match else self.csrf_login
 
     def _create_turno(self, date_=None, time_="09:00"):
         date_ = date_ or _next_open_day()
@@ -602,23 +719,65 @@ class TestAdminNoReportaCambiosInexistentes(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
+
+        # Usar backend SQLite para esta prueba aislada
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        os.environ["DB_BACKEND"] = "sqlite"
+        os.environ.pop("DATABASE_URL", None)
+
         database.init_database()
 
-        self.client = application.app.test_client()
+        # Asegura que el negocio 1 (slug 'el-corte') exista antes de provisionar owner
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'El Corte', 'el-corte')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Provisiona un owner real con credenciales conocidas en lugar de
+        # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
+        from database.seed_auth import provision_owner_from_bootstrap
+        self._owner_email = "owner@test.local"
+        self._owner_password = "testpass123"
+        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+
+        # Crear una nueva instancia de la app para aislar esta prueba
+        from application import create_app
+        self.app = create_app()
+        self.client = self.app.test_client()
+
         self.original_hash = application.ADMIN_PASSWORD_HASH
         self.original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
         login_page = self.client.get("/login")
-        self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_token})
+        self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
+        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+
+        # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
+        admin_page = self.client.get("/admin")
+        csrf_match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        self.csrf_token = csrf_match.group(1) if csrf_match else self.csrf_login
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self.original_hash
         application.ADMIN_PASSWORD = self.original_password
         database.DATABASE_PATH = self.original_database_path
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
         self.temp_dir.cleanup()
+
+    def _get_admin_csrf(self):
+        """Obtiene un CSRF token fresco de la página admin."""
+        admin_page = self.client.get("/admin")
+        match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
+        return match.group(1) if match else self.csrf_login
 
     def _create_turno(self, date_=None, time_="09:00"):
         date_ = date_ or _next_open_day()

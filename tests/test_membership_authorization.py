@@ -2,32 +2,45 @@
 
 Cubre aislamiento por negocio, jerarquía de roles y reglas sobre owners.
 Ninguna operación usa business_id aportado por el cliente.
+
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estándar (negocio 1).
+No hay swap de `DATABASE_PATH` ni `init_database()`: sobre el backend PostgreSQL el
+`DATABASE_PATH` solo se lee en la rama SQLite de `get_connection()` y
+`init_database()` se limita a detectar que el schema ya está aplicado, así que ambos
+eran andamiaje muerto. El aislamiento entre tests es el de la base temporal.
+
+El contexto de aplicación se empuja en `setUp` para que `get_connection()` resuelva el
+pool vía `flask.current_app` y no por el respaldo global `_global_pool`.
 """
 
-import tempfile
+import threading
 import unittest
-from pathlib import Path
 
 from werkzeug.security import generate_password_hash
 
 import database.database as database
 from database.database import get_connection
 from services import memberships
+from tests._pg_compat import PostgreSQLTestCase
 
 
-class MembershipAuthBase(unittest.TestCase):
-    """Negocio 1 y negocio 2 en base temporal."""
+class MembershipAuthBase(unittest.TestCase, PostgreSQLTestCase):
+    """Negocio 1 (semilla estándar) y negocio 2 en base temporal propia del test."""
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
-        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
+        # `self.app` lo aporta la fixture `app`: app y pool propios de este test,
+        # apuntando a la base temporal creada por `pg_test_database`. El contexto se
+        # empuja aquí (no en la fixture) porque el servicio y los helpers de este
+        # archivo llaman `get_connection()` directamente.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_path
-        self.temp_dir.cleanup()
+        # La semilla estándar crea el negocio 1; el 2 es el segundo tenant del test.
+        # `active`/`pending`/`created_at` tienen DEFAULT en el schema, por lo que el
+        # INSERT explícito de la tupla original es suficiente.
+        self._exec("INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')")
 
     @staticmethod
     def _exec(sql, params=None):
@@ -48,7 +61,7 @@ class MembershipAuthBase(unittest.TestCase):
         c = get_connection()
         try:
             row = c.execute(
-                "SELECT role_id FROM business_users WHERE user_id = ? AND business_id = ?",
+                "SELECT role_id FROM business_users WHERE user_id = %s AND business_id = %s",
                 (user_id, business_id),
             ).fetchone()
             return row["role_id"] if row else None
@@ -59,7 +72,7 @@ class MembershipAuthBase(unittest.TestCase):
         c = get_connection()
         try:
             row = c.execute(
-                "SELECT 1 FROM business_users WHERE user_id = ? AND business_id = ?",
+                "SELECT 1 FROM business_users WHERE user_id = %s AND business_id = %s",
                 (user_id, business_id),
             ).fetchone()
             return row is not None
@@ -199,6 +212,33 @@ class TestOwners(MembershipAuthBase):
         self.assertTrue(result["success"])
         self.assertEqual(self._role_of(owner_b, 1), memberships._role_name_to_id("admin"))
         self.assertEqual(self._role_of(owner_a, 1), memberships._role_name_to_id("owner"))
+
+    def test_dos_operaciones_concurrentes_no_eliminan_al_ultimo_owner(self):
+        owner_a = self._make_user("race-a@test.com", "secret", 1, "owner")
+        owner_b = self._make_user("race-b@test.com", "secret", 1, "owner")
+        barrier = threading.Barrier(2)
+        results = []
+        results_lock = threading.Lock()
+
+        def revoke(actor_id, target_id):
+            with self.app.app_context():
+                barrier.wait(timeout=10)
+                result = memberships.revoke_membership(actor_id, 1, target_id)
+            with results_lock:
+                results.append(result)
+
+        workers = [
+            threading.Thread(target=revoke, args=(owner_a, owner_b)),
+            threading.Thread(target=revoke, args=(owner_b, owner_a)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=20)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sum(result["success"] for result in results), 1)
+        self.assertEqual(database.count_owners_scoped(1), 1)
 
 
 class TestCambioDeRol(MembershipAuthBase):

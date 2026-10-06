@@ -13,6 +13,7 @@ import re
 
 from flask import g, redirect, render_template, request, url_for
 
+from application.public_urls import public_url
 from application.rate_limit import FORGOT_REQUEST_LIMIT, REGISTRO_REQUEST_LIMIT
 from application.requests import _rate_limit_key, get_client_ip
 from database.database import get_business_settings, get_business_settings_scoped
@@ -37,7 +38,7 @@ def forgot_password():
             if token:
                 business = g.current_business
                 business_name = business["name"] if business else "nuestro servicio"
-                reset_link = request.url_root.rstrip("/") + url_for("reset_password", token=token)
+                reset_link = public_url(url_for("reset_password", token=token))
                 notifications.send_password_reset_email(email, reset_link, business_name)
         return redirect(url_for("forgot_password", sent="1"))
     business = g.current_business
@@ -86,20 +87,10 @@ def registro():
         try:
             result = platform_service.provision_business(business_name, slug or None, owner_email)
         except Exception:
-            return redirect(
-                url_for(
-                    "registro",
-                    error=" No se pudo crear el negocio. Intentá con otro nombre, slug o email.",
-                )
-            )
+            return redirect(url_for("registro", sent="1"))
 
         if not result["success"]:
-            return redirect(
-                url_for(
-                    "registro",
-                    error=" No se pudo crear el negocio. Intentá con otro nombre o slug.",
-                )
-            )
+            return redirect(url_for("registro", sent="1"))
 
         business_id = result["business_id"]
         notifications.send_apply_confirmation_email(owner_email, business_name)

@@ -1127,6 +1127,26 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
             self.assertEqual(rec.path, "/health")
             self.assertEqual(rec.business_id, "1")
 
+    def test_logging_redacts_sensitive_bearer_tokens_in_paths(self):
+        protected_paths = (
+            ("/reset/reset-secret", "/reset/[REDACTED]"),
+            ("/b/demo/invitacion/invite-secret", "/b/demo/invitacion/[REDACTED]"),
+            ("/b/demo/turno/management-secret", "/b/demo/turno/[REDACTED]"),
+            (
+                "/api/conversations/public-secret/messages",
+                "/api/conversations/[REDACTED]/messages",
+            ),
+        )
+        from application.logging_config import RequestContextFilter
+
+        request_filter = RequestContextFilter()
+        for request_path, safe_path in protected_paths:
+            with application.app.test_request_context(request_path):
+                record = logging.LogRecord("test", logging.INFO, "path", 1, "msg", (), None)
+                request_filter.filter(record)
+                self.assertEqual(record.path, safe_path)
+                self.assertNotIn("secret", record.path)
+
     def test_logging_context_filter_outside_request(self):
         filt = application.RequestContextFilter()
         rec = logging.LogRecord("test", logging.INFO, "path", 1, "msg", (), None)
@@ -1288,8 +1308,6 @@ class TestLogFileAndHealth(unittest.TestCase):
         self.assertEqual(resp.get_json(), {"status": "ok", "database": "ok"})
 
     def test_health_503_sin_database_y_sin_exponer_el_error(self):
-        import sqlite3
-
         import database.database as database_mod
 
         real_get_connection = database_mod.get_connection
@@ -1303,7 +1321,7 @@ class TestLogFileAndHealth(unittest.TestCase):
 
             def execute(self, sql, params=()):
                 if isinstance(sql, str) and sql.strip().upper() == "SELECT 1":
-                    raise sqlite3.OperationalError("database is locked")
+                    raise Exception("database is locked")
                 return self._conn.execute(sql, params)
 
         def guarded_get_connection(*args, **kwargs):

@@ -15,18 +15,19 @@ Cubre, por requisito:
 
 import os
 import re
-import tempfile
 import unittest
 from datetime import datetime, timedelta
 from email import policy
 from email.parser import BytesParser
-from pathlib import Path
 from unittest import mock
 
 import app as application
-import database.database as database
 import scripts.retry_failed_notifications as retry_runner
-from database.database import get_connection
+from database.database import (
+    create_business_with_owner,
+    get_business_settings_scoped,
+    get_connection,
+)
 from services import appointments, notifications
 from services import platform as platform_service
 from services.notifications import (
@@ -95,16 +96,16 @@ class EmailBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.valid_date = _next_open_day()
         self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        # `retry_failed_notifications._run_once()` es un runner de CLI: abre y
+        # cierra su propio pool, lo que deja `_global_pool` en None. Mantener un
+        # contexto de app durante todo el test hace que las consultas posteriores
+        # resuelvan `current_app.extensions["pg_pool"]`, es decir la base temporal
+        # de este test, en vez del respaldo global ya invalidado.
+        self._app_context = application.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
     @staticmethod
     def _query(sql, params=None):
@@ -354,7 +355,7 @@ class EmailReservas(EmailBase):
 
     def test_email5_scoped_por_tenant_no_filtra_otro_negocio(self):
         # Negocio 2 tiene su propio email; el aviso del negocio 1 jamás lo usa.
-        database.create_business_with_owner(
+        create_business_with_owner(
             "Otro Negocio", "otro@x.com", password="clave-muy-segura-123", slug="otro"
         )
         self._enable_notifications(1, "a@x.com")
@@ -446,9 +447,16 @@ class EmailReservas(EmailBase):
         )
 
         # El runner reintenta y acierta (SMTP bien configurado ahora).
+        # `_run_once()` es un runner de CLI: `_init_cli_pool()` resuelve el pool a
+        # partir de la variable de entorno DATABASE_URL. El harness deja esa
+        # variable apuntando a la base de mantenimiento compartida mientras el pool
+        # de la app sí usa la base temporal del test, así que se alinea el entorno
+        # con la URL por test para que el runner opere sobre la base aislada.
+        retry_env = dict(SMTP_ENV)
+        retry_env["DATABASE_URL"] = application.app.config["DATABASE_URL"]
         fake_ok = FakeSMTP()
         with (
-            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.dict(os.environ, retry_env, clear=False),
             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok),
         ):
             retried = retry_runner._run_once(business_id=1)
@@ -466,7 +474,7 @@ class EmailReservas(EmailBase):
         # Un segundo intento no vuelve a enviar (idempotencia).
         fake_ok2 = FakeSMTP()
         with (
-            mock.patch.dict(os.environ, SMTP_ENV, clear=False),
+            mock.patch.dict(os.environ, retry_env, clear=False),
             mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_ok2),
         ):
             retried2 = retry_runner._run_once(business_id=1)
@@ -495,7 +503,7 @@ class EmailSeguridad(EmailBase):
     def test_subject_sanitiza_crlf_no_inyecta_headers(self):
         # El nombre del negocio (origen del subject) no puede inyectar
         # cabeceras nuevas en el email.
-        connection = database.get_connection()
+        connection = get_connection()
         connection.execute(
             "UPDATE business_settings SET notifications_enabled = 1, business_name = ? WHERE business_id = 1",
             ("El Corte\r\nBcc: evil@example.com",),
@@ -602,7 +610,7 @@ class EmailSeguridad(EmailBase):
         self.assertNotIn(token.group(1), detail_page.text)
 
     def test_editar_settings_guarda_notification_email(self):
-        connection = database.get_connection()
+        connection = get_connection()
         connection.execute(
             """UPDATE business_settings
                SET notifications_enabled = 1, notification_email = 'turnos@minelpelo.com'
@@ -610,7 +618,7 @@ class EmailSeguridad(EmailBase):
         )
         connection.commit()
         connection.close()
-        settings = database.get_business_settings_scoped(1)
+        settings = get_business_settings_scoped(1)
         self.assertEqual(settings["notification_email"], "turnos@minelpelo.com")
         self.assertEqual(settings["notifications_enabled"], 1)
 

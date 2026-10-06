@@ -13,6 +13,7 @@ CHAT_PHONE_REQUEST_LIMIT = 20
 API_REQUEST_LIMIT = 60
 FORGOT_REQUEST_LIMIT = 5
 REGISTRO_REQUEST_LIMIT = 3
+SUPERADMIN_LOGIN_LIMIT = 10
 
 
 def is_chat_request_allowed(client_ip, business_id=None):

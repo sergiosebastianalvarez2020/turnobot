@@ -10,6 +10,7 @@ Tests que necesiten SQLite por razón legítima (migración, legacy explícito)
 deben sobrescribir el backend en el propio test, no aquí.
 """
 
+import atexit
 import os
 
 import pytest
@@ -30,18 +31,43 @@ TURNOBOT_PG_URL = os.getenv(TURNOBOT_PG_URL_KEY)
 
 # Create a default test database at session start for module-level imports
 _default_test_db_url: str | None = None
+_default_test_db_name: str | None = None
+
+
+def _drop_default_test_database() -> None:
+    """Elimina la base de sesión. Idempotente.
+
+    `drop_test_database` usa `DROP DATABASE IF EXISTS ... WITH (FORCE)`, así que
+    llamarla más de una vez es seguro. La invocan dos caminos: el fixture de
+    sesión y `atexit`. pytest no ejecuta fixtures cuando la sesión termina sin
+    correr ningún test (`--collect-only`, error de colección, interrupción), y
+    sin `atexit` esa base quedaba huérfana para siempre.
+    """
+    global _default_test_db_name
+    if not _default_test_db_name:
+        return
+    try:
+        drop_test_database(TURNOBOT_PG_URL, _default_test_db_name)
+    finally:
+        _default_test_db_name = None
 
 
 def _create_default_test_database() -> str:
     """Create a default test database for module-level imports."""
-    global _default_test_db_url
+    global _default_test_db_url, _default_test_db_name
     if not TURNOBOT_PG_URL:
         return ""
     dbname = new_db_name()
-    create_test_database(TURNOBOT_PG_URL, dbname)
-    test_url = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
-    apply_initial_schema(test_url)
-    seed_standard_test_data(test_url)
+    try:
+        create_test_database(TURNOBOT_PG_URL, dbname)
+        test_url = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
+        apply_initial_schema(test_url)
+        seed_standard_test_data(test_url)
+    except BaseException:
+        # No abandonar la base recién creada si falla el schema o el seed.
+        drop_test_database(TURNOBOT_PG_URL, dbname)
+        raise
+    _default_test_db_name = dbname
     _default_test_db_url = test_url
     return conninfo_to_url(test_url)
 
@@ -50,6 +76,7 @@ if TURNOBOT_PG_URL:
     os.environ.setdefault("DATABASE_URL", _create_default_test_database())
     os.environ.setdefault("DB_BACKEND", "postgresql")
     os.environ.setdefault("FLASK_ENV", "development")
+    atexit.register(_drop_default_test_database)
 
 
 @pytest.fixture(autouse=True)
@@ -70,12 +97,7 @@ def pg_test_env(monkeypatch):
 def cleanup_default_test_database():
     """Clean up the default test database at session end."""
     yield
-    if _default_test_db_url:
-        import psycopg.conninfo as _conninfo
-        params = _conninfo.conninfo_to_dict(_default_test_db_url)
-        dbname = params.get("dbname")
-        if dbname:
-            drop_test_database(TURNOBOT_PG_URL, dbname)
+    _drop_default_test_database()
 
 
 @pytest.fixture(scope="session")
@@ -88,13 +110,18 @@ def pg_maintenance_url() -> str:
 
 @pytest.fixture
 def pg_test_database(pg_maintenance_url: str):
-    """Crea una base descartable por test y la destruye al finalizar."""
+    """Crea una base descartable por test y la destruye al finalizar.
+
+    La creación va DENTRO del `try`: si `apply_initial_schema` o
+    `seed_standard_test_data` fallan, la base recién creada se destruye igual en
+    lugar de quedar huérfana.
+    """
     dbname = new_db_name()
-    create_test_database(pg_maintenance_url, dbname)
-    test_url = build_test_db_conninfo(pg_maintenance_url, dbname)
-    apply_initial_schema(test_url)
-    seed_standard_test_data(test_url)
     try:
+        create_test_database(pg_maintenance_url, dbname)
+        test_url = build_test_db_conninfo(pg_maintenance_url, dbname)
+        apply_initial_schema(test_url)
+        seed_standard_test_data(test_url)
         yield test_url
     finally:
         drop_test_database(pg_maintenance_url, dbname)
@@ -190,38 +217,49 @@ def pg_isolate_module_app(request):
 
     # Create a per-test database
     dbname = new_db_name()
-    create_test_database(TURNOBOT_PG_URL, dbname)
-    test_conninfo = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
-    apply_initial_schema(test_conninfo)
-    seed_standard_test_data(test_conninfo)
-    test_url = conninfo_to_url(test_conninfo)
-
-    # Save old pool state
-    old_pool = application_mod.app.extensions.get("pg_pool")
-
-    # Close existing pool
-    if old_pool:
-        close_pg_pool(app=application_mod.app)
-
-    # Create new pool pointing to per-test database
-    os.environ["DATABASE_URL"] = test_url
-    application_mod.app.config["DATABASE_URL"] = test_url
-    new_pool = init_pg_pool(application_mod.app)
-    application_mod.app.extensions["pg_pool"] = new_pool
-
+    created = False
     try:
+        create_test_database(TURNOBOT_PG_URL, dbname)
+        created = True
+        test_conninfo = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
+        apply_initial_schema(test_conninfo)
+        seed_standard_test_data(test_conninfo)
+        test_url = conninfo_to_url(test_conninfo)
+
+        # Save old pool state
+        old_pool = application_mod.app.extensions.get("pg_pool")
+
+        # Close existing pool
+        if old_pool:
+            close_pg_pool(app=application_mod.app)
+
+        # Create new pool pointing to per-test database
+        os.environ["DATABASE_URL"] = test_url
+        application_mod.app.config["DATABASE_URL"] = test_url
+        new_pool = init_pg_pool(application_mod.app)
+        application_mod.app.extensions["pg_pool"] = new_pool
+
         yield
     finally:
-        # Close per-test pool
-        close_pg_pool(app=application_mod.app)
+        # El teardown va en dos niveles: si CUALQUIER paso falla (cerrar el pool,
+        # restaurar el pool original), el `finally` interno sigue ejecutando el
+        # drop. Antes un fallo en la restauracion saltaba el drop y dejaba la
+        # base huerfana para siempre. `drop_test_database` usa IF EXISTS, asi que
+        # es idempotente y seguro invocarlo aunque la creacion haya fallado.
+        try:
+            if created:
+                # Close per-test pool
+                close_pg_pool(app=application_mod.app)
 
-        # Restore pool to default test database
-        os.environ["DATABASE_URL"] = _default_test_db_url if _default_test_db_url else TURNOBOT_PG_URL
-        if _default_test_db_url:
-            # Parse the URL back to conninfo for init_pg_pool
-            application_mod.app.config["DATABASE_URL"] = os.environ["DATABASE_URL"]
-            restored_pool = init_pg_pool(application_mod.app)
-            application_mod.app.extensions["pg_pool"] = restored_pool
-
-        # Drop the per-test database
-        drop_test_database(TURNOBOT_PG_URL, dbname)
+                # Restore pool to default test database
+                os.environ["DATABASE_URL"] = (
+                    _default_test_db_url if _default_test_db_url else TURNOBOT_PG_URL
+                )
+                if _default_test_db_url:
+                    # Parse the URL back to conninfo for init_pg_pool
+                    application_mod.app.config["DATABASE_URL"] = os.environ["DATABASE_URL"]
+                    restored_pool = init_pg_pool(application_mod.app)
+                    application_mod.app.extensions["pg_pool"] = restored_pool
+        finally:
+            # Drop the per-test database
+            drop_test_database(TURNOBOT_PG_URL, dbname)

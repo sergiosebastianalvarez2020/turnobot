@@ -1,3 +1,4 @@
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -32,9 +33,25 @@ class TestMigrationAudit(unittest.TestCase):
         database.DATABASE_PATH = self.database_path
         database.MIGRATIONS_DIR = self.migrations_dir
 
+        # Override backend to SQLite for this legacy migration test
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        self._original_db_url = os.environ.get("DATABASE_URL")
+        os.environ["DB_BACKEND"] = "sqlite"
+        if "DATABASE_URL" in os.environ:
+            del os.environ["DATABASE_URL"]
+
     def tearDown(self):
         database.DATABASE_PATH = self.original_database_path
         database.MIGRATIONS_DIR = self.original_migrations_dir
+        # Restore original backend env vars
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
+        if self._original_db_url is not None:
+            os.environ["DATABASE_URL"] = self._original_db_url
+        else:
+            os.environ.pop("DATABASE_URL", None)
         self.temp_dir.cleanup()
 
     def connect(self):

@@ -12,6 +12,7 @@ Estas rutas manejan invitaciones para staff/admin y owner (público).
 
 from flask import abort, g, redirect, render_template, request, session, url_for
 
+from application.public_urls import public_url
 from extensions import valid_csrf_token
 from services import platform as platform_service
 from services.notifications import send_staff_invitation_email
@@ -151,8 +152,8 @@ def admin_usuarios_invitar_enlace(slug=None):
     token = result["invitation_token"]
     business = platform_service.get_business_by_id_platform(business_id)
     business_name = business["name"] if business else "tu negocio"
-    invitation_link = request.url_root.rstrip("/") + url_for(
-        "staff_invitation", slug=g.current_business["slug"], token=token
+    invitation_link = public_url(
+        url_for("staff_invitation", slug=g.current_business["slug"], token=token)
     )
     sent, reason = send_staff_invitation_email(email, invitation_link, business_name, role_name)
     if not sent and reason != "disabled":

@@ -6,75 +6,78 @@ Cubre:
 - Reserva pública con resource_id opcional
 - Aislamiento multi-tenant
 - Negocios sin recursos
+
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estandar. No hay swap
+de `DATABASE_PATH` ni SQLite; el aislamiento entre tests es el de la base temporal.
+
+Notas de portabilidad del SQL de este archivo:
+- El negocio 1 (`El Corte` / `el-corte`) lo crea la semilla estandar de PostgreSQL,
+  igual que lo hacia la migracion 003 de SQLite: aqui solo se crea el negocio 2.
+- `weekly_schedules.is_open` es BOOLEAN en PostgreSQL. Los literales `1`/`0` solo los
+  adapta el seam en el primer tuple de un INSERT, asi que un VALUES multi-fila necesita
+  `TRUE`/`FALSE` explicitos (equivalente exacto de los 1/0 originales).
+- `weekly_schedules.morning_start` et al. son TIME: los literales `'09:00'` se mantienen.
 """
 
 import json
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import app as application
 import database.database as database
-from database.database import (
-    create_resource_scoped,
-    get_connection,
-    update_business_settings_scoped,
-)
+from database.database import create_resource_scoped, update_business_settings_scoped
+from tests._pg_compat import PostgreSQLTestCase
+
+ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
 
 def _next_open_day():
-    date = datetime.now().date() + timedelta(days=1)
+    date = datetime.now(ZONA_HORARIA).date() + timedelta(days=1)
     while date.weekday() == 6:
         date += timedelta(days=1)
     return date.isoformat()
 
 
-class BaseResourcePublicAPITest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._original_database_path = database.DATABASE_PATH
-
+class BaseResourcePublicAPITest(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        # `self.client` lo aporta la fixture `client`: app y base temporal propias de
+        # este test. El contexto se pusha para poder consultar la base directamente.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
+
         self.date = _next_open_day()
         self._setup_businesses()
 
     def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        application.rate_limit_state.clear()
 
     def _setup_businesses(self):
-        # Business 1 (El Corte) ya lo crea init_database() via migración 003
-        # Solo creamos Business 2 (Pádel) y sus datos
-        conn = get_connection()
-        try:
-            conn.execute("""
-                INSERT INTO businesses (id, name, slug)
-                VALUES (2, 'Padel Club', 'padel-club')
-            """)
-            conn.execute("""
-                INSERT INTO services (id, business_id, name, price, duration, active)
-                VALUES (10, 2, 'Partido Pádel', 15000, 90, 1)
-            """)
-            conn.execute("""
-                INSERT INTO weekly_schedules (day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end, business_id)
-                VALUES
-                    (0, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (1, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (2, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (3, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (4, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (5, 1, '09:00', '13:00', '15:00', '20:00', 2),
-                    (6, 0, NULL, NULL, NULL, NULL, 2)
-            """)
-            conn.commit()
-        finally:
-            conn.close()
+        # Business 1 (El Corte) ya lo crea la semilla estandar de PostgreSQL.
+        # Solo creamos Business 2 (Pádel) y sus datos.
+        self._execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Padel Club', 'padel-club')")
+        self._execute(
+            "INSERT INTO services (id, business_id, name, price, duration, active) "
+            "VALUES (10, 2, 'Partido Pádel', 15000, 90, TRUE)"
+        )
+        # `is_open` es BOOLEAN: un VALUES multi-fila no pasa por la adaptation de
+        # literales 0/1 del seam (que solo cubre el primer tuple), asi que se
+        # escriben TRUE/FALSE de forma explicita.
+        self._execute("""
+            INSERT INTO weekly_schedules (day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end, business_id)
+            VALUES
+                (0, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (1, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (2, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (3, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (4, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (5, TRUE, '09:00', '13:00', '15:00', '20:00', 2),
+                (6, FALSE, NULL, NULL, NULL, NULL, 2)
+        """)
 
         update_business_settings_scoped(
             1,
@@ -99,8 +102,17 @@ class BaseResourcePublicAPITest(unittest.TestCase):
         return create_resource_scoped(business_id, name, active=active)
 
     @staticmethod
+    def _execute(sql, params=None):
+        connection = database.get_connection()
+        try:
+            connection.execute(sql, params or ())
+            connection.commit()
+        finally:
+            connection.close()
+
+    @staticmethod
     def _query(sql, params=None):
-        connection = get_connection()
+        connection = database.get_connection()
         try:
             return connection.execute(sql, params or ()).fetchall()
         finally:
@@ -111,10 +123,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
     """Tests para la API pública de recursos."""
 
     def test_negocio_con_recursos_devuelve_sus_recursos(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
         self._create_resource(2, "Cancha 2")
@@ -130,10 +139,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
         assert nombres == {"Cancha 1", "Cancha 2", "Cancha 3", "Cancha 4"}
 
     def test_negocio_sin_recursos_devuelve_lista_vacia(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         resp = client.get("/b/el-corte/api/recursos")
         assert resp.status_code == 200
@@ -142,10 +148,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
         assert data["recursos"] == []
 
     def test_recurso_inactivo_no_aparece_publicamente(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha Activa")
         self._create_resource(2, "Cancha Inactiva", active=False)
@@ -157,10 +160,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
         assert data["recursos"][0]["nombre"] == "Cancha Activa"
 
     def test_tenant_a_no_ve_recursos_de_tenant_b(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -169,10 +169,7 @@ class TestPublicResourcesAPI(BaseResourcePublicAPITest):
         assert data["recursos"] == []
 
     def test_rate_limiting_recursos(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         for _ in range(70):
             client.get("/b/padel-club/api/recursos")
@@ -185,10 +182,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
     """Tests para disponibilidad filtrada por recurso."""
 
     def test_disponibilidad_sin_recurso_negocio_con_recursos(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
         self._create_resource(2, "Cancha 2")
@@ -202,10 +196,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
         assert "horarios_disponibles" in data
 
     def test_disponibilidad_con_resource_id_valido(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court1 = self._create_resource(2, "Cancha 1")
 
@@ -219,10 +210,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
         assert "horarios_disponibles" in data
 
     def test_disponibilidad_resource_id_inexistente(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -236,10 +224,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
         assert data["horarios_disponibles"] == []
 
     def test_disponibilidad_resource_id_invalido(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         resp = client.get(f"/b/padel-club/api/disponibilidad/{self.date}?resource_id=abc")
         assert resp.status_code == 400
@@ -248,10 +233,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
         assert "resource_id inválido" in data["error"]
 
     def test_disponibilidad_resource_id_de_otro_tenant(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -265,10 +247,7 @@ class TestAvailabilityWithResource(BaseResourcePublicAPITest):
         assert data["horarios_disponibles"] == []
 
     def test_dos_canchas_diferentes_mismo_horario_disponible(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
         self._create_resource(2, "Cancha 2")
@@ -291,10 +270,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
     """Tests para reserva pública con resource_id."""
 
     def test_reserva_publica_con_recurso_valido(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court1 = self._create_resource(2, "Cancha 1")
 
@@ -315,11 +291,49 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["resource_id"] == court1
         assert data["resource_nombre"] == "Cancha 1"
 
-    def test_reserva_publica_sin_recurso_mantiene_comportamiento_anterior(self):
-        from app import app as flask_app
+    def test_management_email_link_uses_public_origin_not_request_host(self):
+        self._execute(
+            "UPDATE business_settings SET notifications_enabled = TRUE WHERE business_id = 2"
+        )
+        self.app.config["PUBLIC_BASE_URL"] = "https://canonical.example"
+        payload = {
+            "nombre": "Juan Pérez",
+            "telefono": "1122334455",
+            "email": "juan@example.test",
+            "servicio": "Partido Pádel",
+            "fecha": self.date,
+            "hora": "10:00",
+        }
+        outgoing = []
+        with (
+            patch("services.notifications.smtp_configured", return_value=True),
+            patch("services.notifications.notifications_enabled", return_value=True),
+            patch(
+                "services.notifications._send_email",
+                side_effect=lambda *args: (outgoing.append(args) or (True, None)),
+            ),
+            patch.object(application, "send_business_confirmation_email"),
+        ):
+            response = self.client.post(
+                "/b/padel-club/api/reservar",
+                json=payload,
+                headers={"Host": "evil.example"},
+            )
 
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertTrue(data["management_token"])
+        self.assertEqual(len(outgoing), 1)
+        html = outgoing[0][2]
+        expected_link = (
+            "https://canonical.example/b/padel-club/turno/"
+            f"{data['management_token']}?id={data['appointment_id']}"
+        )
+        self.assertIn(expected_link, html)
+        self.assertNotIn("evil.example", html)
+
+    def test_reserva_publica_sin_recurso_mantiene_comportamiento_anterior(self):
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -340,10 +354,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
 
     def test_reintento_con_misma_clave_devuelve_el_turno_original(self):
         """El contrato HTTP del replay: 200 (no 201) y sin emails repetidos."""
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         enviados = []
         # La vista importa los notificadores desde `app` en cada request, así
@@ -383,10 +394,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert rows[0][0] == 1
 
     def test_reserva_sin_clave_sigue_fallando_con_occupied(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         payload = {
             "nombre": "Juan Pérez",
@@ -406,10 +414,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert json.loads(repetida.data)["code"] == "occupied"
 
     def test_reserva_con_resource_id_inexistente_rechazada(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         payload = {
             "nombre": "Pedro García",
@@ -427,10 +432,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["success"] is False
 
     def test_reserva_con_resource_id_inactivo_rechazada(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court5 = self._create_resource(2, "Cancha Mantenimiento", active=False)
 
@@ -450,10 +452,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["success"] is False
 
     def test_reserva_con_resource_id_de_otro_tenant_rechazada(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -476,10 +475,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["success"] is False
 
     def test_misma_cancha_no_se_puede_duplicar(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court1 = self._create_resource(2, "Cancha 1")
 
@@ -512,10 +508,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["reason"] == "occupied"
 
     def test_dos_canchas_diferentes_mismo_horario_permitido(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court1 = self._create_resource(2, "Cancha 1")
         court2 = self._create_resource(2, "Cancha 2")
@@ -545,10 +538,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert resp2.status_code == 201
 
     def test_bloqueo_global_sigue_bloqueando_recursos(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -584,10 +574,7 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
         assert data["reason"] == "occupied"
 
     def test_reserva_resource_id_invalido_tipo(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         payload = {
             "nombre": "Test",
@@ -610,10 +597,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
     """Tests de aislamiento multi-tenant para APIs públicas."""
 
     def test_api_recursos_aislada_por_tenant(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
         self._create_resource(2, "Cancha 2")
@@ -628,10 +612,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
         assert len(data2["recursos"]) == 4
 
     def test_api_disponibilidad_aislada_por_tenant(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         self._create_resource(2, "Cancha 1")
 
@@ -642,10 +623,7 @@ class TestAislamientoMultiTenant(BaseResourcePublicAPITest):
         assert len(data["horarios_disponibles"]) > 0
 
     def test_api_reserva_aislada_por_tenant(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         court1 = self._create_resource(2, "Cancha 1")
 
@@ -670,10 +648,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
     """Tests para negocios que no usan recursos."""
 
     def test_reserva_sin_recursos_funciona_normal(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         payload = {
             "nombre": "Cliente Barbería",
@@ -690,10 +665,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
         assert data["success"] is True
 
     def test_disponibilidad_sin_recursos_sin_filtro(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         resp = client.get(f"/b/el-corte/api/disponibilidad/{self.date}?servicio=Corte")
         assert resp.status_code == 200
@@ -702,10 +674,7 @@ class TestNegocioSinRecursos(BaseResourcePublicAPITest):
         assert len(data["horarios_disponibles"]) > 0
 
     def test_api_recursos_devuelve_lista_vacia(self):
-        from app import app as flask_app
-
-        flask_app.config["TESTING"] = True
-        client = flask_app.test_client()
+        client = self.client
 
         resp = client.get("/b/el-corte/api/recursos")
         assert resp.status_code == 200

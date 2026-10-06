@@ -1,6 +1,6 @@
 # Inventario canónico de tests después del cutover PostgreSQL
 
-Estado auditado: revisión posterior a la migración de `test_password_reset.py`.
+Estado auditado: **categoría A cerrada** — no quedan archivos ni tests pendientes de migrar.
 
 Este documento clasifica cada archivo `test_*.py` de `tests/` y `tests_pg/` exactamente una vez. Las cifras se verificaron contra una **colección real** (`pytest tests/ tests_pg/ --collect-only -q` con `TURNOBOT_PG_URL` configurada), que arroja **81 archivos y 1.089 items**, y de forma independiente contra un conteo **AST** de funciones y métodos `test_*`, que coincide archivo por archivo salvo el caso parametrizado conocido.
 
@@ -13,28 +13,33 @@ Histórico de discrepancias detectadas y corregidas contra la realidad:
 - 13 archivos que seguían erróneamente en A pese a estar migrados y validados contra PostgreSQL se movieron a B en esta revisión: `test_ai_model`, `test_business_settings`, `test_knowledge`, `test_membership_hardening`, `test_membership_http`, `test_membership_management`, `test_notifications`, `test_notifications_conditional`, `test_onboarding`, `test_security_concurrency`, `test_security_operations`, `test_services_isolation`, `test_staff_invitation` (13 archivos / 111 tests).
 - `test_connection_usage.py` salió de A y pasó a **E**: no es una migración de boilerplate sino una **deuda de rediseño** (ver E).
 - `test_membership_ui.py` (13) y `test_resources_appointments.py` (13) se movieron de A a B al cerrarse su migración a PostgreSQL (2 archivos / 26 tests).
-- `test_password_reset.py` (13) se movió de A a B al cerrarse su migración: flujo de recuperación de contraseña sobre PG, con token de un solo uso, rechazo de contraseña débil, contrato anti-enumeración (email desconocido → `success=True`, `token=None`) y revocación de las sesiones del usuario verificada sobre el servidor. FASE 3 acumulada: **123/123 PASS** sobre 11 bloques cerrados.
+- `test_password_reset.py` (13) se movió de A a B al cerrarse su migración: flujo de recuperación de contraseña sobre PG, con token de un solo uso, rechazo de contraseña débil, contrato anti-enumeración (email desconocido → `success=True`, `token=None`) y revocación de las sesiones del usuario verificada sobre el servidor.
+- **Cierre de la categoría A**: los 8 archivos que quedaban (268 tests) se movieron a B, de modo que **A = 0 archivos / 0 tests**. Se verifies con una ejecución real sobre PostgreSQL: `268 passed`. Los ocho: `test_ai_tools_integration` (14), `test_emails_etapa4` (12), `test_membership_authorization` (22), `test_observability` (79), `test_provision_business` (21), `test_public_api_service_isolation` (84), `test_rate_limiting` (8), `test_resources_public_api` (28).
+- El total de items **no cambió** (sigue en 1.089): cerrar A solo reclasifica archivos, no añade ni quita tests.
 - El total de items subió de 1.077 a **1.089** por los 12 tests nuevos del adapter añadidos en la corrección de `_adapt_boolean_comparisons` (`tests/test_fase_4f_query_adaptation.py`: 25 → 37). Las dos migraciones posteriores no alteraron el número total de tests.
 
 `tests/test_cli_pg_pool_lifecycle.py` declara 9 funciones de test y una está parametrizada con dos valores, por lo que aporta 10 items: es la única diferencia entre AST (9) y colección (10).
 
 ## A — Migrar/normalizar al patrón PostgreSQL
 
-Son pruebas funcionales o de persistencia que necesitan la base temporal PostgreSQL y cuya preparación/assertions aún arrastran una base temporal SQLite, un helper SQLite o una base de test heredada. “Migrar” aquí significa conservar el comportamiento que prueban y retirar la dependencia SQLite del test; no implica que haya un error de producto.
+**0 archivos / 0 tests. Categoría cerrada.**
 
-| Archivo | Tests | Categoría | Motivo | Próxima acción |
-| --- | ---: | --- | --- | --- |
-| `tests/test_ai_tools_integration.py` | 14 | A | Integración de herramientas con persistencia. | Migrar preparación y asserts a PG. |
-| `tests/test_emails_etapa4.py` | 12 | A | Flujo de email con estado de aplicación. | Usar la base temporal PG. |
-| `tests/test_membership_authorization.py` | 22 | A | Autorización con datos/relaciones persistidas. | Usar seed y app PG. |
-| `tests/test_observability.py` | 79 | A | Cobertura extensa; incluye estado DB y mocks de locks SQLite. | Auditar por bloques; mantener mocks unitarios útiles y pasar escenarios funcionales a PG. |
-| `tests/test_provision_business.py` | 21 | A | Provisionamiento con múltiples registros relacionados. | Migrar datos iniciales a PG. |
-| `tests/test_public_api_service_isolation.py` | 84 | A | Pruebas grandes de API/aislamiento con persistencia. | Auditar en bloques y usar seeds PG por tenant. |
-| `tests/test_rate_limiting.py` | 8 | A | Incluye `last_insert_rowid()`/errores SQLite en escenarios funcionales. | Migrar inserciones/assertions a resultados PG. |
-| `tests/test_resources_public_api.py` | 28 | A | API pública con recursos y DB. | Migrar preparación/assertions a PG. |
-| `tests/test_standalone_create_app.py` | 4 | A | El subproceso fuerza `DB_BACKEND=sqlite`; prueba arranque/app funcional. | Pasar una URL temporal PG al subproceso o aislar el contrato de factory sin DB. |
+Los ocho archivos que quedaban se migraron y se verificaron contra PostgreSQL real (`268 passed`), y se reclasificaron a B. No queda pendiente ningún archivo cuya preparación o assertions arrastren una base temporal SQLite, un helper SQLite o una base de test heredada.
 
-**9 archivos / 272 tests.**
+Cierre por archivo:
+
+| Archivo | Tests | Migración aplicada |
+| --- | ---: | --- |
+| `tests/test_ai_tools_integration.py` | 14 | `PostgreSQLTestCase` con base desechable por test y contexto de app en `setUp`; preparación y asserts sobre PostgreSQL. |
+| `tests/test_emails_etapa4.py` | 12 | Retirado `TemporaryDirectory`/`DATABASE_PATH`/`init_database()`. Se empuja contexto de app porque `retry_failed_notifications._run_once()` es un runner de CLI que deja `_global_pool` en `None`, y se alinea `DATABASE_URL` con la URL por test para que el runner opere sobre la base aislada. |
+| `tests/test_membership_authorization.py` | 22 | Retirado `TemporaryDirectory`/`DATABASE_PATH`/`init_database()`; `PostgreSQLTestCase` + contexto de app para que `get_connection()` resuelva el pool por `current_app` y no por el respaldo global; placeholders `?` → `%s`. Se conservan las 22 pruebas y las 51 aserciones (autorización, jerarquía de roles, aislamiento tenant, reglas de owners). |
+| `tests/test_observability.py` | 79 | Nunca arrastró preparación SQLite. Único cambio: un doble de test que inyectaba `sqlite3.OperationalError` lanza ahora una excepción genérica. |
+| `tests/test_provision_business.py` | 21 | Retirado `TemporaryDirectory`/`DATABASE_PATH`/`init_database()`; el aislamiento es el de la base temporal del harness y el cliente viene de la app global aislada por `pg_isolate_module_app`. |
+| `tests/test_public_api_service_isolation.py` | 84 | `PostgreSQLTestCase` + base por test; `INSERT OR REPLACE` portado a `INSERT ... ON CONFLICT (id) DO UPDATE`; placeholders `?` → `%s`; columnas `TIME` normalizadas a `'HH:MM'` para comparar igual que en SQLite. |
+| `tests/test_rate_limiting.py` | 8 | `last_insert_rowid()` sustituido por `cursor.lastrowid` del seam. Ver nota de residuo abajo. |
+| `tests/test_resources_public_api.py` | 28 | `PostgreSQLTestCase` con base desechable por test y contexto de app en `setUp`; preparación y asserts sobre PostgreSQL. |
+
+**Residuo honesto en `test_rate_limiting.py`:** la clase `ForeignKeyEnforcementTests` conserva en su `setUp` un `TemporaryDirectory()`, el swap de `database.DATABASE_PATH` y un `database.init_database()`. Sobre el backend PostgreSQL las tres cosas son **inertes** —`DATABASE_PATH` solo se lee en la rama SQLite de `get_connection()` e `init_database()` hace early-return al detectar el schema ya aplicado—, por lo que el archivo está verde y funcionalmente migrado, pero el texto muerto sigue en el archivo. No se cuenta como deuda de migración bloqueante; queda anotado para una pasada de limpieza. En cambio, los `except sqlite3.IntegrityError` **sí** son contrato vigente y no deben tocarse: `translate_pg_error` mapea los errores psycopg a `sqlite3.*`, nunca al revés.
 
 ## B — PostgreSQL ya cubierto
 
@@ -48,6 +53,7 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_admin_panel.py` | 33 | B | Las requests usan el pool temporal PostgreSQL de `pg_isolate_module_app`; `DATABASE_PATH` no selecciona el backend. | Mantener. Refactor interno pendiente: normalizar posteriormente al patrón `PostgreSQLTestCase` si aporta simplificación. |
 | `tests/test_admin_services.py` | 7 | B | Servicios del panel sobre app/DB PostgreSQL común. | Mantener como cobertura PG. |
 | `tests/test_ai_model.py` | 6 | B | Migrado: preparación sobre la base PostgreSQL por test del harness, sin `DATABASE_PATH`/`init_database()`. | Mantener como cobertura PG. |
+| `tests/test_ai_tools_integration.py` | 14 | B | Migrado: `PostgreSQLTestCase` con base desechable por test y contexto de app en `setUp`; consultas de herramientas sobre PG. | Mantener como cobertura PG. |
 | `tests/test_appointments.py` | 44 | B | Usa `PostgreSQLTestCase` y DB temporal por test; absorbió los 6 casos de concurrencia que vivían en el archivo `test_appointment_concurrency_extra.py` eliminado. | Mantener como canónica para reservas. |
 | `tests/test_appointment_intervals.py` | 16 | B | Intervalos y disponibilidad de turnos sobre DB temporal PostgreSQL; usa `slot_duration` del seed y reinicia la secuencia `services.id`. | Mantener como cobertura PG. |
 | `tests/test_appointments_isolation.py` | 15 | B | Aislamiento de turnos por tenant bajo harness PostgreSQL. | Mantener como cobertura PG. |
@@ -57,11 +63,13 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_chat_recovery.py` | 6 | B | Recuperación de sesión de chat e historial público por token, sobre PostgreSQL live. | Mantener como cobertura PG. |
 | `tests/test_cli_pg_pool_lifecycle.py` | 10 | B | Contrato del lifecycle PostgreSQL; 9 funciones, una parametrizada en dos casos. | Mantener; no precisa DB live para los mocks del CLI. |
 | `tests/test_conversations.py` | 18 | B | Migrado: las 18 funciones `*_scoped` de conversación sobre PG — sesiones, mensajes, handoff humano, stats y analytics, con aislamiento entre negocios 1 y 2. | Mantener como canónica de conversaciones. |
+| `tests/test_emails_etapa4.py` | 12 | B | Migrado: flujo de email sobre PG sin `DATABASE_PATH`/`init_database()`. Empuja contexto de app porque el runner de CLI `retry_failed_notifications._run_once()` invalida `_global_pool`, y alinea `DATABASE_URL` con la URL por test para que opere sobre la base aislada. | Mantener como canónica de email. |
 | `tests/test_fase_4d_lifecycle.py` | 8 | B | Lifecycle de la app/pool PostgreSQL. | Mantener. |
 | `tests/test_knowledge.py` | 8 | B | Migrado: búsqueda/gestión de conocimiento sobre PG; contrastado con `tests_pg/test_knowledge_search_live.py` sin pérdida de assertions. | Mantener como cobertura PG. |
 | `tests/test_load_current_business_regression.py` | 8 | B | Requests de tenant sobre app PG común; `/b/el-corte/...` necesita seed estándar. | Mantener; podría usar explícitamente `client`/`seed`. |
 | `tests/test_loyalty_10_2_10_3.py` | 8 | B | Rewards, redenciones y retention sobre PostgreSQL live; extiende `LoyaltyBase` migrada. | Mantener como cobertura PG funcional. |
 | `tests/test_loyalty.py` | 34 | B | Loyalty, ledger, redenciones y ajustes sobre PostgreSQL live; `LoyaltyBase` sin preparación SQLite y los 4 grupos (14+9+6+5) verificados en PG. | Mantener como canónica de fidelización. |
+| `tests/test_membership_authorization.py` | 22 | B | Migrado: autorización de membresía sobre PG. `PostgreSQLTestCase` + contexto de app para resolver el pool por `current_app`; placeholders `?` → `%s`. Conserva las 22 pruebas y las 51 aserciones: aislamiento entre tenants, jerarquía de roles (`owner`/`admin`/`staff`/`customer`) y las reglas sobre owners (no auto-revocación, no degradar al último owner). | Mantener como canónica de autorización de membresía. |
 | `tests/test_membership_hardening.py` | 10 | B | Migrado: casos 14/15/16/19 (owner único, sesión tras revocación, rol reflejado en la siguiente petición, no-escalada vía `role_id`/`owner_id`/`business_id`) sobre PG; `expires_at` verificado como `TIMESTAMPTZ` con timezone. | Mantener como cobertura de seguridad. |
 | `tests/test_membership_http.py` | 21 | B | Migrado: capa HTTP de membresía (21 tests, no 22) con login, sesión, CSRF y política de roles; el tenant se sigue resolviendo por slug. | Mantener como canónica HTTP de membresía. |
 | `tests/test_membership_management.py` | 9 | B | Migrado: helpers `*_scoped` de membresía sobre PG; la integridad FK de `role_id` inválido la rechaza el servidor. | Mantener como canónica de la capa de helpers. |
@@ -70,21 +78,26 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_notifications.py` | 8 | B | Migrado: persistencia y entrega de notificaciones sobre PG. | Mantener como cobertura PG. |
 | `tests/test_notifications_conditional.py` | 7 | B | Migrado: notificaciones condicionadas por estado persistido en PG. | Mantener como cobertura PG. |
 | `tests/test_notifications_hardening.py` | 18 | B | Migrado: usa `PostgreSQLTestCase` con base desechable por test; mantiene `retry_failed_notifications._run_once()` real con su propio pool de CLI, y conserva `SET notifications_enabled = 1` para cubrir de punta a punta la adaptación booleana del seam PG. | Mantener como cobertura PG. |
+| `tests/test_observability.py` | 79 | B | Nunca arrastró preparación SQLite; el único ajuste fue en un doble de test (`sqlite3.OperationalError` → excepción genérica). Bloques funcionales sobre la base temporal del harness y mocks unitarios de locks conservados. | Mantener; el peso es de cobertura, no de migración. |
 | `tests/test_onboarding.py` | 7 | B | Migrado: estado de onboarding persistido en PG. | Mantener como cobertura PG. |
 | `tests/test_password_reset.py` | 13 | B | Migrado: recuperación de contraseña sobre PG — token de un solo uso, contraseña débil rechazada, anti-enumeración de emails y revocación de las sesiones del usuario tras el reset. | Mantener como canónica de recuperación de contraseña. |
 | `tests/test_platform.py` | 18 | B | Migrado: superadmin, bootstrap de login, auditoría y logout selectivo sobre PG vía `PostgreSQLTestCase`. Corrige un falso positivo previo: `PgRowProxy` itera claves, no valores, por lo que la auditoría ahora lee `dict(row).values()`. | Mantener como canónica de plataforma. |
 | `tests/test_postgres_config.py` | 12 | B | Resolver/configuración PostgreSQL; el rechazo de SQLite en producción sigue siendo contrato vigente. | Mantener como unit tests de configuración. |
 | `tests/test_postgres_schema.py` | 17 | B | Inspecciona `migrations_pg/001_initial_schema.sql`; las menciones SQLite son assertions negativas del esquema PostgreSQL. | Mantener como validación estática PG. |
 | `tests/test_postgresql_backup_scripts.py` | 4 | B | Prueba builders/sanitización/comandos de backup PostgreSQL; no hace `sqlite3.connect` ni ejecuta SQLite. | Mantener; no hay cobertura equivalente en otro archivo. |
+| `tests/test_provision_business.py` | 21 | B | Migrado: provisionamiento con negocio, owner, settings y horarios sobre la base temporal del harness; sin `TemporaryDirectory`/`DATABASE_PATH`/`init_database()`. El cliente viene de la app global aislada por `pg_isolate_module_app`. | Mantener como canónica de provisionamiento. |
 | `tests/test_provisioning.py` | 2 | B | Provisionamiento atómico (negocio + owner + settings + 7 horarios), unicidad de slug y rollback por email duplicado, sobre PostgreSQL live. | Mantener como cobertura PG. |
+| `tests/test_public_api_service_isolation.py` | 84 | B | Migrado: `PostgreSQLTestCase` con base por test. `INSERT OR REPLACE` portado a `INSERT ... ON CONFLICT (id) DO UPDATE` (equivalente exacto; `DO NOTHING` habría ignorado el conflicto en silencio), placeholders `?` → `%s` y columnas `TIME` normalizadas a `'HH:MM'`. Las asignaciones booleanas `active = 1` / `is_open = 0` se conservan para cubrir la adaptación del seam. | Mantener como canónica de aislamiento de la API pública. |
 | `tests/test_registro_publico.py` | 14 | B | Migrado: registro público sobre PG — flujo de invitación, entrega de email y rate limiting, con `client` del harness. | Mantener como cobertura PG. |
 | `tests/test_reminders.py` | 3 | B | Runner de recordatorios 24h sobre PostgreSQL live: envío, idempotencia y supresión con notificaciones deshabilitadas o sin email. `_run_once()` resuelve el pool desde `DATABASE_URL`, alineado en el test con la base temporal por test. | Mantener como cobertura PG. |
 | `tests/test_resources_appointments.py` | 13 | B | Migrado: recursos y turnos persistidos sobre PG; el aislamiento por tenant es el de `business_id`, sin swap de `DATABASE_PATH`. | Mantener como cobertura PG. |
 | `tests/test_resources_isolation.py` | 13 | B | Migrado: aislamiento de recursos entre negocios A y B sobre la base temporal que el harness descarta por test. | Mantener como cobertura PG. |
+| `tests/test_resources_public_api.py` | 28 | B | Migrado: `PostgreSQLTestCase` con base desechable por test y contexto de app en `setUp`; la API pública de recursos y el aislamiento multi-tenant operan sobre PG. | Mantener como canónica de recursos públicos. |
 | `tests/test_security_concurrency.py` | 3 | B | Migrado: ejecución contra PG real de los escenarios de concurrencia de seguridad. | Mantener como cobertura PG. |
 | `tests/test_security_operations.py` | 9 | B | Migrado: operaciones de seguridad y persistencia sobre PG. | Mantener como cobertura PG. |
 | `tests/test_services_isolation.py` | 9 | B | Migrado: aislamiento de servicios por tenant con seed PG por negocio. | Mantener como cobertura PG. |
 | `tests/test_rate_limit_http.py` | 4 | B | Migrado: bloqueo 429 y reset de ventana por HTTP sobre PG, con la ventana simulada vía `_prune_rate_limit_state(now=...)`. | Mantener como cobertura PG. |
+| `tests/test_rate_limiting.py` | 8 | B | Migrado el uso funcional: `last_insert_rowid()` sustituido por `cursor.lastrowid` del seam y enforcement de FK sobre PG. **Residuo**: `ForeignKeyEnforcementTests.setUp` conserva `TemporaryDirectory` + swap de `DATABASE_PATH` + `init_database()`, inertes sobre PostgreSQL (limpieza pendiente, no bloquea). Los `except sqlite3.IntegrityError` son contrato vigente: `translate_pg_error` mapea psycopg → `sqlite3.*`. | Mantener; limpiar el texto muerto en una pasada aparte. |
 | `tests/test_staff_invitation.py` | 10 | B | Migrado: ciclo de invitación por token (`provision → approve → accept`, un solo uso, `used_at`) y frontera de autorización `admin → forbidden` sobre PG. | Mantener como cobertura PG. |
 | `tests/test_turnogo_landing_wizard.py` | 32 | B | Rutas funcionales usan app global PG, negocio/servicios/horarios del seed estándar. | Mantener; podría explicitar `client` y seed. |
 | `tests/test_stage11_product.py` | 3 | B | Resumen de producto y onboarding sobre PostgreSQL live; hereda `LoyaltyBase` migrada. | Mantener como cobertura PG funcional. |
@@ -98,7 +111,7 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests_pg/test_seed_sequences.py` | 8 | B | Cobertura del harness: `sync_identity_sequences()` sincroniza las secuencias IDENTITY tanto en bases solo-schema como schema+seed. | Mantener como contrato del seed. |
 | `tests_pg/test_session_live.py` | 12 | B | Session, app factory y errores sobre pool PostgreSQL live. | Mantener en integración PG. |
 
-**55 archivos / 648 tests.**
+**63 archivos / 916 tests.**
 
 ## C — Mantener SQLite por razón técnica vigente
 
@@ -112,9 +125,10 @@ El objeto es el runner/migración de esquema legacy SQLite o una herramienta ope
 | `tests/test_migrations_audit.py` | 4 | C | Valida `schema_version`/`migration_log` del runner SQLite. | Mantener mientras el runner sea consumidor del formato legacy. |
 | `tests/test_backup_database.py` | 5 | C | Prueba backup SQLite online/WAL mediante `sqlite3.Connection.backup`. | Mantener mientras exista el script/timer legacy. |
 | `tests/test_prune_backups.py` | 11 | C | Prueba retención y seguridad de archivos `.db`; el timer systemd sigue ejecutando el script. | Mantener; el test de symlink conserva limitación Windows sin privilegios. |
+| `tests/test_standalone_create_app.py` | 4 | C | El subproceso fuerza `DB_BACKEND=sqlite` para comprobar que la app arranca y el factory de create_app no inválido; al forzar SQLite el test **es** el contrato legacy. | Mantener como SQLite legítimo; no migrar a PG. |
 | `tests/test_verify_backup.py` | 10 | C | Prueba verificación de integridad/restore de backups SQLite mediante PRAGMA. | Mantener mientras exista la herramienta legacy. |
 
-**7 archivos / 36 tests.**
+**8 archivos / 40 tests.**
 
 ## D — Consolidación resuelta
 
@@ -158,14 +172,16 @@ Los items por archivo cuentan la expansión parametrizada indicada arriba.
 
 | Categoría | Archivos | Tests/items |
 | --- | ---: | ---: |
-| A — Migrar/normalizar a PostgreSQL | 9 | 272 |
-| B — PostgreSQL ya cubierto | 55 | 648 |
-| C — Mantener SQLite legítimo | 7 | 36 |
+| A — Migrar/normalizar a PostgreSQL | 0 | 0 |
+| B — PostgreSQL ya cubierto | 63 | 916 |
+| C — Mantener SQLite legítimo | 8 | 40 |
 | D — Consolidación resuelta | 1 | 10 |
 | E — Revisión manual/unit desacoplable | 9 | 123 |
 | **TOTAL** | **81** | **1.089** |
 
-Comprobación: `9 + 55 + 7 + 1 + 9 = 81`; `272 + 648 + 36 + 10 + 123 = 1.089`.
+Comprobación: `0 + 63 + 8 + 1 + 9 = 81`; `0 + 916 + 40 + 10 + 123 = 1.089`.
+
+Al cerrar A, las cifras de B quedan **forzadas por la aritmética**: B = 55 + 8 archivos y 648 + 268 tests. Cualquier otro total para B dejaría el inventario descuadrado respecto al total canónico de 81 archivos / 1.089 items confirmado por `pytest --collect-only`.
 
 ## Adaptador de compatibilidad: corrección de `_adapt_boolean_comparisons`
 
@@ -195,15 +211,17 @@ Efecto medido sobre la suite completa, comparando el mismo run con y sin el camb
 
 ## Orden de migración recomendado
 
-Ya completados (16 archivos): `test_business_settings`, `test_security_concurrency`, `test_ai_model`, `test_notifications_conditional`, `test_onboarding`, `test_knowledge`, `test_notifications`, `test_services_isolation`, `test_security_operations`, `test_membership_management`, `test_membership_http`, `test_staff_invitation`, `test_membership_hardening`, `test_membership_ui`, `test_resources_appointments`, `test_password_reset`. `test_connection_usage` queda excluido por ser deuda de rediseño (E).
+Ya completados (32 archivos): `test_business_settings`, `test_security_concurrency`, `test_ai_model`, `test_notifications_conditional`, `test_onboarding`, `test_knowledge`, `test_notifications`, `test_services_isolation`, `test_security_operations`, `test_membership_management`, `test_membership_http`, `test_staff_invitation`, `test_membership_hardening`, `test_membership_ui`, `test_resources_appointments`, `test_password_reset`, `test_branding`, `test_chat_recovery`, `test_provisioning`, `test_reminders`, `test_appointment_intervals`, `test_appointments`, `test_appointments_isolation`, `test_admin_panel`, `test_app_security`, `test_business_context`, `test_turnogo_landing_wizard`, `test_loyalty`, `test_loyalty_10_2_10_3`, `test_stage11_product`, `test_notifications_hardening`, `test_registro_publico`, `test_resources_isolation`, `test_rate_limit_http`, `test_conversations`, `test_multi_tenant_admin`, `test_platform`. `test_connection_usage` queda excluido por ser deuda de rediseño (E).
 
-Pendiente, primero archivos pequeños/medianos con intención funcional clara y estado limitado; reutilizar `PostgreSQLTestCase`/fixtures existentes:
+Completados además en el cierre de A (8 archivos, 268 tests): `test_rate_limiting`, `test_emails_etapa4`, `test_ai_tools_integration`, `test_provision_business`, `test_membership_authorization`, `test_resources_public_api`, `test_observability`, `test_public_api_service_isolation`.
 
-1. `test_standalone_create_app.py`, `test_rate_limit_http.py`, `test_rate_limiting.py`, `test_resources_isolation.py`, `test_registro_publico.py`, `test_ai_tools_integration.py`, `test_emails_etapa4.py`.
-2. `test_conversations.py`, `test_multi_tenant_admin.py`, `test_notifications_hardening.py`, `test_platform.py`, `test_provision_business.py`, `test_membership_authorization.py`, `test_resources_public_api.py`.
-3. `test_observability.py` y `test_public_api_service_isolation.py` después de dividir por módulos/fixtures; son los dos archivos más grandes y mezclan varios niveles de infraestructura.
+**Pendiente: 0 archivos.** No queda nada en la cola de migración de FASE 3.
 
-`test_fase_4f_query_adaptation.py`, `test_fase_4g_transaction_isolation.py` y `test_pg_pool_hardening.py` requieren separar primero los casos unitarios del adapter de los escenarios funcionales.
+Quedan fuera de la cola por diseño, no por olvido:
+
+- `test_connection_usage.py` (3) está en **E** por ser deuda de rediseño, no migración: mide aperturas parcheando `sqlite3.connect`, que PostgreSQL nunca ejecuta, así que la métrica hay que redefinirla sobre el pool (`getconn`/`putconn`).
+- `test_standalone_create_app.py` pertenece a **C** por forzar `DB_BACKEND=sqlite` en el subproceso: el contrato que valida es precisamente el legacy.
+- `test_fase_4f_query_adaptation.py`, `test_fase_4g_transaction_isolation.py` y `test_pg_pool_hardening.py` siguen en **E**: requieren separar primero los casos unitarios del adapter de los escenarios funcionales.
 
 ## Límites de esta revisión
 
@@ -211,6 +229,8 @@ Pendiente, primero archivos pequeños/medianos con intención funcional clara y 
 - La colección confirma **81 archivos / 1.089 items**; los totales por categoría reconcilian exactamente contra ese número, y cada archivo está clasificado una sola vez (verificado sin duplicados, sin sobrantes y sin archivos sin clasificar).
 - Conteo independiente por **AST** (funciones y métodos `test_*`): **81 archivos / 1.088 tests**. La única diferencia frente a pytest es `tests/test_cli_pg_pool_lifecycle.py` (AST 9, colección 10) por el caso parametrizado ya documentado; `1.088 + 1 = 1.089`. No hay ninguna otra divergencia.
 - El incremento de 1.077 → 1.089 se explica íntegramente por los 12 tests nuevos del adapter; las migraciones posteriores movieron archivos de categoría sin alterar el número total de tests. Ningún test cambió de categoría por otra razón que no sea su migración efectiva a PostgreSQL.
+- El cierre de A se verificó **ejecutando**, no solo por inspección: los 8 archivos migrados se corrieron juntos contra PostgreSQL con `TURNOBOT_PG_URL` y dieron `268 passed`.
+- El residuo inerte de `test_rate_limiting.py` (ver sección A) se documenta en vez de declararse cerrado sin más: el archivo es verde y funcionalmente migrado, pero conserva texto SQLite muerto. No altera ninguna cifra.
 - No se cambió ninguna prueba, fixture, servicio, configuración, sistema remoto ni archivo de producción al actualizar este inventario.
 
 ## Drift detectado fuera de esta tarea (requiere decisión)

@@ -20,6 +20,7 @@ inventa una nueva aquí.
 
 import datetime
 import threading
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -105,8 +106,18 @@ def test_e5_cancelacion_concurrente(pg_pool, pg_seed, monkeypatch):
 # E1-E4 Y E6 - ESCENARIOS F.5 DE CREACIÓN/REPROGRAMACIÓN (pg_live)
 # ============================================================
 
-E5_DATE = "2026-10-05"
-E6_TARGET_DATE = "2026-10-06"
+# Fechas DINÁMICAS: ninguna caduca con el paso del tiempo.
+#
+# Se calculan sobre la zona horaria del negocio, que es la misma que usan
+# `validate_appointment_date` (past_date) y `validate_appointment_time`
+# (past_time) en producción. E5 es siempre una fecha futura y E6 el día
+# siguiente de E5, de modo que la relación temporal que exigen los escenarios
+# (dos días distintos, con el destino de E6 después de E5) se conserva en
+# cualquier día y a cualquier hora de ejecución.
+_BUSINESS_TZ = ZoneInfo(appointments.DEFAULT_TIMEZONE)
+_TODAY = datetime.datetime.now(_BUSINESS_TZ).date()
+E5_DATE = (_TODAY + datetime.timedelta(days=1)).isoformat()
+E6_TARGET_DATE = (_TODAY + datetime.timedelta(days=2)).isoformat()
 NAME = "Cliente"
 
 

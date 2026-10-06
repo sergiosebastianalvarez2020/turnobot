@@ -26,6 +26,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import app as application
 import database.database as database
 from application import create_app
+from application.config import build_config
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,6 +40,7 @@ _ENV_KEYS = (
     "COOKIE_SECURE",
     "TRUSTED_PROXY_COUNT",
     "SESSION_LIFETIME_SECONDS",
+    "PUBLIC_BASE_URL",
 )
 
 
@@ -171,6 +173,7 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
         self.assertEqual(new_app.config["SESSION_COOKIE_SAMESITE"], "Strict")
         self.assertTrue(new_app.config["SESSION_COOKIE_SECURE"])
         self.assertEqual(new_app.config["MAX_CONTENT_LENGTH"], 512 * 1024)
+        self.assertEqual(new_app.config["PUBLIC_BASE_URL"], "http://localhost")
         self.assertEqual(
             new_app.config["PERMANENT_SESSION_LIFETIME"], datetime.timedelta(seconds=86400)
         )
@@ -212,6 +215,33 @@ class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
                 apply_env(replace)
                 with self.assertRaises(RuntimeError):
                     create_app()
+
+    def test_production_requires_trusted_https_public_base_url(self):
+        os.environ.update(
+            {
+                "FLASK_ENV": "production",
+                "SECRET_KEY": "secret-for-test",
+                "ADMIN_PASSWORD_HASH": "hash-for-test",
+                "COOKIE_SECURE": "1",
+                "DB_BACKEND": "postgresql",
+                "DATABASE_URL": "postgresql://user:pass@localhost/test",
+            }
+        )
+        os.environ.pop("PUBLIC_BASE_URL", None)
+        with self.assertRaisesRegex(RuntimeError, "PUBLIC_BASE_URL es obligatoria"):
+            build_config(flask.Flask("missing-public-origin"))
+
+        os.environ["PUBLIC_BASE_URL"] = "example.test"
+        with self.assertRaisesRegex(RuntimeError, r"origen HTTP\(S\) válido"):
+            build_config(flask.Flask("public-origin-without-scheme"))
+
+        os.environ["PUBLIC_BASE_URL"] = "http://example.test"
+        with self.assertRaisesRegex(RuntimeError, "HTTPS en producción"):
+            build_config(flask.Flask("insecure-public-origin"))
+
+        os.environ["PUBLIC_BASE_URL"] = "https://example.test"
+        config = build_config(flask.Flask("trusted-public-origin"))
+        self.assertEqual(config["PUBLIC_BASE_URL"], "https://example.test")
 
 
 if __name__ == "__main__":

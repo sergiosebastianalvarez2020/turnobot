@@ -213,7 +213,7 @@ class TestRegistroPublico(RegistroPublicoBase):
             business_name="Segundo", slug="slug-test", owner_email="b@x.com"
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn("error", response.headers["Location"])
+        self.assertIn("sent=1", response.headers["Location"])
 
     def test_email_duplicado_no_genera_500(self):
         with (
@@ -225,7 +225,7 @@ class TestRegistroPublico(RegistroPublicoBase):
             business_name="Segundo", owner_email="duplicado@test-registro.com"
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn("error", response.headers["Location"])
+        self.assertIn("sent=1", response.headers["Location"])
 
 
 if __name__ == "__main__":

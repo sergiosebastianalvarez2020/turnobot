@@ -85,6 +85,7 @@ def test_multiple_cycles_reuse(monkeypatch):
 # 5) SQLite mantiene comportamiento anterior (sqlite3 + row_factory intacto)
 def test_sqlite_unchanged(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DB_BACKEND", "sqlite")
     conn = dbmod.get_connection()
     try:
         assert isinstance(conn, sqlite3.Connection)

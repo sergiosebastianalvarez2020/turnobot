@@ -1,14 +1,23 @@
+"""Aislamiento multi-tenant de la API publica (negocio A vs negocio B).
+
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estandar. No hay swap
+de `DATABASE_PATH` ni SQLite; el aislamiento entre tests es el de la base temporal.
+El `INSERT OR REPLACE` de SQLite se portó a `INSERT ... ON CONFLICT (id) DO UPDATE`
+(su equivalente exacto), y las asignaciones booleanas `active = 1` / `is_open = 0`
+se conservan tal cual para cubrir la adaptacion del seam a `TRUE` / `FALSE`.
+"""
+
 import hashlib
 import secrets
-import tempfile
 import unittest
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import app as application
 import database.database as database
+from tests._pg_compat import PostgreSQLTestCase
 
 ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 
@@ -20,13 +29,27 @@ def next_open_day():
     return date.isoformat()
 
 
-class TestPublicApiServiceIsolation(unittest.TestCase):
+def fmt_time(value):
+    """Normaliza la columna TIME a 'HH:MM' para la asercion.
+
+    SQLite la devuelve como TEXT y PostgreSQL como `datetime.time`; la comparacion
+    es la misma en ambos backends una vez normalizada.
+    """
+    if isinstance(value, str):
+        return value
+    return value.strftime("%H:%M")
+
+
+class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        # `self.client` lo aporta la fixture `client`: app y base temporal propias
+        # de este test. Sin ella los 84 tests comparten la base de sesion y el
+        # aislamiento entre clases (y entre tests) es inexistente, que es justo
+        # lo que este archivo verifica por otra via.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
         self._execute("UPDATE businesses SET name = 'Business A', slug = 'business-a' WHERE id = 1")
         self._execute(
@@ -72,13 +95,8 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             "VALUES (2, 6, 1, '09:00', '13:00', '15:00', '19:00')"
         )
 
-        self.client = application.app.test_client()
         self.valid_date = next_open_day()
         self._management_tokens = {}
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _execute(sql, params=None):
@@ -106,7 +124,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         management_token = secrets.token_urlsafe(32)
         management_token_hash = hashlib.sha256(management_token.encode("utf-8")).hexdigest()
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id, management_token_hash) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)",
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id, management_token_hash) VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s)",
             (
                 name,
                 phone,
@@ -120,7 +138,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
             ),
         )
         appointment_id = self._query(
-            "SELECT id FROM appointments WHERE customer_name = ? AND phone = ? AND business_id = ? ORDER BY id DESC LIMIT 1",
+            "SELECT id FROM appointments WHERE customer_name = %s AND phone = %s AND business_id = %s ORDER BY id DESC LIMIT 1",
             (name, phone, business_id),
         )[0]["id"]
         self._management_tokens[appointment_id] = management_token
@@ -305,7 +323,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertIn("appointment_id", data)
         self.assertEqual(
             self._query(
-                "SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],)
+                "SELECT business_id FROM appointments WHERE id = %s", (data["appointment_id"],)
             )[0][0],
             1,
         )
@@ -321,7 +339,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(
             self._query(
-                "SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],)
+                "SELECT business_id FROM appointments WHERE id = %s", (data["appointment_id"],)
             )[0][0],
             2,
         )
@@ -353,7 +371,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(
             self._query(
-                "SELECT business_id FROM appointments WHERE id = ?", (data["appointment_id"],)
+                "SELECT business_id FROM appointments WHERE id = %s", (data["appointment_id"],)
             )[0][0],
             1,
         )
@@ -366,7 +384,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         data = response.get_json()
         appointment = self._query(
-            "SELECT business_id, service FROM appointments WHERE id = ?", (data["appointment_id"],)
+            "SELECT business_id, service FROM appointments WHERE id = %s", (data["appointment_id"],)
         )[0]
         self.assertEqual(appointment["business_id"], 1)
         self.assertEqual(appointment["service"], "Corte")
@@ -379,7 +397,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         data = response.get_json()
         appointment = self._query(
-            "SELECT business_id, service FROM appointments WHERE id = ?", (data["appointment_id"],)
+            "SELECT business_id, service FROM appointments WHERE id = %s", (data["appointment_id"],)
         )[0]
         self.assertEqual(appointment["business_id"], 2)
         self.assertEqual(appointment["service"], "Servicio B")
@@ -491,7 +509,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "cancelled",
@@ -513,7 +531,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "cancelled",
@@ -534,7 +552,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -555,7 +573,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -577,7 +595,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -598,7 +616,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -619,7 +637,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -655,7 +673,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(
-            self._query("SELECT status FROM appointments WHERE id = ?", (appointment_id,))[0][
+            self._query("SELECT status FROM appointments WHERE id = %s", (appointment_id,))[0][
                 "status"
             ],
             "confirmed",
@@ -720,7 +738,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response_a.status_code, 200)
         self.assertEqual(response_b.status_code, 200)
         rows = self._query(
-            "SELECT business_id, status FROM appointments WHERE id IN (?, ?) ORDER BY business_id",
+            "SELECT business_id, status FROM appointments WHERE id IN (%s, %s) ORDER BY business_id",
             (appointment_a, appointment_b),
         )
         self.assertEqual(
@@ -757,10 +775,10 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         appointment = self._query(
-            "SELECT appointment_date, appointment_time, business_id FROM appointments WHERE id = ?",
+            "SELECT appointment_date, appointment_time, business_id FROM appointments WHERE id = %s",
             (appointment_id,),
         )[0]
-        self.assertEqual(appointment["appointment_time"], "10:00")
+        self.assertEqual(fmt_time(appointment["appointment_time"]), "10:00")
         self.assertEqual(appointment["business_id"], 1)
 
     def test_api_reprogramar_business_b_mueve_su_turno(self):
@@ -779,9 +797,10 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         appointment = self._query(
-            "SELECT appointment_time, business_id FROM appointments WHERE id = ?", (appointment_id,)
+            "SELECT appointment_time, business_id FROM appointments WHERE id = %s",
+            (appointment_id,),
         )[0]
-        self.assertEqual(appointment["appointment_time"], "10:00")
+        self.assertEqual(fmt_time(appointment["appointment_time"]), "10:00")
         self.assertEqual(appointment["business_id"], 2)
 
     def test_api_reprogramar_business_a_no_mueve_turno_de_b(self):
@@ -800,9 +819,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["reason"], "not_found")
         self.assertEqual(
-            self._query(
-                "SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,)
-            )[0]["appointment_time"],
+            fmt_time(
+                self._query(
+                    "SELECT appointment_time FROM appointments WHERE id = %s", (appointment_id,)
+                )[0]["appointment_time"]
+            ),
             "09:00",
         )
 
@@ -856,9 +877,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["reason"], "not_found")
         self.assertEqual(
-            self._query("SELECT appointment_time FROM appointments WHERE id = ?", (appointment_a,))[
-                0
-            ]["appointment_time"],
+            fmt_time(
+                self._query(
+                    "SELECT appointment_time FROM appointments WHERE id = %s", (appointment_a,)
+                )[0]["appointment_time"]
+            ),
             "09:00",
         )
 
@@ -941,7 +964,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
     def test_api_reprogramar_turno_cancelado_no_se_mueve(self):
         appointment_id = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
         self._execute(
-            "UPDATE appointments SET status = 'cancelled' WHERE id = ?", (appointment_id,)
+            "UPDATE appointments SET status = 'cancelled' WHERE id = %s", (appointment_id,)
         )
 
         response = self.client.post(
@@ -985,9 +1008,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(response.get_json()["reason"], "invalid_appointment_id")
         self.assertFalse(response.get_json()["success"])
         self.assertEqual(
-            self._query(
-                "SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,)
-            )[0]["appointment_time"],
+            fmt_time(
+                self._query(
+                    "SELECT appointment_time FROM appointments WHERE id = %s", (appointment_id,)
+                )[0]["appointment_time"]
+            ),
             "09:00",
         )
 
@@ -1006,9 +1031,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(
-            self._query(
-                "SELECT appointment_time FROM appointments WHERE id = ?", (appointment_id,)
-            )[0]["appointment_time"],
+            fmt_time(
+                self._query(
+                    "SELECT appointment_time FROM appointments WHERE id = %s", (appointment_id,)
+                )[0]["appointment_time"]
+            ),
             "09:00",
         )
 
@@ -1125,11 +1152,11 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertTrue(response_a.get_json()["success"])
         self.assertTrue(response_b.get_json()["success"])
         rows = self._query(
-            "SELECT business_id, appointment_time FROM appointments WHERE id IN (?, ?) ORDER BY business_id",
+            "SELECT business_id, appointment_time FROM appointments WHERE id IN (%s, %s) ORDER BY business_id",
             (appointment_a, appointment_b),
         )
         self.assertEqual(
-            [(row["business_id"], row["appointment_time"]) for row in rows],
+            [(row["business_id"], fmt_time(row["appointment_time"])) for row in rows],
             [(1, "10:00"), (2, "10:00")],
         )
 
@@ -1225,7 +1252,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         data = response.get_json()
         self.assertTrue(data["success"])
         appointment = self._query(
-            "SELECT business_id, customer_name, service FROM appointments WHERE customer_name = ?",
+            "SELECT business_id, customer_name, service FROM appointments WHERE customer_name = %s",
             ("Cliente A",),
         )[0]
         self.assertEqual(appointment["business_id"], 1)
@@ -1248,13 +1275,12 @@ class TestPublicApiServiceIsolation(unittest.TestCase):
         self.assertEqual(nombres, ["Corte", "Corte + barba", "Barba"])
 
 
-class TestPublicApiAvailabilityIsolation(unittest.TestCase):
+class TestPublicApiAvailabilityIsolation(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
         weekday = next_open_day()
         day_index = datetime.fromisoformat(weekday).weekday()
@@ -1270,27 +1296,38 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
             "UPDATE services SET name = 'Barba A', price = 15000, duration = 20, active = 1, business_id = 1 WHERE id = 2"
         )
         self._execute(
-            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '10:30', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
+            "UPDATE weekly_schedules SET is_open = 1, morning_start = '09:00', morning_end = '10:30', afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = %s",
             (day_index,),
         )
 
+        # `INSERT OR REPLACE` es dialecto SQLite. Su equivalente exacto en
+        # PostgreSQL es `ON CONFLICT (id) DO UPDATE`, que ademas REEMPLAZA de
+        # verdad. La alternativa `ON CONFLICT DO NOTHING` que aplica el seam
+        # para tablas no contempladas no serviria: ante conflicto ignoraria el
+        # INSERT en silencio y el test pasaria con los datos viejos.
         self._execute(
-            "INSERT OR REPLACE INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
+            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b') "
+            "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug"
         )
         self._execute(
-            "INSERT OR REPLACE INTO services (id, name, price, duration, active, business_id) VALUES (4, 'Corte B', 22000, 60, 1, 2)"
+            "INSERT INTO services (id, name, price, duration, active, business_id) "
+            "VALUES (4, 'Corte B', 22000, 60, 1, 2) "
+            "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, "
+            "duration = EXCLUDED.duration, active = EXCLUDED.active, "
+            "business_id = EXCLUDED.business_id"
         )
         self._execute(
-            "INSERT OR REPLACE INTO weekly_schedules (id, day_of_week, is_open, morning_start, morning_end, afternoon_start, afternoon_end, business_id) VALUES (10, ?, 1, '11:00', '12:00', NULL, NULL, 2)",
+            "INSERT INTO weekly_schedules (id, day_of_week, is_open, morning_start, morning_end, "
+            "afternoon_start, afternoon_end, business_id) VALUES (10, %s, 1, '11:00', '12:00', "
+            "NULL, NULL, 2) "
+            "ON CONFLICT (id) DO UPDATE SET day_of_week = EXCLUDED.day_of_week, "
+            "is_open = EXCLUDED.is_open, morning_start = EXCLUDED.morning_start, "
+            "morning_end = EXCLUDED.morning_end, afternoon_start = EXCLUDED.afternoon_start, "
+            "afternoon_end = EXCLUDED.afternoon_end, business_id = EXCLUDED.business_id",
             (day_index,),
         )
 
         self.valid_date = weekday
-        self.client = application.app.test_client()
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
 
     @staticmethod
     def _execute(sql, params=None):
@@ -1341,7 +1378,7 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
 
     def test_confirmed_appointment_in_a_blocks_only_a(self):
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 1)",
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed', 1)",
             ("Cliente A", "123456789", "Corte A", self.valid_date, "09:00", "09:30", 30),
         )
 
@@ -1353,7 +1390,7 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
 
     def test_confirmed_appointment_in_b_blocks_only_b(self):
         self._execute(
-            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 2)",
+            "INSERT INTO appointments (customer_name, phone, service, appointment_date, appointment_time, appointment_end, duration, status, business_id) VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed', 2)",
             ("Cliente B", "987654321", "Corte B", self.valid_date, "11:00", "12:00", 60),
         )
 
@@ -1365,7 +1402,7 @@ class TestPublicApiAvailabilityIsolation(unittest.TestCase):
 
     def test_closed_day_for_a_does_not_return_business_b_slots(self):
         self._execute(
-            "UPDATE weekly_schedules SET is_open = 0, morning_start = NULL, morning_end = NULL, afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = ?",
+            "UPDATE weekly_schedules SET is_open = 0, morning_start = NULL, morning_end = NULL, afternoon_start = NULL, afternoon_end = NULL WHERE business_id = 1 AND day_of_week = %s",
             (datetime.fromisoformat(self.valid_date).weekday(),),
         )
 

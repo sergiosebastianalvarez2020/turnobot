@@ -279,6 +279,90 @@ class TestFase4FQueryAdaptation(unittest.TestCase):
         self.assertEqual(result_sql, sql)
         self.assertIsNone(result_params)
 
+    def test_adapt_insert_boolean_values_multi_fila_literales(self):
+        """Un VALUES multi-fila convierte el 0/1 de TODAS las filas, no solo la primera."""
+        sql = (
+            "INSERT INTO weekly_schedules (day_of_week, is_open, business_id) "
+            "VALUES (0, 1, 2), (6, 0, 2)"
+        )
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO weekly_schedules (day_of_week, is_open, business_id) "
+            "VALUES (0, true, 2), (6, false, 2)",
+        )
+
+    def test_adapt_insert_boolean_values_multi_fila_placeholders(self):
+        """Los params booleanos de todas las filas se convierten y no se desalinean."""
+        sql = "INSERT INTO sessions (user_id, revoked) VALUES (?, ?), (?, ?)"
+        result_sql, result_params = _adapt_insert_boolean_values(sql, (1, 1, 2, 0))
+        self.assertEqual(
+            result_sql, "INSERT INTO sessions (user_id, revoked) VALUES (?, ?), (?, ?)"
+        )
+        self.assertEqual(result_params, (1, True, 2, False))
+
+    def test_adapt_insert_boolean_values_una_fila_conserva_semantica(self):
+        """Una sola fila conserva exactamente el comportamiento previo."""
+        sql = "INSERT INTO sessions (user_id, token_hash, revoked) VALUES (?, 'abc', 0)"
+        result_sql, result_params = _adapt_insert_boolean_values(sql, (7,))
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO sessions (user_id, token_hash, revoked) VALUES (?, 'abc', false)",
+        )
+        self.assertEqual(result_params, (7,))
+
+    def test_adapt_insert_boolean_values_multi_fila_no_toca_no_booleanas(self):
+        """Las columnas no booleanas conservan su entero en todas las filas."""
+        sql = "INSERT INTO services (name, duration, active) VALUES ('A', 30, 1), ('B', 60, 0)"
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO services (name, duration, active) "
+            "VALUES ('A', 30, true), ('B', 60, false)",
+        )
+
+    def test_adapt_insert_boolean_values_conserva_clausulas_posteriores(self):
+        """Lo que sigue al VALUES (ON CONFLICT, RETURNING) queda intacto."""
+        sql = (
+            "INSERT INTO loyalty_settings (business_id, enabled) VALUES (1, 1), (2, 0) "
+            "ON CONFLICT (business_id) DO UPDATE SET enabled = EXCLUDED.enabled"
+        )
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO loyalty_settings (business_id, enabled) VALUES (1, true), (2, false) "
+            "ON CONFLICT (business_id) DO UPDATE SET enabled = EXCLUDED.enabled",
+        )
+
+    def test_adapt_insert_boolean_values_literal_con_comas_no_rompe_alineacion(self):
+        """Un literal con comas y parentesis no desalinea las filas siguientes."""
+        sql = (
+            "INSERT INTO knowledge (label, duration, is_open) "
+            "VALUES ('a, b (c)', 30, 1), ('d', 60, 0)"
+        )
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO knowledge (label, duration, is_open) "
+            "VALUES ('a, b (c)', 30, true), ('d', 60, false)",
+        )
+
+    def test_adapt_insert_boolean_values_literal_con_comilla_duplicada(self):
+        """El escape SQL de comilla ('') no cierra el literal ni desalinea."""
+        sql = "INSERT INTO knowledge (label, is_open) VALUES ('O''Brien', 1), ('x', 0)"
+        result_sql, _ = _adapt_insert_boolean_values(sql)
+        self.assertEqual(
+            result_sql,
+            "INSERT INTO knowledge (label, is_open) VALUES ('O''Brien', true), ('x', false)",
+        )
+
+    def test_adapt_insert_boolean_values_aridad_inconsistente_no_se_toca(self):
+        """Una fila con aridad distinta a la lista de columnas no se reinterpreta."""
+        sql = "INSERT INTO knowledge (label, is_open) VALUES ('a', 0), ('b')"
+        result_sql, result_params = _adapt_insert_boolean_values(sql)
+        self.assertEqual(result_sql, sql)
+        self.assertIsNone(result_params)
+
     def test_adapt_update_boolean_params_true(self):
         """Convierte int 1 en param de columna BOOLEAN a True en UPDATE SET."""
         sql = "UPDATE businesses SET active = ?, name = ? WHERE id = ?"
@@ -388,6 +472,95 @@ class TestBooleanLiteralsPorContexto(unittest.TestCase):
         self.assertIn("'SET'", sql)
 
 
+class TestBooleanLiteralsIgnoranTextos(unittest.TestCase):
+    """PG-002: un literal de texto NUNCA es una comparación booleana.
+
+    Las tres adaptaciones booleanas buscan con regex `col = 1` / `col = 0`. Eso es
+    un comparador de igualdad entre una columna y el entero 1; dentro de un literal
+    hay texto, y reescribirlo produce SQL invalido (`'active IS TRUE'` no es un
+    valor) o, peor, guarda un dato distinto al que el usuario escribio.
+
+    Se cubre tambien el escape por comilla duplicada (`'O''Brien'`), que es
+    justamente lo que rompe un escaner que abra con `'` y cierre con el siguiente.
+    """
+
+    def test_literal_con_comparacion_booleana_no_se_adapta(self):
+        self.assertEqual(
+            adapt_query_for_postgres("SELECT * FROM knowledge WHERE question = 'active = 1'")[0],
+            "SELECT * FROM knowledge WHERE question = 'active = 1'",
+        )
+        self.assertEqual(
+            adapt_query_for_postgres("SELECT * FROM knowledge WHERE question = 'is_open = 0'")[0],
+            "SELECT * FROM knowledge WHERE question = 'is_open = 0'",
+        )
+
+    def test_literal_con_comas_y_parentesis_no_se_adapta(self):
+        self.assertEqual(
+            adapt_query_for_postgres(
+                "UPDATE t SET nota = 'not (active = 1), ni is_open = 0' WHERE id = ?", (1,)
+            )[0],
+            "UPDATE t SET nota = 'not (active = 1), ni is_open = 0' WHERE id = %s",
+        )
+
+    def test_literal_con_comilla_duplicada_no_se_adapta(self):
+        sql, _ = adapt_query_for_postgres(
+            "UPDATE t SET nota = 'O''Brien, active = 0', revoked = 1 WHERE id = ?", (1,)
+        )
+        self.assertIn("'O''Brien, active = 0'", sql)
+        self.assertIn("revoked = TRUE", sql)
+
+    def test_un_set_no_se_trunca_por_un_where_dentro_del_literal(self):
+        """El `WHERE` de un literal no es el WHERE de la sentencia: el SET sigue entero."""
+        self.assertEqual(
+            adapt_query_for_postgres("UPDATE t SET nota = 'where active = 1', revoked = 1")[0],
+            "UPDATE t SET nota = 'where active = 1', revoked = TRUE",
+        )
+
+    def test_comentarios_no_se_adaptan(self):
+        sql, _ = adapt_query_for_postgres("-- active = 1\nSELECT 1 /* is_open = 0 */")
+        self.assertIn("-- active = 1", sql)
+        self.assertIn("/* is_open = 0 */", sql)
+        self.assertNotIn("IS TRUE", sql)
+
+    def test_cadena_con_dolares_no_se_adapta(self):
+        sql, _ = adapt_query_for_postgres("SELECT $$active = 1$$ AS etiqueta")
+        self.assertIn("$$active = 1$$", sql)
+        self.assertNotIn("IS TRUE", sql)
+
+    def test_insert_conserva_el_literal_texto_y_adapta_la_columna_booleana(self):
+        sql, params = _adapt_insert_boolean_values(
+            "INSERT INTO t (nota, revoked) VALUES ('active = 1', 1), ('x, y', 0)"
+        )
+        self.assertEqual(
+            sql, "INSERT INTO t (nota, revoked) VALUES ('active = 1', true), ('x, y', false)"
+        )
+        self.assertIsNone(params)
+
+    def test_params_de_update_no_se_desalinean_por_un_literal(self):
+        """Un literal con `col = 1` no puede desplazar el índice del parámetro booleano.
+
+        Antes el literal contaba como asignación, así que `revoked = ?` se
+        conviene en el índice equivocado y el parámetro que se casteaba a boolean
+        era el del `WHERE`.
+        """
+        sql, params = _adapt_update_boolean_params(
+            "UPDATE t SET nota = 'active = 1', revoked = ? WHERE id = ?", ("texto", 1, 7)
+        )
+        self.assertEqual(sql, "UPDATE t SET nota = 'active = 1', revoked = ? WHERE id = ?")
+        self.assertEqual(params, ("texto", True, 7))
+
+    def test_los_booleanos_reales_siguen_adaptandose(self):
+        """El filtro por literales no puede relajar la adaptación de código real."""
+        self.assertEqual(
+            adapt_query_for_postgres("UPDATE t SET revoked = 1 WHERE active = 0")[0],
+            "UPDATE t SET revoked = TRUE WHERE NOT active",
+        )
+        self.assertEqual(
+            adapt_query_for_postgres("SELECT * FROM t WHERE b.enabled != 1 AND s.revoked <> 0")[0],
+            "SELECT * FROM t WHERE NOT b.enabled AND s.revoked IS TRUE",
+        )
+
+
 class TestBooleanLiteralsContraPostgresqlReal(unittest.TestCase):
     """Ejecuta los literales booleanos contra un PostgreSQL REAL.
 
@@ -492,6 +665,57 @@ class TestBooleanLiteralsContraPostgresqlReal(unittest.TestCase):
             "SELECT id FROM sessions WHERE user_id = ? AND revoked = 1", (self.user_id,)
         )
         self.assertEqual(len(cursor.fetchall()), 0)
+
+    def _revoked_por_token(self):
+        rows = self.connection.execute(
+            "SELECT token_hash, revoked FROM sessions WHERE user_id = ?", (self.user_id,)
+        ).fetchall()
+        return {row["token_hash"]: row["revoked"] for row in rows}
+
+    def test_insert_multi_fila_booleano_contra_postgresql(self):
+        """Un multi-fila con literales 0/1 inserta TODAS las filas, no solo la primera.
+
+        Antes del fix solo se adaptava el primer tuple y PostgreSQL rechazaba la
+        sentencia con `column "revoked" is of type boolean but expression is of
+        type integer` al llegar a la fila 2.
+        """
+        tokens = [uuid.uuid4().hex for _ in range(3)]
+        self.connection.execute(
+            "INSERT INTO sessions (user_id, token_hash, expires_at, revoked) "
+            "VALUES (?, ?, ?, 1), (?, ?, ?, 0), (?, ?, ?, 1)",
+            (
+                self.user_id, tokens[0], "2099-01-01 00:00:00",
+                self.user_id, tokens[1], "2099-01-01 00:00:00",
+                self.user_id, tokens[2], "2099-01-01 00:00:00",
+            ),
+        )
+        self.connection.commit()
+
+        por_token = self._revoked_por_token()
+        self.assertEqual(len(por_token), 3)
+        self.assertIs(por_token[tokens[0]], True)
+        self.assertIs(por_token[tokens[1]], False)
+        self.assertIs(por_token[tokens[2]], True)
+
+    def test_insert_multi_fila_placeholders_contra_postgresql(self):
+        """Los params de un multi-fila no se desalinean: el 0/1 de cada fila castea a BOOLEAN."""
+        tokens = [uuid.uuid4().hex for _ in range(3)]
+        self.connection.execute(
+            "INSERT INTO sessions (user_id, token_hash, expires_at, revoked) "
+            "VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)",
+            (
+                self.user_id, tokens[0], "2099-01-01 00:00:00", 1,
+                self.user_id, tokens[1], "2099-01-01 00:00:00", 0,
+                self.user_id, tokens[2], "2099-01-01 00:00:00", 1,
+            ),
+        )
+        self.connection.commit()
+
+        por_token = self._revoked_por_token()
+        self.assertEqual(len(por_token), 3)
+        self.assertIs(por_token[tokens[0]], True)
+        self.assertIs(por_token[tokens[1]], False)
+        self.assertIs(por_token[tokens[2]], True)
 
 
 if __name__ == "__main__":

@@ -3,13 +3,21 @@
 ## Configuración
 
 El archivo `.env` debe contener `FLASK_ENV=production`, `COOKIE_SECURE=1`,
-`SECRET_KEY`, `ADMIN_PASSWORD_HASH`, `GEMINI_API_KEY` y, en OCI, un
-`DATABASE_URL` válido de PostgreSQL. Nunca debe publicarse.
+`SECRET_KEY`, `ADMIN_PASSWORD_HASH`, `PUBLIC_BASE_URL` (origen HTTPS canónico),
+`GEMINI_API_KEY` y, en OCI, un `DATABASE_URL` válido de PostgreSQL. Nunca debe
+publicarse.
 
 OCI producción requiere una `DATABASE_URL` válida de PostgreSQL. Si falta, está
 vacía, malformada o usa un esquema distinto de PostgreSQL, el arranque falla
 con un error explícito; nunca hay fallback silencioso a SQLite. En desarrollo
 y tests, SQLite solo se habilita mediante `DB_BACKEND=sqlite` explícito.
+
+## Migraciones PostgreSQL
+
+El arranque solo aplica `migrations_pg/001_initial_schema.sql` a una base vacía.
+Si ya existe `businesses`, asume que el esquema está actualizado y no aplica
+migraciones incrementales. No desplegar cambios de esquema PostgreSQL hasta
+incorporar y ejecutar un proceso explícito de migración versionada.
 
 ## Arranque
 
@@ -53,6 +61,9 @@ El tenant se obtiene del slug resuelto por la aplicación, nunca de datos del cl
 El rate limiting usa memoria del proceso: se pierde al reiniciar y distintos
 workers pueden tener buckets independientes. Para escalar horizontalmente se
 necesitará posteriormente un almacenamiento compartido, como Redis.
+El arranque documentado con `wsgi.py` usa un único proceso Waitress (sus threads
+comparten el estado). Con más de un proceso, los límites no son globales; además,
+el tope de claves puede expulsar buckets activos bajo tráfico de muchas IPs.
 
 ## Gestión pública de turnos
 

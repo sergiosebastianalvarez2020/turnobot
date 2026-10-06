@@ -6,10 +6,11 @@ patrón de login del admin (password + CSRF) usado por ``test_admin_panel.py``.
 """
 
 import hashlib
+import os
 import re
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from werkzeug.security import generate_password_hash
@@ -32,6 +33,28 @@ def _next_open_day():
     raise AssertionError("No se encontró un día abierto para negocio 1")
 
 
+def _iso_row(row):
+    """Normaliza columnas DATE/TIME/TIMESTAMP al texto que usa el contrato.
+
+    SQLite devuelve esas columnas como texto ('2026-10-05', '15:00'), mientras
+    que PostgreSQL devuelve `datetime.date` / `datetime.time` /
+    `datetime.datetime`. Sin esta normalizacion, comparar contra el string
+    enviado fallaria aunque el valor almacenado sea correcto.
+    """
+    # sqlite3.Row no tiene .items(), convertir a dict primero
+    if hasattr(row, 'keys'):
+        row = dict(row)
+    for key, value in row.items():
+        if isinstance(value, datetime):
+            row[key] = value.isoformat()
+        elif isinstance(value, date):
+            row[key] = value.isoformat()
+        elif isinstance(value, time):
+            # La app guarda hora con precision HH:MM (lo que envian los forms).
+            row[key] = value.strftime("%H:%M")
+    return row
+
+
 def _make_business_2():
     connection = database.get_connection()
     try:
@@ -49,22 +72,53 @@ class _AdminLoginBase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = Path(self._tmp.name) / "probe.db"
+
+        # Usar backend SQLite para esta prueba aislada
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        os.environ["DB_BACKEND"] = "sqlite"
+        os.environ.pop("DATABASE_URL", None)
+
         database.init_database()
+
+        # Asegura que el negocio 1 (slug 'el-corte') exista antes de provisionar owner
+        conn = database.get_connection()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (1, 'El Corte', 'el-corte')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Provisiona un owner real con credenciales conocidas en lugar de
+        # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
+        from database.seed_auth import provision_owner_from_bootstrap
+        self._owner_email = "owner@test.local"
+        self._owner_password = "testpass123"
+        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
 
         self._original_hash = application.ADMIN_PASSWORD_HASH
         self._original_password = application.ADMIN_PASSWORD
-        application.ADMIN_PASSWORD_HASH = generate_password_hash("correcta")
+        application.ADMIN_PASSWORD_HASH = None
         application.ADMIN_PASSWORD = None
 
-        self.client = application.app.test_client()
+        # Crear una nueva instancia de la app para aislar esta prueba
+        # (evita el pool compartido del module-level app configurado por pg_isolate_module_app)
+        from application import create_app
+        self.app = create_app()
+        self.client = self.app.test_client()
         login_page = self.client.get("/login")
         self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"password": "correcta", "csrf_token": self.csrf_login})
+        self.client.post("/login", data={"email": self._owner_email, "password": self._owner_password, "csrf_token": self.csrf_login})
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self._original_hash
         application.ADMIN_PASSWORD = self._original_password
         database.DATABASE_PATH = self._original_database_path
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
         self._tmp.cleanup()
 
     def _admin_csrf(self):
@@ -77,7 +131,10 @@ class _AdminLoginBase(unittest.TestCase):
         try:
             result = connection.execute(sql, params)
             connection.commit()
-            return result.fetchall()
+            # PostgreSQL lanza ProgrammingError ("the last operation didn't
+            # produce a result") si se pide un resultado de una sentencia que no
+            # devuelve filas (UPDATE/INSERT); SQLite devolvia una lista vacia.
+            return result.fetchall() if result.description else []
         finally:
             connection.close()
 
@@ -97,7 +154,7 @@ class _AdminLoginBase(unittest.TestCase):
 
     def _appointment_row(self, appointment_id):
         rows = self._query("SELECT * FROM appointments WHERE id = ?", (appointment_id,))
-        return rows[0] if rows else None
+        return _iso_row(rows[0]) if rows else None
 
 
 class TestAdminCancelAppointment(_AdminLoginBase):

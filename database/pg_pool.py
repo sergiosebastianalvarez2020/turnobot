@@ -32,6 +32,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger("turnobot.db.pg_pool")
 
 _global_pool: psycopg_pool.ConnectionPool | None = None
+# True si `_global_pool` fue registrado por una app Flask. Un pool propiedad de una
+# app viva NO está huérfano aunque deje de ser el respaldo global —esa app lo
+# referencia en sus `extensions` y lo cierra en su teardown—, mientras que uno
+# creado sin app solo vive en esta variable. Esa diferencia decide si al
+# reemplazarlo hay que cerrarlo. Se guarda un booleano y no la app para no
+# retenerla aquí.
+_global_pool_app_owned: bool = False
 
 
 # ============================================================
@@ -249,6 +256,16 @@ def _is_pool_open(pool: Any) -> bool:
     return pool is not None
 
 
+def _pool_conninfo(pool: Any) -> str | None:
+    """Conninfo con el que se construyó un pool, o None si no se puede determinar.
+
+    Lo usan los dobles de test (`_FakePool`) y cualquier pool que no lo exponga, para
+    no asumir que dos pools son el mismo solo porque ambos existen.
+    """
+    conninfo = getattr(pool, "conninfo", None)
+    return conninfo if isinstance(conninfo, str) else None
+
+
 def init_pg_pool(
     app: Flask | None = None,
     conninfo: str | None = None,
@@ -269,8 +286,16 @@ def init_pg_pool(
 
     Es idempotente por app: si esa app ya tiene un pool registrado se lo devuelve
     sin crear otro, de modo que re-entradas no multiplican conexiones.
+
+    Sin app (`app=None`) el pool vigente es `_global_pool`, y también es idempotente
+    para el MISMO conninfo: cada llamada devolvía antes un pool nuevo que pisaba la
+    variable sin cerrar el anterior, así que una re-entrada por el mismo URL dejaba
+    un pool huérfano con hasta `max_size` conexiones abiertas en el servidor y sin
+    ninguna referencia que lo cerrara. Si el conninfo es OTRO, el pool previo se
+    cierra aquí salvo que pertenezca a una app (esa app lo cierra en su teardown y
+    cerrarlo desde aquí le rompería el servicio).
     """
-    global _global_pool
+    global _global_pool, _global_pool_app_owned
 
     effective_url = conninfo
     if effective_url is None and app is not None:
@@ -289,6 +314,21 @@ def init_pg_pool(
         if _is_pool_open(existing):
             logger.debug("Pool PostgreSQL ya inicializado para esta app; se reutiliza")
             return existing
+    else:
+        existing = _global_pool
+        if existing is not None and not _global_pool_app_owned:
+            # Solo se reutiliza un pool SIN dueño. Uno propiedad de una app no se cede:
+            # sigue registrado en sus `extensions` y el caller de este path no lo pidió
+            # explícitamente, así que si se lo devolviera y luego lo cerrara (el
+            # contrato de los scripts CLI) le rompería el servicio a la app.
+            if _pool_conninfo(existing) == normalize_database_url(effective_url):
+                logger.debug(
+                    "Pool PostgreSQL global ya inicializado para este conninfo; se reutiliza"
+                )
+                return existing
+            # Distinto conninfo: al dejar de ser el respaldo global nadie lo cerraría.
+            logger.info("Cambia el conninfo del pool global; se cierra el pool anterior")
+            close_pg_pool(existing)
 
     pool = create_pg_pool(
         effective_url,
@@ -306,6 +346,7 @@ def init_pg_pool(
 
     # Respaldo para callers sin contexto Flask: misma instancia, no una copia.
     _global_pool = pool
+    _global_pool_app_owned = app is not None
 
     return pool
 
@@ -330,7 +371,7 @@ def close_pg_pool(
     respaldo global, para que un teardown repetido no pueda cerrar el pool de
     otra instancia de la aplicación.
     """
-    global _global_pool
+    global _global_pool, _global_pool_app_owned
 
     target_pool = pool
     if target_pool is None and app is not None:
@@ -341,6 +382,7 @@ def close_pg_pool(
     if target_pool is not None:
         if target_pool is _global_pool:
             _global_pool = None
+            _global_pool_app_owned = False
         try:
             logger.info("Cerrando pool PostgreSQL")
             target_pool.close(timeout=timeout)
@@ -610,6 +652,161 @@ def _adapt_nullable_placeholders(sql: str) -> str:
     return sql
 
 
+def _scan_single_quoted(sql: str, start: int, backslash_escapes: bool = False) -> int:
+    """Devuelve el indice justo despues del literal que empieza en `start`.
+
+    `start` debe apuntar a la comilla de apertura. Una comilla simple duplicada
+    (`''`) es el escape estandar de SQL y NO cierra el literal; en las cadenas con
+    prefijo E/U& tambien cuenta la barra invertida como escape.
+    """
+    n = len(sql)
+    i = start + 1
+    while i < n:
+        char = sql[i]
+        if backslash_escapes and char == "\\":
+            i += 2
+            continue
+        if char == "'":
+            if i + 1 < n and sql[i + 1] == "'":
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return n
+
+
+def _protected_sql_spans(sql: str) -> list[tuple[int, int]]:
+    """Localiza los tramos de `sql` que NO son codigo SQL ejecutable.
+
+    Devuelve spans (inicio, fin) de literales de texto, cadenas delimitadas por
+    dolares y comentarios. Las comillas dobles NO se incluyen: encierran
+    identificadores, que si son codigo y deben seguir adaptandose.
+
+    Las tres adaptaciones booleanas buscan con regex `col = 1` / `col = 0`. Sin
+    este filtro, un texto como `'active = 1'` (un valor legitimo que el usuario
+    puede guardar, o una comparacion de strings) se reescribiria a
+    `'active IS TRUE'`: en el mejor caso cambia los datos, en el peor produce SQL
+    invalido. El escape por comilla duplicada es justamente lo que rompe un
+    escaner ingenuo que abra con `'` y cierre con el siguiente `'`.
+    """
+    import re
+
+    spans: list[tuple[int, int]] = []
+    n = len(sql)
+    i = 0
+    while i < n:
+        char = sql[i]
+        if char == "'":
+            end = _scan_single_quoted(sql, i)
+            spans.append((i, end))
+            i = end
+            continue
+        if char in "eE" and sql[i + 1 : i + 2] == "'":
+            end = _scan_single_quoted(sql, i + 1, backslash_escapes=True)
+            spans.append((i, end))
+            i = end
+            continue
+        if sql[i : i + 3].upper() == "U&'":
+            end = _scan_single_quoted(sql, i + 2, backslash_escapes=True)
+            spans.append((i, end))
+            i = end
+            continue
+        if char == '"':
+            i += 1
+            while i < n:
+                if sql[i] == '"':
+                    if sql[i + 1 : i + 2] == '"':
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            continue
+        if char == "$":
+            tag = re.match(r"\$[A-Za-z_][A-Za-z_0-9]*\$|\$\$", sql[i:])
+            if tag:
+                closing = sql.find(tag.group(0), i + len(tag.group(0)))
+                if closing != -1:
+                    end = closing + len(tag.group(0))
+                    spans.append((i, end))
+                    i = end
+                    continue
+        if sql[i : i + 2] == "--":
+            newline = sql.find("\n", i)
+            end = n if newline == -1 else newline
+            spans.append((i, end))
+            i = end
+            continue
+        if sql[i : i + 2] == "/*":
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if sql[j : j + 2] == "/*":
+                    depth += 1
+                    j += 2
+                elif sql[j : j + 2] == "*/":
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            spans.append((i, j))
+            i = j
+            continue
+        i += 1
+    return spans
+
+
+def _mask_sql_literals(sql: str) -> tuple[str, dict[str, str]]:
+    """Sustituye cada tramo protegido por un token opaco, para adaptar solo el codigo.
+
+    Devuelve el SQL enmascarado y el mapa token -> tramo original. El token usa
+    caracteres de palabra, de modo que los limites de palabra de las regex siguen
+    siendo validos, y su nombre no colisiona con ninguna columna booleana.
+    """
+    spans = _protected_sql_spans(sql)
+    if not spans:
+        return sql, {}
+    pieces: list[str] = []
+    mapping: dict[str, str] = {}
+    last = 0
+    for index, (start, end) in enumerate(spans):
+        pieces.append(sql[last:start])
+        token = f"__sqllit{index}__"
+        pieces.append(token)
+        mapping[token] = sql[start:end]
+        last = end
+    pieces.append(sql[last:])
+    return "".join(pieces), mapping
+
+
+def _transform_sql_code(sql: str, transform) -> str:
+    """Aplica `transform` unicamente al codigo SQL y restaura los literales intactos."""
+    masked, mapping = _mask_sql_literals(sql)
+    if not mapping:
+        return transform(masked)
+    transformed = transform(masked)
+    for token, original in mapping.items():
+        transformed = transformed.replace(token, original)
+    return transformed
+
+
+def _blank_sql_literals(sql: str) -> str:
+    """Copia de `sql` con los tramos protegidos sustituidos por espacios.
+
+    Conserva la longitud exacta, de modo que los indices hallados sobre la copia
+    son validos tambien sobre el SQL original. Se usa para localizar palabras
+    clave (SET/WHERE) o contar asignaciones sin que un literal las falsee.
+    """
+    spans = _protected_sql_spans(sql)
+    if not spans:
+        return sql
+    chars = list(sql)
+    for start, end in spans:
+        for index in range(start, end):
+            chars[index] = " "
+    return "".join(chars)
+
+
 def _rewrite_boolean_predicates(sql: str) -> str:
     """Convierte comparaciones booleanas estilo SQLite (col = 1 / col = 0) a predicados PostgreSQL.
 
@@ -622,6 +819,9 @@ def _rewrite_boolean_predicates(sql: str) -> str:
 
     NO debe aplicarse a una cláusula SET: allí `col = 1` es una ASIGNACIÓN y la
     forma correcta es `col = TRUE` (ver _adapt_boolean_assignments).
+
+    Solo se adapta el código SQL: un literal como `'active = 1'` es un valor de
+    texto y debe llegar intacto a PostgreSQL.
     """
     import re
 
@@ -636,28 +836,40 @@ def _rewrite_boolean_predicates(sql: str) -> str:
 
         return replace
 
-    # Patrón: columna = 1  o  columna = 0  (fuera de comillas)
-    # Usamos word boundaries para evitar coincidencias parciales
-    for col in _BOOLEAN_COLUMNS:
-        # col = 1  ->  col IS TRUE
-        pattern_eq_1 = re.compile(rf"\b{re.escape(col)}\s*=\s*1\b", re.IGNORECASE)
-        sql = pattern_eq_1.sub(f"{col} IS TRUE", sql)
+    def adapt(sql_code: str) -> str:
+        for col in _BOOLEAN_COLUMNS:
+            # col = 1  ->  col IS TRUE
+            sql_code = re.sub(
+                rf"\b{re.escape(col)}\s*=\s*1\b", f"{col} IS TRUE", sql_code, flags=re.IGNORECASE
+            )
 
-        # [alias.]col = 0  ->  NOT [alias.]col
-        pattern_eq_0 = re.compile(rf"(?:(\w+)\.)?\b{re.escape(col)}\s*=\s*0\b", re.IGNORECASE)
-        sql = pattern_eq_0.sub(_not_predicate(col), sql)
+            # [alias.]col = 0  ->  NOT [alias.]col
+            sql_code = re.sub(
+                rf"(?:(\w+)\.)?\b{re.escape(col)}\s*=\s*0\b",
+                _not_predicate(col),
+                sql_code,
+                flags=re.IGNORECASE,
+            )
 
-        # [alias.]col != 1  ->  NOT [alias.]col  (poco común pero por completitud)
-        pattern_ne_1 = re.compile(
-            rf"(?:(\w+)\.)?\b{re.escape(col)}\s*(?:!=|<>)\s*1\b", re.IGNORECASE
-        )
-        sql = pattern_ne_1.sub(_not_predicate(col), sql)
+            # [alias.]col != 1  ->  NOT [alias.]col  (poco común pero por completitud)
+            sql_code = re.sub(
+                rf"(?:(\w+)\.)?\b{re.escape(col)}\s*(?:!=|<>)\s*1\b",
+                _not_predicate(col),
+                sql_code,
+                flags=re.IGNORECASE,
+            )
 
-        # col != 0  ->  col IS TRUE
-        pattern_ne_0 = re.compile(rf"\b{re.escape(col)}\s*(?:!=|<>)\s*0\b", re.IGNORECASE)
-        sql = pattern_ne_0.sub(f"{col} IS TRUE", sql)
+            # col != 0  ->  col IS TRUE
+            sql_code = re.sub(
+                rf"\b{re.escape(col)}\s*(?:!=|<>)\s*0\b",
+                f"{col} IS TRUE",
+                sql_code,
+                flags=re.IGNORECASE,
+            )
 
-    return sql
+        return sql_code
+
+    return _transform_sql_code(sql, adapt)
 
 
 def _adapt_boolean_assignments(sql: str) -> str:
@@ -668,18 +880,23 @@ def _adapt_boolean_assignments(sql: str) -> str:
     Una asignación NO admite la forma de predicado: PostgreSQL rechaza
     `SET col IS TRUE` (sintaxis) y `SET col = 1` (el entero no castea a boolean),
     de modo que la única forma válida es `SET col = <TRUE|FALSE>`.
+
+    Solo se adapta el código SQL: un literal como `'active = 1'` dentro de un
+    `SET nota = '...'` es un valor de texto y debe llegar intacto.
     """
     import re
 
-    for col in _BOOLEAN_COLUMNS:
-        sql = re.sub(
-            rf"\b({re.escape(col)})\s*=\s*1\b", r"\1 = TRUE", sql, flags=re.IGNORECASE
-        )
-        sql = re.sub(
-            rf"\b({re.escape(col)})\s*=\s*0\b", r"\1 = FALSE", sql, flags=re.IGNORECASE
-        )
+    def adapt(sql_code: str) -> str:
+        for col in _BOOLEAN_COLUMNS:
+            sql_code = re.sub(
+                rf"\b({re.escape(col)})\s*=\s*1\b", r"\1 = TRUE", sql_code, flags=re.IGNORECASE
+            )
+            sql_code = re.sub(
+                rf"\b({re.escape(col)})\s*=\s*0\b", r"\1 = FALSE", sql_code, flags=re.IGNORECASE
+            )
+        return sql_code
 
-    return sql
+    return _transform_sql_code(sql, adapt)
 
 
 def _update_set_clause_span(sql: str) -> tuple[int, int] | None:
@@ -695,18 +912,23 @@ def _update_set_clause_span(sql: str) -> tuple[int, int] | None:
     """
     import re
 
-    statement = sql.lstrip()
+    # Las palabras clave se buscan sobre una copia con literales y comentarios en
+    # blanco: `SET nota = 'where active = 0'` no contiene un WHERE real, y
+    # `SELECT '-- set x'` no contiene un SET real. La copia conserva la longitud,
+    # asi que los spans calculados sirven sobre el SQL original.
+    code = _blank_sql_literals(sql)
+    statement = code.lstrip()
     is_update = statement[:6].upper() == "UPDATE" or bool(
         re.search(r"\bDO\s+UPDATE\b", statement, re.IGNORECASE)
     )
     if not is_update:
         return None
 
-    set_match = re.search(r"\bSET\b", sql, re.IGNORECASE)
+    set_match = re.search(r"\bSET\b", code, re.IGNORECASE)
     if set_match is None:
         return None
 
-    where_match = re.search(r"\bWHERE\b", sql[set_match.end() :], re.IGNORECASE)
+    where_match = re.search(r"\bWHERE\b", code[set_match.end() :], re.IGNORECASE)
     end = set_match.end() + where_match.start() if where_match else len(sql)
     return set_match.start(), end
 
@@ -740,6 +962,115 @@ def _adapt_boolean_comparisons(sql: str) -> str:
     )
 
 
+def _is_sql_placeholder(value: str) -> bool:
+    """True si `value` es un placeholder posicional de psycopg3 (`?`, `%s`, `$n`)."""
+    import re
+
+    return value in ("?", "%s") or re.match(r"^\$\d+$", value) is not None
+
+
+def _to_pg_bool(value: Any) -> Any:
+    """Normaliza 0/1 a False/True; cualquier otro valor se devuelve intacto."""
+    if value == 0 or value is False:
+        return False
+    if value == 1 or value is True:
+        return True
+    return value
+
+
+def _split_top_level_items(text: str) -> list[str]:
+    """Divide `text` por las comas de primer nivel, sin romper literales ni parentesis.
+
+    Un `VALUES` puede contener expresiones anidadas (`COALESCE(a, b)`) y literales
+    con comas o parentesis dentro (`'a,b'`, `'x)'`); cortar por comas a secas
+    desalinearia los valores. El escape SQL de comilla duplicada (`'O''Brien'`)
+    se tiene en cuenta para no cerrar el literal antes de tiempo.
+    """
+    items: list[str] = []
+    current = ""
+    in_single = False
+    depth = 0
+    i = 0
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if in_single:
+            current += char
+            if char == "'":
+                if i + 1 < n and text[i + 1] == "'":
+                    current += text[i + 1]
+                    i += 2
+                    continue
+                in_single = False
+        elif char == "'":
+            in_single = True
+            current += char
+        elif char == "(":
+            depth += 1
+            current += char
+        elif char == ")":
+            depth -= 1
+            current += char
+        elif char == "," and depth == 0:
+            items.append(current.strip())
+            current = ""
+        else:
+            current += char
+        i += 1
+    if current.strip():
+        items.append(current.strip())
+    return items
+
+
+def _scan_values_tuples(sql: str, start: int) -> list[tuple[int, int]]:
+    """Localiza todos los tuples de primer nivel del `VALUES`, como (inicio, fin) inclusives.
+
+    Devuelve los spans de cada fila, de modo que el texto posterior (`RETURNING`,
+    `ON CONFLICT`, ...) queda intacto. Un `VALUES` de una sola fila devuelve un
+    unico span, igual que la extraccion anterior.
+    """
+    tuples: list[tuple[int, int]] = []
+    i = start
+    n = len(sql)
+    while i < n:
+        if sql[i].isspace():
+            i += 1
+            continue
+        if sql[i] != "(":
+            break
+        depth = 0
+        in_single = False
+        j = i
+        while j < n:
+            char = sql[j]
+            if in_single:
+                if char == "'":
+                    if j + 1 < n and sql[j + 1] == "'":
+                        j += 2
+                        continue
+                    in_single = False
+            elif char == "'":
+                in_single = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if depth != 0:
+            break
+        tuples.append((i, j))
+        i = j + 1
+        while i < n and sql[i].isspace():
+            i += 1
+        if i < n and sql[i] == ",":
+            i += 1
+            continue
+        break
+    return tuples
+
+
 def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any]:
     """Convierte literales 0/1 en columnas BOOLEAN de INSERT VALUES a TRUE/FALSE.
 
@@ -749,9 +1080,12 @@ def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any
 
     Funciona tanto con SQL que tiene valores literales como con consultas parametrizadas
     (adapta los parámetros en `params` solo para posiciones que usan placeholders).
-    """
-    boolean_columns = _BOOLEAN_COLUMNS
 
+    Cubre TODAS las filas de un `VALUES (...), (...)`: antes solo se adaptaba el primer
+    tuple, de modo que las filas 2..N conservaban el entero y PostgreSQL rechazaba la
+    sentencia. Los parametros se recorren con un unico indice creciente para no
+    desalinearlos al concatenar filas.
+    """
     import re
 
     pattern = re.compile(
@@ -761,80 +1095,54 @@ def _adapt_insert_boolean_values(sql: str, params: Any = None) -> tuple[str, Any
     if not match:
         return sql, params
 
-    columns_str = match.group(2)
-    columns = [c.strip().strip('"').strip("'") for c in columns_str.split(",")]
-    values_start = match.end()
-    depth = 1
-    i = values_start
-    while i < len(sql) and depth > 0:
-        if sql[i] == "(":
-            depth += 1
-        elif sql[i] == ")":
-            depth -= 1
-        i += 1
-    values_str = sql[values_start : i - 1]
-
-    # Parse values, tracking which are placeholders vs literals
-    values = []
-    is_placeholder = []
-    current = ""
-    in_single = False
-    for char in values_str:
-        if char == "'" and not in_single:
-            in_single = True
-            current += char
-        elif char == "'" and in_single:
-            if current and current[-1] == "'":
-                current += char
-            else:
-                in_single = False
-                current += char
-        elif char == "," and not in_single:
-            val = current.strip()
-            values.append(val)
-            # Check if it's a placeholder (? or %s or $n)
-            is_placeholder.append(val in ("?", "%s") or re.match(r"^\$\d+$", val))
-            current = ""
-        else:
-            current += char
-    if current.strip():
-        val = current.strip()
-        values.append(val)
-        is_placeholder.append(val in ("?", "%s") or re.match(r"^\$\d+$", val))
-
-    if len(columns) != len(values):
+    columns = [c.strip().strip('"').strip("'") for c in match.group(2).split(",")]
+    # El grupo 3 del patron ya consumio el `(` de apertura del primer tuple, asi que
+    # el scan arranca una posicion antes para incluirlo como fila.
+    tuples = _scan_values_tuples(sql, match.end() - 1)
+    if not tuples:
         return sql, params
 
-    # Determine which column indices are boolean AND use placeholders
-    boolean_placeholder_indices = [
-        idx for idx, col in enumerate(columns)
-        if col.lower() in boolean_columns and is_placeholder[idx]
-    ]
+    boolean_indices = {i for i, col in enumerate(columns) if col.lower() in _BOOLEAN_COLUMNS}
+    if not boolean_indices:
+        return sql, params
 
-    # Adapt params for boolean columns that use placeholders
-    if params is not None and boolean_placeholder_indices:
-        params_list = list(params) if not isinstance(params, list) else params
-        param_idx = 0
-        for col_idx in range(len(columns)):
-            if is_placeholder[col_idx]:
-                if param_idx < len(params_list) and col_idx in boolean_placeholder_indices:
-                    val = params_list[param_idx]
-                    if val == 0 or val is False:
-                        params_list[param_idx] = False
-                    elif val == 1 or val is True:
-                        params_list[param_idx] = True
-                param_idx += 1
+    # Todas las filas deben tener la misma aridad que la lista de columnas; si no,
+    # no se toca nada (SQL invalido que no nos corresponde interpretar).
+    rows = [_split_top_level_items(sql[start + 1 : end]) for start, end in tuples]
+    if any(len(row) != len(columns) for row in rows):
+        return sql, params
+
+    # Indices globales de parametro que caen en una columna BOOLEAN. El contador
+    # avanza por todas las filas y columnas, en el orden en que psycopg3 recibe
+    # los parametros.
+    boolean_param_positions: list[int] = []
+    param_idx = 0
+    for row in rows:
+        for col_idx, value in enumerate(row):
+            if not _is_sql_placeholder(value):
+                continue
+            if col_idx in boolean_indices:
+                boolean_param_positions.append(param_idx)
+            param_idx += 1
+
+    if params is not None and boolean_param_positions:
+        params_list = list(params)
+        for position in boolean_param_positions:
+            if position < len(params_list):
+                params_list[position] = _to_pg_bool(params_list[position])
         params = tuple(params_list) if isinstance(params, tuple) else params_list
 
-    # Also adapt literal values in the SQL string (for non-parametrized queries)
-    for idx, col in enumerate(columns):
-        if col.lower() in boolean_columns and not is_placeholder[idx]:
-            val = values[idx].strip()
-            if val in ("0", "1"):
-                values[idx] = "true" if val == "1" else "false"
+    # Literales: cada fila convierte sus propios 0/1 en las columnas BOOLEAN.
+    rendered = []
+    for row in rows:
+        converted = list(row)
+        for col_idx in boolean_indices:
+            value = converted[col_idx].strip()
+            if value in ("0", "1"):
+                converted[col_idx] = "true" if value == "1" else "false"
+        rendered.append("(" + ", ".join(converted) + ")")
 
-    new_values_str = ", ".join(values)
-    return sql[:values_start] + new_values_str + sql[i - 1 :], params
+    return sql[: tuples[0][0]] + ", ".join(rendered) + sql[tuples[-1][1] + 1 :], params
 
 
 def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any]:
@@ -856,7 +1164,7 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
     import re
     # Match patterns like: SET col = ?  or SET col = ?, col2 = ?
     # We need to find which params correspond to boolean columns
-    # Pattern: "SET col1 = ?, col2 = ?, ..."
+    # Pattern: "SET col1 = ?, col2 = ?, col3 = ?"
     params_list = list(params)
 
     # Find SET clause and extract column->param_index mapping
@@ -871,16 +1179,21 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
     set_clause = set_match.group(1)
     # Parse assignments: col = ?, col2 = ?, col3 = ?
     # Also handle col = literal_value
+    # El conteo de asignaciones se hace sobre el SQL con literales en blanco: un
+    # texto como `nota = 'active = 1'` NO es una asignacion booleana, pero si
+    # entrara en la lista desplazaria el indice de cada parametro posterior y
+    # convertiria el valor equivocado.
+    code_clause = _blank_sql_literals(set_clause)
     assignments = re.findall(
         r'(\w+)\s*=\s*(\?|%s|[\'"]?\d+[\'"]?)',
-        set_clause,
+        code_clause,
         re.IGNORECASE,
     )
 
     # Count params before the SET clause to know the offset
     param_offset = 0
     # Count ? or %s in the part before SET
-    before_set = sql[:set_match.start()]
+    before_set = _blank_sql_literals(sql[: set_match.start()])
     param_offset = len(re.findall(r"\?|%s", before_set))
 
     for idx, (col_name, param_val) in enumerate(assignments):

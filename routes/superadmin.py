@@ -26,6 +26,8 @@ from application.platform import (
     _platform_current_user,
     _platform_session_expires_at,
 )
+from application.public_urls import public_url
+from application.rate_limit import is_login_request_allowed
 from application.requests import get_client_ip
 from database.database import (
     get_business_settings_scoped,
@@ -50,6 +52,12 @@ def superadmin_login():
             return render_template(
                 "superadmin_login.html", error=True, error_message="Solicitud no válida"
             ), 400
+        if not is_login_request_allowed(get_client_ip()):
+            return render_template(
+                "superadmin_login.html",
+                error=True,
+                error_message="Demasiados intentos. Esperá unos minutos.",
+            ), 429
         email = (request.form.get("email", "") or "").strip().lower()
         password = request.form.get("password", "") or ""
         platform_user, error = platform_service.authenticate_superadmin(email, password)
@@ -203,7 +211,7 @@ def superadmin_negocios_aprobar(business_id):
     send_approved_invitation_email(
         result["owner_email"],
         result["slug"],
-        request.url_root.rstrip("/") + result["invitation_url"],
+        public_url(result["invitation_url"]),
         result.get("expires_at", ""),
         platform_service.invitation_lifetime_hours(),
     )
@@ -292,7 +300,7 @@ def superadmin_negocios_reinviar(business_id):
         send_approved_invitation_email(
             owner["email"],
             business["name"],
-            request.url_root.rstrip("/") + f"/b/{business['slug']}/invitacion/{token}",
+            public_url(f"/b/{business['slug']}/invitacion/{token}"),
             expires_at,
             platform_service.invitation_lifetime_hours(),
         )

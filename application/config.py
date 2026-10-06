@@ -7,6 +7,7 @@ un dict con los valores clave para su re-export por parte de la fachada.
 import datetime
 import os
 import secrets
+from urllib.parse import urlsplit
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -48,6 +49,34 @@ def build_config(app, logger=None):
     app.config["DATABASE_URL_SANITIZED"] = sanitized_db_url
     app.config["DB_BACKEND"] = db_backend
 
+    public_base_url = (os.getenv("PUBLIC_BASE_URL") or "").strip()
+    production = os.getenv("FLASK_ENV") == "production"
+    if production and not public_base_url:
+        raise RuntimeError("PUBLIC_BASE_URL es obligatoria en producción")
+    if not public_base_url:
+        public_base_url = "http://localhost"
+    parsed_public_url = urlsplit(public_base_url)
+    try:
+        invalid_port = parsed_public_url.port == 0
+    except ValueError:
+        invalid_port = True
+    if invalid_port:
+        raise RuntimeError("PUBLIC_BASE_URL debe ser un origen HTTP(S) válido")
+    if (
+        parsed_public_url.scheme not in {"http", "https"}
+        or not parsed_public_url.netloc
+        or not parsed_public_url.hostname
+        or parsed_public_url.username
+        or parsed_public_url.password
+        or any(char.isspace() for char in public_base_url)
+        or parsed_public_url.path not in {"", "/"}
+        or parsed_public_url.query
+        or parsed_public_url.fragment
+        or (production and parsed_public_url.scheme != "https")
+    ):
+        raise RuntimeError("PUBLIC_BASE_URL debe ser un origen HTTP(S) válido; HTTPS en producción")
+    app.config["PUBLIC_BASE_URL"] = public_base_url.rstrip("/")
+
     if db_backend == "postgresql" and logger is not None:
         logger.info("Configurado backend PostgreSQL con URL %s", sanitized_db_url)
 
@@ -87,4 +116,5 @@ def build_config(app, logger=None):
         "TRUSTED_PROXY_COUNT": trusted_proxy_count,
         "DATABASE_URL_SANITIZED": sanitized_db_url,
         "DB_BACKEND": db_backend,
+        "PUBLIC_BASE_URL": app.config["PUBLIC_BASE_URL"],
     }

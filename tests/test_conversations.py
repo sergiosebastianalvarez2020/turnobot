@@ -244,11 +244,38 @@ class TestConversations(unittest.TestCase):
         self.assertTrue(session["customer_phone"].startswith("anon_"))
 
     def test_public_session_reuse(self):
-        """Segunda petición con mismo negocio reusa última sesión pública."""
+        """Solo el visitante que presenta su token reutiliza su sesión."""
         session1 = get_or_create_public_conversation_session_scoped(1)
-        session2 = get_or_create_public_conversation_session_scoped(1)
+        session2 = get_or_create_public_conversation_session_scoped(
+            1, visitor_token=session1["public_token"]
+        )
         self.assertEqual(session1["id"], session2["id"])
         self.assertEqual(session1["public_token"], session2["public_token"])
+
+    def test_public_visitors_on_same_business_have_isolated_histories(self):
+        visitor_a = get_or_create_public_conversation_session_scoped(1)
+        visitor_b = get_or_create_public_conversation_session_scoped(1)
+        self.assertNotEqual(visitor_a["id"], visitor_b["id"])
+        self.assertNotEqual(visitor_a["public_token"], visitor_b["public_token"])
+
+        add_conversation_message_scoped(visitor_a["id"], 1, "user", "Mensaje privado A")
+        add_conversation_message_scoped(visitor_b["id"], 1, "user", "Mensaje privado B")
+        messages_a = get_conversation_messages_by_public_token_scoped(visitor_a["public_token"], 1)
+        messages_b = get_conversation_messages_by_public_token_scoped(visitor_b["public_token"], 1)
+
+        self.assertEqual([message["content"] for message in messages_a], ["Mensaje privado A"])
+        self.assertEqual([message["content"] for message in messages_b], ["Mensaje privado B"])
+        self.assertIsNone(
+            get_conversation_messages_by_public_token_scoped(visitor_a["public_token"], 2)
+        )
+
+    def test_unknown_or_foreign_visitor_token_starts_a_fresh_session(self):
+        visitor_a = get_or_create_public_conversation_session_scoped(1)
+        visitor_b = get_or_create_public_conversation_session_scoped(
+            1, visitor_token="token-do-not-match"
+        )
+        self.assertNotEqual(visitor_a["id"], visitor_b["id"])
+        self.assertNotEqual(visitor_a["public_token"], visitor_b["public_token"])
 
     def test_public_session_isolation_by_business(self):
         """Sesiones públicas aisladas por business_id."""

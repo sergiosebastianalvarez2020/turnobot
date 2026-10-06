@@ -8,6 +8,7 @@ Estos tests verifican la propiedad: "el backup representa consistentemente
 el estado de la BD", sin acoplarse a una implementación concreta.
 """
 
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -26,11 +27,28 @@ class TestBackupWalConsistency(unittest.TestCase):
         self.root_dir = Path(self.temp_dir.name)
         self.original_database_path = database.DATABASE_PATH
         database.DATABASE_PATH = self.root_dir / "appointments.db"
+
+        # Override backend to SQLite for this legacy WAL backup test
+        self._original_db_backend = os.environ.get("DB_BACKEND")
+        self._original_db_url = os.environ.get("DATABASE_URL")
+        os.environ["DB_BACKEND"] = "sqlite"
+        if "DATABASE_URL" in os.environ:
+            del os.environ["DATABASE_URL"]
+
         database.init_database()
         self._open_connections = []
 
     def tearDown(self):
         database.DATABASE_PATH = self.original_database_path
+        # Restore original backend env vars
+        if self._original_db_backend is not None:
+            os.environ["DB_BACKEND"] = self._original_db_backend
+        else:
+            os.environ.pop("DB_BACKEND", None)
+        if self._original_db_url is not None:
+            os.environ["DATABASE_URL"] = self._original_db_url
+        else:
+            os.environ.pop("DATABASE_URL", None)
         for conn in self._open_connections:
             conn.close()
         self.temp_dir.cleanup()

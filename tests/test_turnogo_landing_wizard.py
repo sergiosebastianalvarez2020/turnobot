@@ -261,7 +261,58 @@ class TestWizardConfirmation(_TestCase):
                     "hora": "10:00",
                 },
             )
-            self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 400)
+
+
+class TestWizardPublicLinkOrigins(_TestCase):
+    def setUp(self):
+        application.rate_limit_state.clear()
+
+    def test_management_email_link_ignores_client_host(self):
+        self.app.config["PUBLIC_BASE_URL"] = "https://canonical.example"
+        headers = {"Host": "another-valid.example"}
+        confirmation = {
+            "success": True,
+            "appointment_id": 731,
+            "customer_name": "Juan Pérez",
+            "customer_email": "juan@example.test",
+            "service": "Corte",
+            "appointment_date": "2026-12-31",
+            "appointment_time": "10:00",
+            "appointment_end": "10:30",
+            "management_token": "management-secret",
+        }
+        sends = []
+        with (
+            patch("services.appointments.create_appointment", return_value=confirmation),
+            patch("services.notifications.send_confirmation_email") as send_confirmation,
+            patch.object(application, "send_business_confirmation_email"),
+            self.client as client,
+        ):
+            page = client.get("/b/el-corte/reservar", headers=headers)
+            csrf_match = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
+            csrf = csrf_match.group(1) if csrf_match else None
+            response = client.post(
+                "/b/el-corte/reservar/confirmar",
+                headers=headers,
+                json={
+                    "csrf_token": csrf,
+                    "nombre": "Juan Pérez",
+                    "telefono": "1122334455",
+                    "email": "juan@example.test",
+                    "servicio": "Corte",
+                    "fecha": "2026-12-31",
+                    "hora": "10:00",
+                },
+            )
+            sends.append(send_confirmation.call_args)
+
+        self.assertEqual(response.status_code, 201)
+        call = sends[0]
+        self.assertEqual(call.kwargs["public_base_url"], "https://canonical.example")
+        self.assertEqual(call.kwargs["management_token"], "management-secret")
+        self.assertEqual(call.kwargs["slug"], "el-corte")
+        self.assertNotIn("another-valid.example", call.kwargs["public_base_url"])
 
 
 class TestWizardEndpointsConsistency(_TestCase):

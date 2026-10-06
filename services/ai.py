@@ -1305,6 +1305,7 @@ def ask_ai(
     customer_phone=None,
     customer_name=None,
     customer_email=None,
+    public_token=None,
 ):
 
     request_id = None
@@ -1344,7 +1345,7 @@ def ask_ai(
                 human_intent_detected = True
                 request_human_handoff_scoped(session_id, business_id)
     else:
-        session = get_or_create_public_conversation_session_scoped(business_id)
+        session = get_or_create_public_conversation_session_scoped(business_id, public_token)
         if session:
             session_id = session["id"]
             public_token = session.get("public_token")

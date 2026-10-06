@@ -392,7 +392,9 @@ def business_reservar_wizard_confirmar(slug):
         try:
             current = getattr(g, "current_business", None) or {}
             slug_val = current.get("slug")
-            base_url = request.url_root.rstrip("/")
+            from application.public_urls import public_url
+
+            base_url = public_url("").rstrip("/")
             appointment_data = {
                 "id": resultado.get("appointment_id"),
                 "customer_name": resultado.get("customer_name"),

@@ -48,7 +48,7 @@ def resolve_business(slug=None):
     try:
         if slug is None:
             row = connection.execute(
-                "SELECT id, name, slug FROM businesses WHERE id = 1"
+                "SELECT id, name, slug FROM businesses WHERE id = 1 AND active"
             ).fetchone()
         else:
             row = connection.execute(
@@ -157,12 +157,35 @@ def inject_admin_prefix():
     return {"admin_prefix": admin_prefix}
 
 
+def _first_business_id():
+    """Id del primer negocio de la base, o None si todavía no hay ninguno.
+
+    Usa el mismo criterio de selección que el fallback de
+    ``get_business_settings()`` ("primer business de la tabla") para no cambiar
+    qué configuración se resuelve cuando existe al menos un negocio.
+    """
+    connection = get_connection()
+    try:
+        row = connection.execute("SELECT id FROM businesses LIMIT 1").fetchone()
+        return row[0] if row else None
+    finally:
+        connection.close()
+
+
 def inject_business_settings():
     business_id = get_current_business_id()
+    if business_id is None:
+        # Sin tenant en contexto se resuelve el "primer business de la base".
+        # Este context processor corre en cada render (incluido /login y las
+        # páginas de error), así que una base todavía sin negocios no puede
+        # abortar el render: se resuelve None y la plantilla usa sus defaults.
+        # Antes se delegaba el fallback a get_business_settings(), que en una
+        # base vacía levanta ValueError y convertía /login en un 500.
+        business_id = _first_business_id()
     settings = (
         _load_seam("get_business_settings_scoped")(business_id)
         if business_id is not None
-        else _load_seam("get_business_settings")()
+        else None
     )
     return {
         "business_settings": settings,

@@ -10,12 +10,9 @@
 """
 
 import re
-import tempfile
 import unittest
-from pathlib import Path
 
 import app as application
-import database.database as database
 from database.database import get_connection
 from services import platform as platform_service
 
@@ -27,15 +24,10 @@ class ProvisionBase(unittest.TestCase):
 
     def setUp(self):
         application.rate_limit_state.clear()
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = Path(self.temp_dir.name) / "appointments.db"
-        database.init_database()
         self.client = application.app.test_client()
 
     def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        self.temp_dir.cleanup()
+        pass
 
     @staticmethod
     def _query(sql, params=None):

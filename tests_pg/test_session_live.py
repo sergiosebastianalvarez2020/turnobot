@@ -53,6 +53,7 @@ _FACTORY_ENV_KEYS = (
     "COOKIE_SECURE",
     "TRUSTED_PROXY_COUNT",
     "SESSION_LIFETIME_SECONDS",
+    "PUBLIC_BASE_URL",
 )
 
 
@@ -66,6 +67,7 @@ def _import_app_facade(monkeypatch) -> None:
     """
     for key in _FACTORY_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("FLASK_ENV", "development")
     # No establecemos DATABASE_URL=""; el fixture pg_coherent_env ya la configura
     # a la URL de mantenimiento. El test la sobrescribirá con la base de tests.
     importlib.import_module("app")

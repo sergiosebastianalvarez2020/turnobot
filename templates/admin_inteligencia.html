@@ -231,7 +231,7 @@
                                     <span class="text-muted">—</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
+                                <td>{{ fmt_datetime(q.last_seen_at) }}</td>
                                 <td>
                                     <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}&source=analytics" class="conv-btn">+ Agregar a conocimiento</a>
                                 </td>
@@ -280,7 +280,7 @@
                                 <td>{{ q.question_text }}</td>
                                 <td><strong>{{ q.count }}</strong></td>
                                 <td><span class="needs-human-badge">{{ q.needs_human_count }}</span></td>
-                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
+                                <td>{{ fmt_datetime(q.last_seen_at) }}</td>
                                 <td>
                                     <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}&source=analytics" class="conv-btn conv-btn-primary">+ Agregar a conocimiento</a>
                                 </td>
@@ -339,7 +339,7 @@
                                     <span class="text-muted">—</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ q.last_seen_at[:16].replace('T', ' ') if q.last_seen_at else '—' }}</td>
+                                <td>{{ fmt_datetime(q.last_seen_at) }}</td>
                                 <td>
                                     <a href="{{ admin_prefix or '' }}/admin/conocimiento/crear?question={{ q.question_text|urlencode }}&source=analytics" class="conv-btn conv-btn-primary">+ Agregar respuesta</a>
                                 </td>
