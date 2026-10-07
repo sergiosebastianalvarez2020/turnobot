@@ -15,6 +15,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BACKUPS_DIR = PROJECT_ROOT / "backups_pg"
 
+# Timeout para que pg_restore --list no cuelgue indefinidamente con un
+# archivo colgado o un binario que no responde. La verificación es
+# read-only: nunca crea ni elimina bases.
+PG_RESTORE_LIST_TIMEOUT_SECONDS = 120
+
 
 def get_latest_backup(backups_dir: str | Path | None = None) -> Path | None:
     """Devuelve el último backup de PostgreSQL generado por el script."""
@@ -46,7 +51,13 @@ def verify_backup(backup_path: str | Path) -> bool:
         raise RuntimeError(f"Backup vacío o corrupto: {backup}")
 
     cmd = build_restore_listing_command(backup)
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=PG_RESTORE_LIST_TIMEOUT_SECONDS,
+    )
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "pg_restore --list falló").strip()
         raise RuntimeError(f"Backup inválido: {stderr}")

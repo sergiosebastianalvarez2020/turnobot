@@ -116,6 +116,13 @@ La verificación anterior comprueba que `pg_restore --list` puede leer el dump;
 no equivale a una restauración completa. La prueba de restore debe realizarse
 en una base desechable. No apuntar el restore de prueba a la base productiva.
 
+`restore_postgresql.py` rechaza, **antes de ejecutar `dropdb`**, cualquier
+destino que coincida con la base productiva definida por `DATABASE_URL` (host,
+puerto y nombre). Si omite `DBNAME` usa un nombre temporal
+`turnobot_restore_<timestamp>` (siempre seguro). Un destino que coincida con
+producción aborta con error sin tocarla. El mismo nombre en otro servidor no
+se considera peligroso.
+
 En OCI, los units `turnobot-backup*` programan el backup y su verificación.
 El timer `turnobot-backup-prune.timer` ejecuta el pruner SQLite sobre
 `database/backups`; no retiene ni elimina dumps de `backups_pg/`.

@@ -125,6 +125,25 @@ class TestAdminSecurity(unittest.TestCase, PostgreSQLTestCase):
         self.assertEqual(len({body for _, body in responses}), 1)
         self.assertIn("Credenciales inválidas.", responses[0][1])
 
+    def test_login_unknown_user_equaliza_timing_con_hash_check(self):
+        """Un email inexistente ejecuta check_password_hash (dummy) para que el
+        timing no revele si el email está registrado (enumeración de usuarios)."""
+        page = self.client.get("/login")
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        with patch("routes.auth.check_password_hash") as mock_check:
+            mock_check.return_value = False
+            response = self.client.post(
+                "/login",
+                data={
+                    "email": "no-existe@test.local",
+                    "password": "cualquiera",
+                    "csrf_token": csrf,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Credenciales inválidas.", response.text)
+        self.assertEqual(mock_check.call_count, 1)
+
     def test_reset_link_ignora_host_controlado_por_el_cliente(self):
         page = self.client.get("/forgot", headers={"Host": "evil.example"})
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)

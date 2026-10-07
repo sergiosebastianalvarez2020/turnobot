@@ -31,7 +31,7 @@ los endpoint names globales.
 import logging
 import secrets
 
-from flask import abort, g, jsonify, render_template, request
+from flask import abort, g, jsonify, render_template, request, session
 
 from database.database import (
     ensure_loyalty_settings_scoped,
@@ -54,6 +54,16 @@ from services.conversations import get_conversation_messages_by_public_token_sco
 from services.notifications import notifications_enabled
 
 logger = logging.getLogger(__name__)
+_ANONYMOUS_CHAT_TOKENS_KEY = "anonymous_chat_tokens"
+
+
+def _anonymous_chat_tokens():
+    """Return the signed-session mapping of business IDs to visitor tokens."""
+    tokens = session.get(_ANONYMOUS_CHAT_TOKENS_KEY)
+    if not isinstance(tokens, dict):
+        tokens = {}
+        session[_ANONYMOUS_CHAT_TOKENS_KEY] = tokens
+    return tokens
 
 
 def chat():
@@ -126,9 +136,10 @@ def chat():
             if isinstance(data.get("customer_email"), str)
             else ""
         )
-        visitor_token = data.get("session_id")
-        if not isinstance(visitor_token, str):
-            visitor_token = None
+        business_id = get_current_business_id()
+        business_key = str(business_id) if business_id is not None else None
+        visitor_tokens = _anonymous_chat_tokens() if not customer_phone else {}
+        visitor_token = visitor_tokens.get(business_key) if business_key else None
 
         if customer_phone and not is_chat_phone_request_allowed(
             customer_phone, get_current_business_id()
@@ -144,20 +155,18 @@ def chat():
         response, session_id, public_token = ask_ai(
             message,
             conversation,
-            business_id=get_current_business_id(),
+            business_id=business_id,
             customer_phone=customer_phone,
             customer_name=customer_name,
             customer_email=customer_email,
             public_token=visitor_token,
         )
 
+        if not customer_phone and business_key and public_token:
+            visitor_tokens[business_key] = public_token
+            session[_ANONYMOUS_CHAT_TOKENS_KEY] = visitor_tokens
+
         payload = {"success": True, "response": response}
-
-        if session_id:
-            payload["session_id"] = session_id
-
-        if public_token:
-            payload["public_token"] = public_token
 
         return jsonify(payload)
 
@@ -176,10 +185,34 @@ def public_conversation_messages(public_token):
             {"success": False, "error": "No hay un negocio activo para esta solicitud."}
         ), 404
 
+    visitor_token = _anonymous_chat_tokens().get(str(business_id))
+    if not isinstance(visitor_token, str) or not secrets.compare_digest(
+        visitor_token, public_token
+    ):
+        return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
+
     messages = get_conversation_messages_by_public_token_scoped(public_token, business_id)
     if messages is None:
         return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
 
+    return jsonify({"success": True, "messages": messages})
+
+
+def public_current_conversation_messages():
+    """Return the current visitor's history using the business-scoped session cookie."""
+    from app import get_current_business_id
+
+    business_id = get_current_business_id()
+    if business_id is None:
+        return jsonify(
+            {"success": False, "error": "Conversación no encontrada."}
+        ), 404
+    public_token = _anonymous_chat_tokens().get(str(business_id))
+    if not isinstance(public_token, str):
+        return jsonify({"success": True, "messages": []})
+    messages = get_conversation_messages_by_public_token_scoped(public_token, business_id)
+    if messages is None:
+        return jsonify({"success": True, "messages": []})
     return jsonify({"success": True, "messages": messages})
 
 

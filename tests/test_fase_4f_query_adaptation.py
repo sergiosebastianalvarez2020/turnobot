@@ -471,6 +471,40 @@ class TestBooleanLiteralsPorContexto(unittest.TestCase):
         self.assertIn("WHERE NOT revoked", sql)
         self.assertIn("'SET'", sql)
 
+    def test_predicados_booleanos_con_parametros_conservan_orden_y_tipo(self):
+        """Los params ligados a BOOLEAN deben llegar como bool, incluso bajo AND/OR."""
+        sql, params = adapt_query_for_postgres(
+            "SELECT * FROM sessions s WHERE s.id = ? AND s.revoked = ? "
+            "AND s.active != ? OR s.revoked = ?",
+            (12, 1, 0, True),
+        )
+        self.assertEqual(
+            sql,
+            "SELECT * FROM sessions s WHERE s.id = %s AND s.revoked = %s "
+            "AND s.active != %s OR s.revoked = %s",
+        )
+        self.assertEqual(params[0], 12)
+        self.assertIs(params[1], True)
+        self.assertIs(params[2], False)
+        self.assertIs(params[3], True)
+
+    def test_predicados_booleanos_true_false_y_sin_predicado_no_se_alteran(self):
+        for expression in (
+            "active = TRUE",
+            "active = FALSE",
+            "active != TRUE",
+            "active != FALSE",
+            "active IS TRUE",
+            "active IS FALSE",
+        ):
+            sql, params = adapt_query_for_postgres(f"SELECT * FROM sessions WHERE {expression}")
+            self.assertEqual(sql, f"SELECT * FROM sessions WHERE {expression}")
+            self.assertIsNone(params)
+
+        sql, params = adapt_query_for_postgres("SELECT * FROM sessions")
+        self.assertEqual(sql, "SELECT * FROM sessions")
+        self.assertIsNone(params)
+
 
 class TestBooleanLiteralsIgnoranTextos(unittest.TestCase):
     """PG-002: un literal de texto NUNCA es una comparación booleana.

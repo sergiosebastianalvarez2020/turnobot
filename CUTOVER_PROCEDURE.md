@@ -34,10 +34,10 @@ export TURNOBOT_PG_URL="postgresql://turnobot:clave@host:5432/turnobot"
 # Ejecutar backup
 python scripts/backup_postgresql.py
 
-# Verificar backup (restaura a base descartable)
+# Verificar legibilidad del dump (read-only, no toca ninguna base)
+python scripts/verify_backup_postgresql.py <ruta_backup>
+# Restaurar a una base descartable (nunca a la productiva)
 python scripts/restore_postgresql.py <ruta_backup>
-# Luego correr verify_backup_postgresql.py con el dbname restaurado
-python scripts/verify_backup_postgresql.py <ruta_backup> <dbname_restaurada>
 ```
 
 **Salida de backup:**
@@ -56,8 +56,8 @@ Base: turnobot
 export TURNOBOT_PG_URL="postgresql://turnobot:clave@host:5432/turnobot"
 python scripts/restore_postgresql.py <ruta_backup> [DBNAME]
 
-# Validar la restauración
-python scripts/verify_backup_postgresql.py <ruta_backup> <dbname_restaurada>
+# Validar la legibilidad del dump (read-only: pg_restore --list, un solo argumento)
+python scripts/verify_backup_postgresql.py <ruta_backup>
 ```
 
 **Salida de restore:**
@@ -68,15 +68,19 @@ Duración: X.XXs
 
 #### Validación Post-Restore
 
-El script `verify_backup_postgresql.py` verifica:
+El script `verify_backup_postgresql.py` verifica (read-only, sin crear ni
+eliminar bases):
 
-- **Row counts**: Todas las tablas coinciden con la fuente (0 diferencias)
-- **Constraints**: 37 FK constraints, 26 PK constraints preservadas
-- **Sequences**: Todos los sequences ajustados al MAX(id) + 1
-- **Generated columns**: `business_knowledge.document_tsearch` preservecida
-- **GIN index**: `idx_bk_tsearch` preservado
-- **Types**: BOOLEAN, DATE, TIME, TIMESTAMPTZ correctos
-- **Tenant isolation**: Datos correctamente aislados por business_id
+- **Legibilidad**: `pg_restore --list` puede leer el dump (formato custom válido)
+- **No vacío**: el archivo existe y no tiene tamaño cero
+- **Fail-fast**: un dump truncado/corrupto (código de salida != 0) se rechaza
+
+No equivale a una restauración completa ni comprueba row counts,
+constraints, sequences o aislamiento por tenant: esa validación requiere
+restaurar en una base descartable con `restore_postgresql.py`. Si
+`pg_restore` falla a mitad de camino, la base destino puede quedar
+parcialmente restaurada: elimínela (`dropdb`) y repita el restore sobre un
+nombre temporal nuevo.
 
 ## Procedimiento de Cutover
 

@@ -64,11 +64,7 @@ const API = {
 
 const MAX_HISTORY_MESSAGES = 12;
 
-const PUBLIC_TOKEN_KEY = "turnobot_public_token";
-
 let conversation = [];
-
-let currentPublicToken = null;
 
 function addConversationMessage(role, content) {
 
@@ -4317,10 +4313,8 @@ async function sendMessage(
                                     message,
 
                                 conversation:
-                                    history,
+                                    history
 
-                                session_id:
-                                    currentPublicToken || undefined
                             })
                     },
                     signal,
@@ -4344,27 +4338,6 @@ async function sendMessage(
 
 
         return;
-    }
-
-
-    if (data.public_token) {
-
-        currentPublicToken = data.public_token;
-
-        try {
-
-            localStorage.setItem(
-                PUBLIC_TOKEN_KEY,
-                currentPublicToken
-            );
-
-        } catch (error) {
-
-            console.error(
-                "No se pudo guardar el token de sesión:",
-                error
-            );
-        }
     }
 
 
@@ -4588,35 +4561,11 @@ messageInput.addEventListener(
 
 async function restoreConversation() {
 
-    let publicToken = null;
-
-    try {
-
-        publicToken =
-            localStorage.getItem(
-                PUBLIC_TOKEN_KEY
-            );
-
-    } catch (error) {
-
-        console.error(
-            "No se pudo leer el token de sesión:",
-            error
-        );
-    }
-
-    if (!publicToken) {
-
-        return;
-    }
-
-    currentPublicToken = publicToken;
-
     try {
 
         const data =
             await fetchJSON(
-                `${API.api}/conversations/${encodeURIComponent(publicToken)}/messages`,
+                `${API.api}/conversations/current/messages`,
                 {
                     method: "GET",
                     cache: "no-store"

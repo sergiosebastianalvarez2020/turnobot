@@ -142,3 +142,48 @@ def test_putconn_failure_fallback(monkeypatch):
             conn = dbmod.get_connection()
             conn.close()  # no debe lanzar
             fake_conn.close.assert_called_once()
+
+
+def test_close_revierte_transaccion_fallida_antes_de_devolverla():
+    import database.pg_pool as pg_pool_mod
+
+    fake_conn = mock.MagicMock(name="psycopg_conn")
+    fake_conn.autocommit = False
+    fake_conn.info.transaction_status = pg_pool_mod._PgTransactionStatus.INERROR
+    fake_pool = mock.MagicMock(name="pool")
+
+    def assert_rolled_back_before_release(connection):
+        assert connection is fake_conn
+        fake_conn.rollback.assert_called_once_with()
+
+    fake_pool.putconn.side_effect = assert_rolled_back_before_release
+
+    PgConnectionProxy(fake_conn, fake_pool).close()
+
+    fake_pool.putconn.assert_called_once_with(fake_conn)
+
+
+def test_excepcion_en_query_se_libera_al_cerrar_la_conexion():
+    import database.pg_pool as pg_pool_mod
+
+    fake_conn = mock.MagicMock(name="psycopg_conn")
+    fake_conn.autocommit = False
+    fake_conn.info.transaction_status = pg_pool_mod._PgTransactionStatus.INERROR
+    fake_cursor = mock.MagicMock(name="psycopg_cursor")
+    fake_cursor.connection = fake_conn
+    fake_cursor.execute.side_effect = RuntimeError("query failed")
+    fake_conn.cursor.return_value = fake_cursor
+    fake_pool = mock.MagicMock(name="pool")
+    connection = PgConnectionProxy(fake_conn, fake_pool)
+
+    try:
+        try:
+            connection.execute("SELECT 1")
+            raise AssertionError("Se esperaba que la query fallara")
+        except RuntimeError as error:
+            assert str(error) == "query failed"
+    finally:
+        connection.close()
+
+    fake_conn.rollback.assert_called_once_with()
+    fake_pool.putconn.assert_called_once_with(fake_conn)

@@ -65,6 +65,22 @@ def _invitation_expires_iso():
     return (datetime.datetime.now(datetime.UTC) + delta).strftime("%Y-%m-%d %H:%M:%S")
 
 
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def _dummy_password_hash() -> str:
+    """Hash provisorio inutilizable para equalizar el timing del login de superadmin.
+
+    Se compara siempre un hash (el real si el superadmin existe, o éste dummy si
+    no), de modo que consultar un email inexistente no sea apreciablemente más
+    rápido que probar un password incorrecto, evitando la enumeración de usuarios.
+    """
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = generate_password_hash("timing-equalization-dummy")
+    return _DUMMY_PASSWORD_HASH
+
+
 def authenticate_superadmin(email, password):
     """Autentica un SUPERADMIN contra platform_users.
 
@@ -74,9 +90,13 @@ def authenticate_superadmin(email, password):
     if not email or not password:
         return None, "Credenciales inválidas."
     user = get_platform_user_by_email(email.strip().lower())
-    if user is None or not user["active"]:
-        return None, "Credenciales inválidas."
-    if not check_password_hash(user["password_hash"], password):
+
+    # Se ejecuta SIEMPRE un chequeo de hash (real si el superadmin existe, de
+    # marcador dummy si no) para que el timing de respuesta no revele si el email
+    # está registrado, evitando la enumeración de usuarios (login oracle).
+    candidate_hash = user["password_hash"] if user is not None else _dummy_password_hash()
+    password_ok = check_password_hash(candidate_hash, password or "")
+    if user is None or not user["active"] or not password_ok:
         return None, "Credenciales inválidas."
     return user, None
 

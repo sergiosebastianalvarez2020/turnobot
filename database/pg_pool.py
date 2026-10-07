@@ -623,6 +623,9 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     # 6d. Convertir params 0/1 para columnas BOOLEAN en UPDATE SET statements
     sql, params = _adapt_update_boolean_params(sql, params)
 
+    # 6e. Convertir params 0/1 ligados a comparaciones de columnas BOOLEAN.
+    params = _adapt_boolean_predicate_params(sql, params)
+
     # 7. Reemplazar placeholders '?' por '%s' fuera de comillas
     sql = replace_placeholders(sql)
 
@@ -1209,6 +1212,43 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
                     params_list[param_idx] = False
 
     return sql, tuple(params_list) if isinstance(params, tuple) else params_list
+
+
+def _adapt_boolean_predicate_params(sql: str, params: Any = None) -> Any:
+    """Convierte params 0/1 comparados con columnas BOOLEAN conocidas a bool.
+
+    Psycopg envía enteros como ``int4``; PostgreSQL no define ``boolean = int4``.
+    SQLite acepta ese patrón y la capa debe enviar True/False al comparar una
+    columna booleana, también en SQL calificado o con varios predicados.
+    Literales y comentarios se enmascaran antes de buscar placeholders para que
+    no alteren la posición de los parámetros.
+    """
+    if params is None or isinstance(params, (str, bytes, dict)):
+        return params
+
+    import re
+
+    columns = "|".join(re.escape(name) for name in sorted(_BOOLEAN_COLUMNS, key=len, reverse=True))
+    placeholder = r"\?|%s"
+    comparison = r"(?:=|!=|<>)"
+    column = rf"(?:\w+\.)?\b(?:{columns})\b"
+    pattern = re.compile(
+        rf"(?:{column}\s*{comparison}\s*(?P<right>{placeholder})"
+        rf"|(?P<left>{placeholder})\s*{comparison}\s*{column})",
+        re.IGNORECASE,
+    )
+    code = _blank_sql_literals(sql)
+    params_list = list(params)
+    positions: set[int] = set()
+    for match in pattern.finditer(code):
+        param_start = match.start("right") if match.group("right") is not None else match.start("left")
+        positions.add(len(re.findall(placeholder, code[:param_start])))
+
+    for position in positions:
+        if position < len(params_list):
+            params_list[position] = _to_pg_bool(params_list[position])
+
+    return tuple(params_list) if isinstance(params, tuple) else params_list
 
 
 class PgRowProxy(dict):

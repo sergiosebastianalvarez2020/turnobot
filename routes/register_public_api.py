@@ -21,6 +21,7 @@ from routes.public_api import (
     business_api_turnos,
     chat,
     public_conversation_messages,
+    public_current_conversation_messages,
     public_manage_turno,
 )
 
@@ -33,6 +34,12 @@ def register(app):
     """
     # Public API routes - customer-facing API and public turn management
     app.add_url_rule("/chat", endpoint="chat", view_func=chat, methods=["POST"])
+    app.add_url_rule(
+        "/api/conversations/current/messages",
+        endpoint="public_current_conversation_messages",
+        view_func=public_current_conversation_messages,
+        methods=["GET"],
+    )
     app.add_url_rule(
         "/api/conversations/<public_token>/messages",
         endpoint="public_conversation_messages",

@@ -152,6 +152,18 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
             self.assertEqual(other_ip.status_code, 200)
             self.assertEqual(len(auth_calls), 11)
 
+    def test_superadmin_login_unknown_user_equaliza_timing(self):
+        """El login de superadmin equaliza timing: un email inexistente ejecuta
+        check_password_hash (dummy) igual que un password incorrecto."""
+        with patch("services.platform.check_password_hash") as mock_check:
+            mock_check.return_value = False
+            platform_user, error = platform_service.authenticate_superadmin(
+                "inexistente-superadmin@test.local", "cualquiera"
+            )
+        self.assertIsNone(platform_user)
+        self.assertEqual(error, "Credenciales inválidas.")
+        self.assertEqual(mock_check.call_count, 1)
+
     def test_owner_invitation_link_uses_public_origin_not_request_host(self):
         self._create_superadmin()
         self.app.config["PUBLIC_BASE_URL"] = "https://canonical.example"

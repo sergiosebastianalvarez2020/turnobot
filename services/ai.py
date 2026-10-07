@@ -1328,7 +1328,8 @@ def ask_ai(
 
     session = None
     session_id = None
-    public_token = None
+    # Preserve the anonymous visitor token supplied by the public route. The
+    # route derives it from Flask's signed session, scoped to the business.
     human_intent_detected = False
     if customer_phone:
         session = get_or_create_conversation_session_scoped(

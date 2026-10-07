@@ -26,7 +26,7 @@ import secrets
 from functools import wraps
 
 from flask import abort, current_app, g, redirect, render_template, request, session, url_for
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from application.rate_limit import is_login_request_allowed
 from application.requests import get_client_ip
@@ -92,6 +92,23 @@ def _establish_session(user_id):
     create_session_scoped(user_id, _hash_session_token(token), expires_at)
 
 
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def _dummy_password_hash() -> str:
+    """Hash provisorio inutilizable para equalizar el timing del login.
+
+    Se compara siempre un hash (el real del usuario si existe, o éste dummy si
+    no) de modo que consultar un email inexistente no sea apreciablemente más
+    rápido que probar un password incorrecto contra un usuario conocido,
+    evitando la enumeración de usuarios vía diferencia de tiempos.
+    """
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = generate_password_hash("timing-equalization-dummy")
+    return _DUMMY_PASSWORD_HASH
+
+
 def _authenticate_login(business, email, password):
     """
     Autentica email+password contra users/business_users para el negocio dado.
@@ -113,17 +130,23 @@ def _authenticate_login(business, email, password):
     email = (email or "").strip().lower()
     user = get_user_by_email_scoped(email) if email else None
 
-    if user is not None:
-        if not user["active"]:
-            return None, "Credenciales inválidas."
-        membership = get_membership_scoped(user["id"], business["id"])
-        if not membership or membership["role_name"] == ROLE_CUSTOMER:
-            return None, "Credenciales inválidas."
-        if not password or not check_password_hash(user["password_hash"], password):
-            return None, "Credenciales inválidas."
-        return user["id"], None
+    # Se ejecuta SIEMPRE un chequeo de hash (real si el usuario existe, de
+    # marcador dummy si no) para que el timing de respuesta no revele si el
+    # email está registrado ni el estado/membersía del usuario, evitando la
+    # enumeración de usuarios vía diferencia de tiempos (login oracle).
+    candidate_hash = user["password_hash"] if user is not None else _dummy_password_hash()
+    password_ok = check_password_hash(candidate_hash, password or "")
 
-    return None, "Credenciales inválidas."
+    if user is None:
+        return None, "Credenciales inválidas."
+    if not user["active"]:
+        return None, "Credenciales inválidas."
+    membership = get_membership_scoped(user["id"], business["id"])
+    if not membership or membership["role_name"] == ROLE_CUSTOMER:
+        return None, "Credenciales inválidas."
+    if not password_ok:
+        return None, "Credenciales inválidas."
+    return user["id"], None
 
 
 def _get_client_ip():
