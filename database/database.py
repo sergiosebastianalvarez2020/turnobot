@@ -15,6 +15,9 @@ DATABASE_PATH = BASE_DIR / "database" / "appointments.db"
 
 MIGRATIONS_DIR = BASE_DIR / "migrations"
 
+# Shared bigint lock key, separate from the app's two-int tenant locks.
+_PG_SCHEMA_BOOTSTRAP_LOCK = 6076853768564197445
+
 logger = logging.getLogger("turnobot.db")
 
 
@@ -248,27 +251,62 @@ def init_database(backend=None):
 def _init_postgresql():
     """Aplica el schema inicial de PostgreSQL desde migrations_pg/001_initial_schema.sql.
 
-    No es idempotente por diseño: el archivo contiene DDL ``CREATE TABLE`` sin
-    ``IF NOT EXISTS`` y debe ejecutarse una sola vez contra una base vacía.
-    Si la tabla ``businesses`` ya existe, se asume que el schema está aplicado
-    y se omite.
+    Serializa el bootstrap con un advisory lock y omite solo una instalación
+    completa. Un estado parcial se rechaza sin intentar reparar DDL de forma
+    implícita.
     """
     from database.pg_pool import split_sql_statements
 
     connection = get_connection()
     try:
-        row = connection.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_name = 'businesses'"
-        ).fetchone()
-        if row:
-            logger.info("Schema PostgreSQL ya presente; se omite bootstrap.")
-            connection.rollback()
-            return
-
         schema_path = BASE_DIR / "migrations_pg" / "001_initial_schema.sql"
         sql = schema_path.read_text(encoding="utf-8")
+        expected_tables = set(
+            re.findall(
+                r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", sql, re.I
+            )
+        )
+        expected_indexes = set(
+            re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z_]\w*)", sql, re.I)
+        )
         statements = split_sql_statements(sql)
+
+        # This query starts the transaction that owns the lock. It stays held
+        # through catalog inspection and the entire bootstrap.
+        connection.execute("SELECT pg_advisory_xact_lock(?)", (_PG_SCHEMA_BOOTSTRAP_LOCK,))
+        existing_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+            ).fetchall()
+        }
+        existing_indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
+            ).fetchall()
+        }
+
+        present_tables = expected_tables & existing_tables
+        present_indexes = expected_indexes & existing_indexes
+        if present_tables or present_indexes:
+            missing_tables = sorted(expected_tables - existing_tables)
+            missing_indexes = sorted(expected_indexes - existing_indexes)
+            if missing_tables or missing_indexes:
+                details = []
+                if missing_tables:
+                    details.append(f"tablas faltantes: {', '.join(missing_tables)}")
+                if missing_indexes:
+                    details.append(f"índices faltantes: {', '.join(missing_indexes)}")
+                raise RuntimeError(
+                    "Schema PostgreSQL parcial/incompleto; no se ejecuta el bootstrap "
+                    "automáticamente (" + "; ".join(details) + ")"
+                )
+
+            logger.info("Schema PostgreSQL completo; se omite bootstrap.")
+            connection.rollback()
+            return
 
         logger.info("Aplicando schema inicial PostgreSQL (%d statements)...", len(statements))
 
