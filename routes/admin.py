@@ -34,12 +34,12 @@ from database.database import (
     list_loyalty_accounts_scoped,
     list_points_ledger_scoped,
     recalculate_all_balances_scoped,
+    save_weekly_schedules_scoped,
     set_resource_active_scoped,
     update_appointment_status_scoped,
     update_business_settings_scoped,
     update_loyalty_settings_scoped,
     update_service_scoped,
-    update_weekly_schedule_scoped,
 )
 from extensions import valid_csrf_token
 from routes.auth import _is_authenticated, _login_url, get_current_business_id
@@ -484,6 +484,10 @@ def admin_save_weekly_schedule(slug=None):
     if business_id is None:
         abort(404)
 
+    # Guardado en lote: se validan los 7 días antes de persistir y se
+    # aplican en una única transacción (todo o nada). Un día inválido
+    # rechaza el lote completo con 400 sin tocar la base.
+    schedules = []
     for day in range(7):
         day_prefix = f"day_{day}"
         is_open = request.form.get(f"{day_prefix}_open") == "1"
@@ -498,9 +502,21 @@ def admin_save_weekly_schedule(slug=None):
             afternoon_start = None
             afternoon_end = None
 
-        update_weekly_schedule_scoped(
-            business_id, day, is_open, morning_start, morning_end, afternoon_start, afternoon_end
+        schedules.append(
+            {
+                "day_of_week": day,
+                "is_open": is_open,
+                "morning_start": morning_start,
+                "morning_end": morning_end,
+                "afternoon_start": afternoon_start,
+                "afternoon_end": afternoon_end,
+            }
         )
+
+    try:
+        save_weekly_schedules_scoped(business_id, schedules)
+    except ValueError as exc:
+        return f"Horario inválido: {exc}", 400
 
     return redirect(
         _admin_url(schedule_message="Los horarios semanales se guardaron correctamente.")

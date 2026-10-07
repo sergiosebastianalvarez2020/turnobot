@@ -935,6 +935,126 @@ def update_weekly_schedule_scoped(
         connection.close()
 
 
+def _validate_weekly_schedule_entry(entry):
+    """Valida una entrada de horario semanal antes de persistir.
+
+    Cada entrada debe tener `day_of_week` en 0-6. Si `is_open` es True, al menos
+    uno de los rangos horarios debe estar presente y ser consistente (start < end
+    y ambos en formato HH:MM). Si `is_open` es False, los horarios deben ser None.
+    """
+    day = entry.get("day_of_week")
+    if day is None or not (0 <= int(day) <= 6):
+        raise ValueError("day_of_week fuera de rango (0-6)")
+
+    is_open = bool(entry.get("is_open"))
+
+    def _parse_time(value):
+        if not value:
+            return None
+        value = str(value).strip()
+        parts = value.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"hora inválida: {value!r}")
+        hh, mm = int(parts[0]), int(parts[1])
+        if not (0 <= hh <= 23) or not (0 <= mm <= 59):
+            raise ValueError(f"hora inválida: {value!r}")
+        return hh * 60 + mm
+
+    morning_start = entry.get("morning_start")
+    morning_end = entry.get("morning_end")
+    afternoon_start = entry.get("afternoon_start")
+    afternoon_end = entry.get("afternoon_end")
+
+    if not is_open:
+        if any(v is not None and str(v).strip() for v in (morning_start, morning_end, afternoon_start, afternoon_end)):
+            raise ValueError("is_open=False requiere horarios nulos")
+        return
+
+    ranges = [
+        (morning_start, morning_end),
+        (afternoon_start, afternoon_end),
+    ]
+    has_any = False
+    for start_val, end_val in ranges:
+        if start_val or end_val:
+            has_any = True
+            if not start_val or not end_val:
+                raise ValueError("rango incompleto: falta start o end")
+            s = _parse_time(start_val)
+            e = _parse_time(end_val)
+            if s >= e:
+                raise ValueError(f"start debe ser < end: {start_val!r} >= {end_val!r}")
+    if not has_any:
+        raise ValueError("is_open=True requiere al menos un rango horario")
+
+
+def save_weekly_schedules_scoped(business_id, schedules):
+    """Guarda los 7 días de horarios semanales de un negocio de forma atómica.
+
+    `schedules` es una lista de dicts con claves: day_of_week (0-6), is_open,
+    morning_start, morning_end, afternoon_start, afternoon_end.
+
+    ANTES de persistir, se validan todos los días (completo). Si algún día falla
+    la validación, se rechaza TODO el lote (no se persiste parcialmente). Si la
+    validación pasa, se aplica todo en una única transacción: un error de BD en
+    cualquier día revierte todo los demás. Así evita el estado parcial donde
+    algunos días se guardaron y otros no.
+
+    Devuelve True si se guardaron todos los días. Si algún día falla la
+    validación, lanza ValueError y no persiste ningún día.
+    """
+    if schedules is None:
+        raise ValueError("schedules no puede ser None")
+    validated = []
+    seen_days = set()
+    for entry in schedules:
+        if not isinstance(entry, dict):
+            raise ValueError("cada entrada debe ser un dict")
+        _validate_weekly_schedule_entry(entry)
+        day = int(entry["day_of_week"])
+        if day in seen_days:
+            raise ValueError(f"duplicado day_of_week={day}")
+        seen_days.add(day)
+        validated.append(
+            (
+                bool(entry["is_open"]),
+                entry.get("morning_start") if entry.get("morning_start") else None,
+                entry.get("morning_end") if entry.get("morning_end") else None,
+                entry.get("afternoon_start") if entry.get("afternoon_start") else None,
+                entry.get("afternoon_end") if entry.get("afternoon_end") else None,
+                business_id,
+                day,
+            )
+        )
+
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for is_open, ms, me, as_, ae, bid, day in validated:
+                if not is_open:
+                    ms, me, as_, ae = None, None, None, None
+                connection.execute(
+                    """
+                    UPDATE weekly_schedules
+                    SET is_open = ?,
+                        morning_start = ?,
+                        morning_end = ?,
+                        afternoon_start = ?,
+                        afternoon_end = ?
+                    WHERE business_id = ? AND day_of_week = ?
+                    """,
+                    (is_open, ms, me, as_, ae, bid, day),
+                )
+            connection.commit()
+            return True
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.close()
+
+
 def set_notifications_enabled_scoped(business_id, enabled):
     """Habilita/deshabilita las notificaciones de un negocio."""
     connection = get_connection()
@@ -1133,6 +1253,142 @@ def list_failed_notifications_scoped(business_id=None, limit=100):
                 """,
                 (limit,),
             ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def list_stuck_notifications_scoped(stale_after_seconds=900, business_id=None, limit=100):
+    """Lista notificaciones con estado 'processing' que superan el umbral de stalez.
+
+    Un claim 'processing' queda atascado cuando el proceso que lo tomó (worker,
+    cron, request) termina inesperadamente (crash, timeout, terminación, reinicio)
+    antes de marcar 'sent' o 'failed'. El claim se considera recuperable cuando
+    ``last_attempt_at`` es anterior a ahora menos ``stale_after_seconds``.
+
+    El recovery real lo realiza ``claim_notification_scoped`` (recupera el claim
+    venciado) y el despacho (``send_appointment_notification`` /
+    ``send_business_confirmation_email``); esta función solo expone la lista para
+    que el job de recuperación las itere.
+
+    Scoped por business_id (o todas si no se indica).
+    """
+    connection = get_connection()
+    try:
+        if business_id is not None:
+            rows = connection.execute(
+                """
+                SELECT id, appointment_id, business_id, type, channel, destination, error
+                FROM notification_log
+                WHERE business_id = ? AND status = 'processing'
+                  AND last_attempt_at < datetime('now', ?)
+                ORDER BY id
+                LIMIT ?
+                """,
+                (business_id, f"-{int(stale_after_seconds)} seconds", limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT id, appointment_id, business_id, type, channel, destination, error
+                FROM notification_log
+                WHERE status = 'processing'
+                  AND last_attempt_at < datetime('now', ?)
+                ORDER BY id
+                LIMIT ?
+                """,
+                (f"-{int(stale_after_seconds)} seconds", limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def list_completed_appointments_without_loyalty_scoped(business_id=None, limit=100):
+    """Lista turnos 'completed' cuyo earn de fidelización NO está acreditado.
+
+    Un turno completado puede quedar sin puntos si:
+      - el proceso que marcó 'completed' terminó antes de acreditar (crash/restart);
+      - la fidelización estaba desactivada al momento y luego se activó;
+      - `award_points_for_completed` falló por un error transitorio.
+
+    La recovery es idempotente: `award_points_for_completed` protege contra
+    duplicados con el UNIQUE parcial ``idx_points_ledger_earn_per_appointment``.
+    Solo se devuelven turnos donde NO existe un movimiento 'earn' para ese
+    appointment_id (LEFT JOIN ... IS NULL), de modo que el recovery no relee
+    filas ya procesadas.
+
+    Scoped por business_id (o todas si no se indica).
+    """
+    connection = get_connection()
+    try:
+        if business_id is not None:
+            rows = connection.execute(
+                """
+                SELECT a.id, a.business_id, a.customer_name, a.customer_email,
+                       a.phone, a.service, a.appointment_date, a.appointment_time
+                FROM appointments a
+                LEFT JOIN points_ledger pl
+                  ON pl.business_id = a.business_id
+                 AND pl.appointment_id = a.id
+                 AND pl.type = 'earn'
+                WHERE a.business_id = ? AND a.status = 'completed'
+                  AND pl.id IS NULL
+                ORDER BY a.id
+                LIMIT ?
+                """,
+                (business_id, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT a.id, a.business_id, a.customer_name, a.customer_email,
+                       a.phone, a.service, a.appointment_date, a.appointment_time
+                FROM appointments a
+                LEFT JOIN points_ledger pl
+                  ON pl.business_id = a.business_id
+                 AND pl.appointment_id = a.id
+                 AND pl.type = 'earn'
+                WHERE a.status = 'completed'
+                  AND pl.id IS NULL
+                ORDER BY a.id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def list_approved_businesses_without_invitations(limit=100):
+    """Lista negocios aprobados (active=1, pending=0) SIN invitación de owner.
+
+    Esto indica un estado inconsistente: el negocio fue aprobado (active=1) pero
+    la invitación del owner no se generó (falló `create_invitation` después de
+    `set_business_pending`/`set_business_active` en `approve_business`). El owner
+    no puede configurar su contraseña.
+
+    Devuelve dicts con id, name, slug, owner_email, user_id.
+    """
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT b.id, b.name, b.slug, u.email AS owner_email, bu.user_id
+            FROM businesses b
+            LEFT JOIN invitations i ON i.business_id = b.id AND i.role_name = 'owner'
+            JOIN business_users bu
+              ON bu.business_id = b.id
+             AND bu.role_id = (SELECT id FROM roles WHERE name = 'owner')
+            JOIN users u ON u.id = bu.user_id
+            WHERE b.active = 1 AND b.pending = 0
+              AND i.id IS NULL
+            ORDER BY b.id
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
         return [dict(row) for row in rows]
     finally:
         connection.close()
