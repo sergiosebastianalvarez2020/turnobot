@@ -1,6 +1,6 @@
 # Inventario canónico de tests después del cutover PostgreSQL
 
-Estado auditado: **categoría A reabierta con 2 archivos / 26 tests** (`test_recovery_lists.py`, `test_weekly_schedules.py`), detectados al contrastar el documento contra la colección real; los otros 86 archivos están clasificados en B/C/D/E sin pendencias de migración.
+Estado auditado: **categoría A cerrada con 0 archivos / 0 tests**; `test_recovery_lists.py` y `test_weekly_schedules.py` fueron migrados a `PostgreSQLTestCase` en el commit `bc86ff1`. Los 88 archivos están clasificados en B/C/D/E sin pendencias de migración.
 
 Este documento clasifica cada archivo `test_*.py` de `tests/` y `tests_pg/` exactamente una vez. Las cifras se verificaron contra una **colección real** (`pytest tests/ tests_pg/ --collect-only -q` con `TURNOBOT_PG_URL` configurada), que arroja **88 archivos y 1.252 items**, y de forma independiente contra un conteo **AST** de funciones y métodos `test_*`, que coincide archivo por archivo salvo los tres archivos parametrizados conocidos.
 
@@ -24,14 +24,9 @@ Histórico de discrepancias detectadas y corregidas contra la realidad:
 
 ## A — Migrar/normalizar al patrón PostgreSQL
 
-**2 archivos / 26 tests. Categoría reabierta en esta revisión.**
+**0 archivos / 0 tests. Categoría cerrada.**
 
-`tests/test_recovery_lists.py` y `tests/test_weekly_schedules.py` (ambos añadidos en el commit `e9867e1`) preparan una base temporal SQLite con `TemporaryDirectory`, swap de `database.DATABASE_PATH` y `database.init_database()`, y anulan el skip funcional de `tests/conftest.py` para correr sin `TURNOBOT_PG_URL`. Las funciones que prueban (`list_stuck_notifications_scoped`, `list_completed_appointments_without_loyalty_scoped`, `list_approved_businesses_without_invitations`, `_validate_weekly_schedule_entry`, `save_weekly_schedules_scoped`) son de doble backend y en producción corren sobre PostgreSQL (`database/database.py` y `routes/admin.py`), pero hoy solo se ejercitan contra SQLite: ningún otro archivo de la suite cubre su camino PostgreSQL. Por eso vuelven a la cola de normalización al patrón `PostgreSQLTestCase`.
-
-| Archivo | Tests | Categoría | Motivo | Próxima acción |
-| --- | ---: | --- | --- | --- |
-| `tests/test_recovery_lists.py` | 13 | A | Detectores read-only de `database/database.py` (notificaciones atascadas, earns de loyalty faltantes, businesses aprobados sin invitación) sobre SQLite temporal: swap de `DATABASE_PATH` + `init_database()` y skip de conftest anulado localmente. | Normalizar a `PostgreSQLTestCase`; el seam ya traduce placeholders/aislamiento, verificar las 3 consultas `*_scoped` sobre PG. |
-| `tests/test_weekly_schedules.py` | 13 | A | Validación y `save_weekly_schedules_scoped` atómica (un día inválido no persiste nada; aislamiento por `business_id`) sobre SQLite temporal, mismo patrón; ninguna operación contra PostgreSQL. | Normalizar a `PostgreSQLTestCase`; contrastar atomicidad y aislamiento sobre PG. |
+La categoría queda vacía: los dos archivos que se habían reabierto en la revisión anterior fueron normalizados a `PostgreSQLTestCase` en `bc86ff1`. `test_recovery_lists.py` y `test_weekly_schedules.py` reciben `app` desde el fixture compartido; este depende de `pg_test_database`, que requiere `TURNOBOT_PG_URL`, crea una base desechable PostgreSQL, aplica el schema inicial y la semilla, y la elimina al terminar. Sus casos de validación pura no acceden a SQLite ni necesitan una base, mientras que sus escenarios de persistencia corren contra PostgreSQL.
 
 ### Cierre histórico de A (los 8 archivos ya están en B)
 
@@ -112,10 +107,12 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_services_isolation.py` | 9 | B | Migrado: aislamiento de servicios por tenant con seed PG por negocio. | Mantener como cobertura PG. |
 | `tests/test_rate_limit_http.py` | 4 | B | Migrado: bloqueo 429 y reset de ventana por HTTP sobre PG, con la ventana simulada vía `_prune_rate_limit_state(now=...)`. | Mantener como cobertura PG. |
 | `tests/test_rate_limiting.py` | 8 | B | Migrado el uso funcional: `last_insert_rowid()` sustituido por `cursor.lastrowid` del seam y enforcement de FK sobre PG. **Residuo**: `ForeignKeyEnforcementTests.setUp` conserva `TemporaryDirectory` + swap de `DATABASE_PATH` + `init_database()`, inertes sobre PostgreSQL (limpieza pendiente, no bloquea). Los `except sqlite3.IntegrityError` son contrato vigente: `translate_pg_error` mapea psycopg → `sqlite3.*`. | Mantener; limpiar el texto muerto en una pasada aparte. |
+| `tests/test_recovery_lists.py` | 13 | B | Detectores read-only de notificaciones atascadas, earns de loyalty faltantes y negocios aprobados sin invitación. Usa `PostgreSQLTestCase`; los casos de persistencia corren contra una base PostgreSQL temporal del harness. | Mantener como cobertura de recovery en PG. |
 | `tests/test_staff_invitation.py` | 11 | B | Migrado: ciclo de invitación por token (`provision → approve → accept`, un solo uso, `used_at`) y frontera de autorización `admin → forbidden` sobre PG. | Mantener como cobertura PG. |
 | `tests/test_token_logging_redaction.py` | 20 | B | Regresión de redacción de tokens sensibles en logs (password reset, invitaciones, gestión de turnos, conversaciones): unidad sobre paths sensibles más extremo a extremo con `test_client` de la app, gated por el skip de conftest. | Mantener como cobertura funcional bajo el harness común. |
 | `tests/test_turnogo_landing_wizard.py` | 33 | B | Rutas funcionales usan app global PG, negocio/servicios/horarios del seed estándar. | Mantener; podría explicitar `client` y seed. |
 | `tests/test_stage11_product.py` | 3 | B | Resumen de producto y onboarding sobre PostgreSQL live; hereda `LoyaltyBase` migrada. | Mantener como cobertura PG funcional. |
+| `tests/test_weekly_schedules.py` | 13 | B | Validación y guardado atómico de horarios; los escenarios de persistencia e aislamiento usan `PostgreSQLTestCase` y una base PostgreSQL temporal del harness. | Mantener como cobertura de horarios en PG. |
 | `tests_pg/test_advisory_lock_live.py` | 2 | B | Locks consultivos contra PostgreSQL live. | Mantener en integración PG. |
 | `tests_pg/test_concurrency.py` | 7 | B | Concurrencia PostgreSQL live. | Mantener en integración PG. |
 | `tests_pg/test_helpers_security.py` | 21 | B | Guardia de nombres de base en `tests_pg/_helpers.py`: `_TEST_DB_NAME_RE` + `_validate_test_db_name()` rechazan con `ValueError` cualquier nombre fuera de `turnobot_(test|bootstrap)_[0-9a-f]+` antes de `CREATE DATABASE`/`DROP DATABASE`; `new_db_name()` solo genera nombres que superan ese filtro. Unit tests puros sin servidor (la validación lanza antes de conectar); 5 funciones, 2 parametrizadas en 6 y 12 casos. | Mantener como contrato de seguridad del harness PG. |
@@ -127,7 +124,7 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests_pg/test_seed_sequences.py` | 8 | B | Cobertura del harness: `sync_identity_sequences()` sincroniza las secuencias IDENTITY tanto en bases solo-schema como schema+seed. | Mantener como contrato del seed. |
 | `tests_pg/test_session_live.py` | 12 | B | Session, app factory y errores sobre pool PostgreSQL live. | Mantener en integración PG. |
 
-**68 archivos / 1.027 tests.**
+**70 archivos / 1.053 tests.**
 
 ## C — Mantener SQLite por razón técnica vigente
 
@@ -188,16 +185,16 @@ Los items por archivo cuentan la expansión parametrizada indicada arriba.
 
 | Categoría | Archivos | Tests/items |
 | --- | ---: | ---: |
-| A — Migrar/normalizar a PostgreSQL | 2 | 26 |
-| B — PostgreSQL ya cubierto | 68 | 1.027 |
+| A — Migrar/normalizar a PostgreSQL | 0 | 0 |
+| B — PostgreSQL ya cubierto | 70 | 1.053 |
 | C — Mantener SQLite legítimo | 8 | 40 |
 | D — Consolidación resuelta | 1 | 10 |
 | E — Revisión manual/unit desacoplable | 9 | 149 |
 | **TOTAL** | **88** | **1.252** |
 
-Comprobación: `2 + 68 + 8 + 1 + 9 = 88`; `26 + 1.027 + 40 + 10 + 149 = 1.252`.
+Comprobación: `0 + 70 + 8 + 1 + 9 = 88`; `0 + 1.053 + 40 + 10 + 149 = 1.252`.
 
-Las cifras por categoría quedan **forzadas por la aritmética**: B = total − A − C − D − E, es decir `88 − 2 − 8 − 1 − 9 = 68` archivos y `1.252 − 26 − 40 − 10 − 149 = 1.027` tests. Cualquier otro total para B dejaría el inventario descuadrado respecto al total canónico de 88 archivos / 1.252 items confirmado por `pytest --collect-only`.
+Las cifras por categoría quedan **forzadas por la aritmética**: B = total − A − C − D − E, es decir `88 − 0 − 8 − 1 − 9 = 70` archivos y `1.252 − 0 − 40 − 10 − 149 = 1.053` tests. Cualquier otro total para B dejaría el inventario descuadrado respecto al total canónico de 88 archivos / 1.252 items.
 
 ## Adaptador de compatibilidad: corrección de `_adapt_boolean_comparisons`
 
@@ -231,7 +228,7 @@ Ya completados (32 archivos): `test_business_settings`, `test_security_concurren
 
 Completados además en el cierre de A (8 archivos, 268 tests): `test_rate_limiting`, `test_emails_etapa4`, `test_ai_tools_integration`, `test_provision_business`, `test_membership_authorization`, `test_resources_public_api`, `test_observability`, `test_public_api_service_isolation`.
 
-**Pendiente: 2 archivos / 26 tests** (`test_recovery_lists`, `test_weekly_schedules`), reclasificados a A en esta revisión: sus funciones dual-backend todavía no se ejercitan contra PostgreSQL. No queda nada pendiente del cierre original de FASE 3.
+**Pendiente: ninguno.** `test_recovery_lists` y `test_weekly_schedules` se integraron al harness PostgreSQL en `bc86ff1` y están clasificados en B. No queda nada pendiente del cierre original de FASE 3.
 
 Quedan fuera de la cola por diseño, no por olvido:
 

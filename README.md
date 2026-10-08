@@ -206,13 +206,14 @@ python scripts/backup_postgresql.py
 
 ## Testing
 
-The test suite has two database paths:
+The test suite has two groups, both run against PostgreSQL in CI:
 
-- `tests/` is the general application suite and currently uses the SQLite
-  backend when `DB_BACKEND=sqlite` is set explicitly. Its results do not by
-  themselves certify PostgreSQL behavior.
-- `tests_pg/` is the live PostgreSQL integration suite. CI runs it against a
-  PostgreSQL service; locally it requires `TURNOBOT_PG_URL`.
+- `tests/` is the general application suite. With `TURNOBOT_PG_URL` configured,
+  its shared fixtures create isolated temporary PostgreSQL databases for tests
+  that exercise persistence. Tests that explicitly cover SQLite compatibility
+  may select the SQLite backend themselves.
+- `tests_pg/` contains PostgreSQL integration tests. CI runs both groups against
+  its PostgreSQL service; locally, configure `TURNOBOT_PG_URL` to run them.
 
 The suites cover:
 
