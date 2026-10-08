@@ -204,9 +204,7 @@ def public_current_conversation_messages():
 
     business_id = get_current_business_id()
     if business_id is None:
-        return jsonify(
-            {"success": False, "error": "Conversación no encontrada."}
-        ), 404
+        return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
     public_token = _anonymous_chat_tokens().get(str(business_id))
     if not isinstance(public_token, str):
         return jsonify({"success": True, "messages": []})

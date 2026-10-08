@@ -88,7 +88,12 @@ class TestPostgresConfig(unittest.TestCase):
                     build_config(Flask(__name__))
 
     def test_resolver_rejects_malformed_postgresql(self):
-        for url in ("postgresql://", "postgres://host", "postgresql://user@/db", "postgresql://host:99999/db"):
+        for url in (
+            "postgresql://",
+            "postgres://host",
+            "postgresql://user@/db",
+            "postgresql://host:99999/db",
+        ):
             with self.subTest(url=url), self.assertRaises(RuntimeError):
                 resolve_database_backend(url, environment="production")
 
@@ -100,7 +105,9 @@ class TestPostgresConfig(unittest.TestCase):
             ("sqlite", "sqlite:///database.db"),
         )
         with self.assertRaises(RuntimeError):
-            resolve_database_backend("sqlite:///database.db", environment="production", sqlite_opt_in="sqlite")
+            resolve_database_backend(
+                "sqlite:///database.db", environment="production", sqlite_opt_in="sqlite"
+            )
 
     def test_build_config_and_database_backend_share_resolved_choice(self):
         os.environ["DATABASE_URL"] = "postgres://user:pass@localhost/db"

@@ -31,8 +31,7 @@ def test_build_pg_dump_command_uses_custom_compressed_dump():
 
 def test_build_pg_restore_command_uses_target_database():
     cmd = restore_postgresql.build_pg_restore_command(
-        Path("/tmp/turnobot-pg-20260930-010101.dump"),
-        "turnobot_restore_test",
+        Path("/tmp/turnobot-pg-20260930-010101.dump"), "turnobot_restore_test"
     )
 
     assert cmd[0] == "pg_restore"

@@ -121,9 +121,7 @@ def _run_once(business_id=None, limit=100):
             business_id = row["business_id"]
             settings = get_business_settings_scoped(business_id)
             if not settings:
-                logger.warning(
-                    "Negocio %s inexistente; se omite fila %s.", business_id, row["id"]
-                )
+                logger.warning("Negocio %s inexistente; se omite fila %s.", business_id, row["id"])
                 continue
 
             ok, reason = _resend(row)

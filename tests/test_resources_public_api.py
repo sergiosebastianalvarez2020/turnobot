@@ -59,7 +59,9 @@ class BaseResourcePublicAPITest(unittest.TestCase, PostgreSQLTestCase):
     def _setup_businesses(self):
         # Business 1 (El Corte) ya lo crea la semilla estandar de PostgreSQL.
         # Solo creamos Business 2 (Pádel) y sus datos.
-        self._execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'Padel Club', 'padel-club')")
+        self._execute(
+            "INSERT INTO businesses (id, name, slug) VALUES (2, 'Padel Club', 'padel-club')"
+        )
         self._execute(
             "INSERT INTO services (id, business_id, name, price, duration, active) "
             "VALUES (10, 2, 'Partido Pádel', 15000, 90, TRUE)"
@@ -310,14 +312,12 @@ class TestPublicReservationWithResource(BaseResourcePublicAPITest):
             patch("services.notifications.notifications_enabled", return_value=True),
             patch(
                 "services.notifications._send_email",
-                side_effect=lambda *args: (outgoing.append(args) or (True, None)),
+                side_effect=lambda *args: outgoing.append(args) or (True, None),
             ),
             patch.object(application, "send_business_confirmation_email"),
         ):
             response = self.client.post(
-                "/b/padel-club/api/reservar",
-                json=payload,
-                headers={"Host": "evil.example"},
+                "/b/padel-club/api/reservar", json=payload, headers={"Host": "evil.example"}
             )
 
         self.assertEqual(response.status_code, 201)

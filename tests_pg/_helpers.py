@@ -277,9 +277,9 @@ def sync_identity_sequences(conn) -> None:
         if not sequence:
             continue
         conn.execute(
-            sql.SQL(
-                "SELECT setval({}, COALESCE((SELECT MAX(id) FROM {}), 0) + 1, false)"
-            ).format(sql.Literal(sequence), sql.Identifier(table_name))
+            sql.SQL("SELECT setval({}, COALESCE((SELECT MAX(id) FROM {}), 0) + 1, false)").format(
+                sql.Literal(sequence), sql.Identifier(table_name)
+            )
         )
 
 
@@ -317,9 +317,19 @@ def seed_standard_test_data(url: str) -> int:
                 # DEFAULT acentuado y SQLite rellena la fila existente con ese valor;
                 # `007` la reconstruye copiando los datos, de modo que los acentos se
                 # conservan. Los DEFAULT sin acento de 007 solo aplican a filas nuevas.
-                "El Corte", 60, 0, "Barbería", "EC", "Barbería masculina",
-                "America/Argentina/Buenos_Aires", 1,
-                False, "", "", "", ""
+                "El Corte",
+                60,
+                0,
+                "Barbería",
+                "EC",
+                "Barbería masculina",
+                "America/Argentina/Buenos_Aires",
+                1,
+                False,
+                "",
+                "",
+                "",
+                "",
             ),
         )
 

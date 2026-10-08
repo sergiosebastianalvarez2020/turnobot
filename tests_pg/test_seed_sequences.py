@@ -90,10 +90,7 @@ def test_services_seed_deja_la_secuencia_libre(seeded_database):
 def test_roles_sembrados_por_el_schema_dejan_la_secuencia_libre(seeded_database):
     """`roles` is seeded by the schema itself (ids 1..4), not by the standard seed."""
     with connect_autocommit(seeded_database) as conn:
-        nuevo = _generar_id(
-            conn,
-            "INSERT INTO roles (name) VALUES ('viewer') RETURNING id",
-        )
+        nuevo = _generar_id(conn, "INSERT INTO roles (name) VALUES ('viewer') RETURNING id")
     assert nuevo == 5
 
 
@@ -171,9 +168,7 @@ def test_sync_no_altera_los_ids_sembrados(seeded_database):
     """The sync must move the sequences only: seeded ids and relations stay intact."""
     with connect_autocommit(seeded_database) as conn:
         negocios = conn.execute("SELECT id, slug FROM businesses ORDER BY id").fetchall()
-        servicios = conn.execute(
-            "SELECT id, name FROM services ORDER BY id"
-        ).fetchall()
+        servicios = conn.execute("SELECT id, name FROM services ORDER BY id").fetchall()
         roles = conn.execute("SELECT id, name FROM roles ORDER BY id").fetchall()
     assert negocios == [(1, "el-corte")]
     assert servicios == [(1, "Corte"), (2, "Corte + barba"), (3, "Barba")]

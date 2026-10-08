@@ -84,9 +84,7 @@ def _run_once():
             business_id = business["id"]
             if not notifications_enabled(business_id):
                 logger.info(
-                    "Negocio %s (%s): notificaciones deshabilitadas.",
-                    business_id,
-                    business["slug"],
+                    "Negocio %s (%s): notificaciones deshabilitadas.", business_id, business["slug"]
                 )
                 continue
 

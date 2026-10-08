@@ -196,11 +196,7 @@ class TestStaffInvitationAccept(StaffInvitationBase):
         login = self.client.post(
             "/b/test-staff-biz/login",
             headers=host_headers,
-            data={
-                "email": self.OWNER_EMAIL,
-                "password": self.OWNER_PASSWORD,
-                "csrf_token": csrf,
-            },
+            data={"email": self.OWNER_EMAIL, "password": self.OWNER_PASSWORD, "csrf_token": csrf},
         )
         self.assertEqual(login.status_code, 302)
 
@@ -212,11 +208,7 @@ class TestStaffInvitationAccept(StaffInvitationBase):
             response = self.client.post(
                 self._invitar_url(),
                 headers=host_headers,
-                data={
-                    "email": self.STAFF_EMAIL,
-                    "role_name": "staff",
-                    "csrf_token": csrf,
-                },
+                data={"email": self.STAFF_EMAIL, "role_name": "staff", "csrf_token": csrf},
             )
 
         self.assertEqual(response.status_code, 302)

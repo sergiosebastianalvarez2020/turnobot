@@ -262,9 +262,7 @@ def _init_postgresql():
         schema_path = BASE_DIR / "migrations_pg" / "001_initial_schema.sql"
         sql = schema_path.read_text(encoding="utf-8")
         expected_tables = set(
-            re.findall(
-                r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", sql, re.I
-            )
+            re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", sql, re.I)
         )
         expected_indexes = set(
             re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z_]\w*)", sql, re.I)
@@ -859,11 +857,7 @@ def update_business_settings_scoped(
                 business_initials,
                 business_description,
                 timezone,
-                (
-                    bool(notifications_enabled)
-                    if notifications_enabled is not None
-                    else None
-                ),
+                (bool(notifications_enabled) if notifications_enabled is not None else None),
                 (notification_email or "").strip() if notification_email is not None else None,
                 slot_duration if slot_duration is not None else None,
                 break_between_slots if break_between_slots is not None else None,
@@ -966,14 +960,14 @@ def _validate_weekly_schedule_entry(entry):
     afternoon_end = entry.get("afternoon_end")
 
     if not is_open:
-        if any(v is not None and str(v).strip() for v in (morning_start, morning_end, afternoon_start, afternoon_end)):
+        if any(
+            v is not None and str(v).strip()
+            for v in (morning_start, morning_end, afternoon_start, afternoon_end)
+        ):
             raise ValueError("is_open=False requiere horarios nulos")
         return
 
-    ranges = [
-        (morning_start, morning_end),
-        (afternoon_start, afternoon_end),
-    ]
+    ranges = [(morning_start, morning_end), (afternoon_start, afternoon_end)]
     has_any = False
     for start_val, end_val in ranges:
         if start_val or end_val:

@@ -74,9 +74,7 @@ class TestValidateWeeklyScheduleEntry(unittest.TestCase):
 
     def test_abierto_sin_ningun_horario(self):
         with self.assertRaises(ValueError):
-            database._validate_weekly_schedule_entry(
-                _entry(1, ms=None, me=None, as_=None, ae=None)
-            )
+            database._validate_weekly_schedule_entry(_entry(1, ms=None, me=None, as_=None, ae=None))
 
     def test_rango_incompleto(self):
         with self.assertRaises(ValueError):
@@ -100,9 +98,7 @@ class TestValidateWeeklyScheduleEntry(unittest.TestCase):
         for bad_time in ("9", "09-00", "25:00", "09:60", "ab:cd", "09:00:00"):
             with self.subTest(bad_time=bad_time):
                 with self.assertRaises(ValueError):
-                    database._validate_weekly_schedule_entry(
-                        _entry(1, ms=bad_time, me="13:00")
-                    )
+                    database._validate_weekly_schedule_entry(_entry(1, ms=bad_time, me="13:00"))
 
 
 class TestSaveWeeklySchedulesScoped(unittest.TestCase):
@@ -140,12 +136,16 @@ class TestSaveWeeklySchedulesScoped(unittest.TestCase):
         return conn
 
     def _schedules(self, business_id=1):
-        rows = self._conn().execute(
-            "SELECT day_of_week, is_open, morning_start, morning_end,"
-            " afternoon_start, afternoon_end FROM weekly_schedules"
-            " WHERE business_id = ? ORDER BY day_of_week",
-            (business_id,),
-        ).fetchall()
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT day_of_week, is_open, morning_start, morning_end,"
+                " afternoon_start, afternoon_end FROM weekly_schedules"
+                " WHERE business_id = ? ORDER BY day_of_week",
+                (business_id,),
+            )
+            .fetchall()
+        )
         return [tuple(r) for r in rows]
 
     def test_guarda_semana_valida_y_devuelve_true(self):
@@ -209,8 +209,7 @@ class TestSaveWeeklySchedulesScoped(unittest.TestCase):
         conn.execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'otro', 'otro')")
         for day in range(7):
             conn.execute(
-                "INSERT INTO weekly_schedules (business_id, day_of_week, is_open)"
-                " VALUES (2, ?, 0)",
+                "INSERT INTO weekly_schedules (business_id, day_of_week, is_open) VALUES (2, ?, 0)",
                 (day,),
             )
         conn.commit()

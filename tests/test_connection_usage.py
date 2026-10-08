@@ -38,7 +38,9 @@ class _BaseTestCase(unittest.TestCase):
             counted["n"] += 1
             return database.get_connection(*args, **kwargs)
 
-        with mock.patch("services.appointments.get_connection", side_effect=counting_get_connection):
+        with mock.patch(
+            "services.appointments.get_connection", side_effect=counting_get_connection
+        ):
             target()
 
         return counted["n"]

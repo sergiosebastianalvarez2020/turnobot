@@ -42,7 +42,7 @@ def _iso_row(row):
     enviado fallaria aunque el valor almacenado sea correcto.
     """
     # sqlite3.Row no tiene .items(), convertir a dict primero
-    if hasattr(row, 'keys'):
+    if hasattr(row, "keys"):
         row = dict(row)
     for key, value in row.items():
         if isinstance(value, datetime):
@@ -93,9 +93,12 @@ class _AdminLoginBase(unittest.TestCase):
         # Provisiona un owner real con credenciales conocidas en lugar de
         # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
         from database.seed_auth import provision_owner_from_bootstrap
+
         self._owner_email = "owner@test.local"
         self._owner_password = "testpass123"
-        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
 
         self._original_hash = application.ADMIN_PASSWORD_HASH
         self._original_password = application.ADMIN_PASSWORD
@@ -105,11 +108,19 @@ class _AdminLoginBase(unittest.TestCase):
         # Crear una nueva instancia de la app para aislar esta prueba
         # (evita el pool compartido del module-level app configurado por pg_isolate_module_app)
         from application import create_app
+
         self.app = create_app()
         self.client = self.app.test_client()
         login_page = self.client.get("/login")
         self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"email": self._owner_email, "password": self._owner_password, "csrf_token": self.csrf_login})
+        self.client.post(
+            "/login",
+            data={
+                "email": self._owner_email,
+                "password": self._owner_password,
+                "csrf_token": self.csrf_login,
+            },
+        )
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self._original_hash

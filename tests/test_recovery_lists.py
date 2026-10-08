@@ -75,12 +75,10 @@ class RecoveryListsBase(unittest.TestCase):
     def _business(self, bid, name, active=1, pending=0):
         conn = self._conn()
         conn.execute(
-            "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (?, ?, ?)",
-            (bid, name, name),
+            "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (?, ?, ?)", (bid, name, name)
         )
         conn.execute(
-            "UPDATE businesses SET active = ?, pending = ? WHERE id = ?",
-            (active, pending, bid),
+            "UPDATE businesses SET active = ?, pending = ? WHERE id = ?", (active, pending, bid)
         )
         conn.commit()
 
@@ -124,12 +122,8 @@ class TestStuckNotifications(RecoveryListsBase):
     def test_umbral_personalizado(self):
         self._business(101, "b1")
         self._log(1, 101, "processing", minutes_ago=30)
-        self.assertEqual(
-            database.list_stuck_notifications_scoped(3600, business_id=101), []
-        )
-        self.assertEqual(
-            len(database.list_stuck_notifications_scoped(60, business_id=101)), 1
-        )
+        self.assertEqual(database.list_stuck_notifications_scoped(3600, business_id=101), [])
+        self.assertEqual(len(database.list_stuck_notifications_scoped(60, business_id=101)), 1)
 
     def test_scoping_por_negocio(self):
         self._business(101, "b1")
@@ -138,24 +132,19 @@ class TestStuckNotifications(RecoveryListsBase):
         self._log(2, 102, "processing", minutes_ago=60)
 
         self.assertEqual(
-            [r["appointment_id"] for r in database.list_stuck_notifications_scoped(900)],
-            [1, 2],
+            [r["appointment_id"] for r in database.list_stuck_notifications_scoped(900)], [1, 2]
         )
         self.assertEqual(
             [
                 r["appointment_id"]
-                for r in database.list_stuck_notifications_scoped(
-                    900, business_id=102
-                )
+                for r in database.list_stuck_notifications_scoped(900, business_id=102)
             ],
             [2],
         )
 
     def test_sin_filas_devuelve_vacio(self):
         self._business(101, "b1")
-        self.assertEqual(
-            database.list_stuck_notifications_scoped(900, business_id=101), []
-        )
+        self.assertEqual(database.list_stuck_notifications_scoped(900, business_id=101), [])
 
 
 class TestMissingLoyaltyEarn(RecoveryListsBase):
@@ -170,8 +159,7 @@ class TestMissingLoyaltyEarn(RecoveryListsBase):
     def _account(self, bid):
         conn = self._conn()
         conn.execute(
-            "INSERT INTO loyalty_accounts (business_id, customer_phone)"
-            " VALUES (?, '3815000001')",
+            "INSERT INTO loyalty_accounts (business_id, customer_phone) VALUES (?, '3815000001')",
             (bid,),
         )
         conn.commit()
@@ -196,15 +184,10 @@ class TestMissingLoyaltyEarn(RecoveryListsBase):
         self._appointment(2, 102, status="completed")
 
         self.assertEqual(
-            [r["id"] for r in database.list_completed_appointments_without_loyalty_scoped()],
-            [1, 2],
+            [r["id"] for r in database.list_completed_appointments_without_loyalty_scoped()], [1, 2]
         )
         self.assertEqual(
-            [
-                r["id"]
-                for r in database.list_completed_appointments_without_loyalty_scoped(102)
-            ],
-            [2],
+            [r["id"] for r in database.list_completed_appointments_without_loyalty_scoped(102)], [2]
         )
 
     def test_reparacion_via_award_es_idempotente(self):
@@ -223,17 +206,13 @@ class TestMissingLoyaltyEarn(RecoveryListsBase):
         second = loyalty.award_points_for_completed(101, 1)
         self.assertTrue(first["success"])
         self.assertTrue(second["success"])
-        self.assertEqual(
-            database.list_completed_appointments_without_loyalty_scoped(101), []
-        )
+        self.assertEqual(database.list_completed_appointments_without_loyalty_scoped(101), [])
 
 
 class TestApprovedWithoutInvitations(RecoveryListsBase):
     def _owner(self, bid, email, with_invitation=True, used=False):
         conn = self._conn()
-        conn.execute(
-            "INSERT INTO users (email, password_hash) VALUES (?, 'x')", (email,)
-        )
+        conn.execute("INSERT INTO users (email, password_hash) VALUES (?, 'x')", (email,))
         user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
         conn.execute(
             "INSERT INTO business_users (user_id, business_id, role_id)"
@@ -282,9 +261,7 @@ class TestApprovedWithoutInvitations(RecoveryListsBase):
         user_id = self._owner(101, "owner@example.com", with_invitation=False)
         self.assertEqual(len(database.list_approved_businesses_without_invitations()), 1)
 
-        with mock.patch(
-            "services.platform.secrets.token_urlsafe", return_value="tok123"
-        ):
+        with mock.patch("services.platform.secrets.token_urlsafe", return_value="tok123"):
             from services import platform as platform_service
 
             platform_service.resend_invitation(101, user_id, "owner@example.com")
@@ -295,9 +272,7 @@ class TestApprovedWithoutInvitations(RecoveryListsBase):
             bid = 110 + i
             self._business(bid, f"b{bid}", active=1, pending=0)
             self._owner(bid, f"o{i}@example.com", with_invitation=False)
-        self.assertEqual(
-            len(database.list_approved_businesses_without_invitations(limit=2)), 2
-        )
+        self.assertEqual(len(database.list_approved_businesses_without_invitations(limit=2)), 2)
 
 
 if __name__ == "__main__":

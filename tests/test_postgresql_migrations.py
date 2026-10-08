@@ -49,12 +49,8 @@ def _baseline_objects():
     sql = (database.BASE_DIR / "migrations_pg" / "001_initial_schema.sql").read_text(
         encoding="utf-8"
     )
-    tables = set(
-        re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", sql, re.I)
-    )
-    indexes = set(
-        re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z_]\w*)", sql, re.I)
-    )
+    tables = set(re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", sql, re.I))
+    indexes = set(re.findall(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z_]\w*)", sql, re.I))
     return tables, indexes
 
 

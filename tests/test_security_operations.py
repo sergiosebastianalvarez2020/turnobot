@@ -225,7 +225,9 @@ class SecurityOperationsTests(unittest.TestCase):
                 ),
             )
             conn.commit()
-            appt_b_id = conn.execute("SELECT id FROM appointments ORDER BY id DESC LIMIT 1").fetchone()[0]
+            appt_b_id = conn.execute(
+                "SELECT id FROM appointments ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
         finally:
             conn.close()
 

@@ -82,9 +82,7 @@ class RequestContextFilter(logging.Filter):
                 record.method = "-"
 
             try:
-                record.path = redact_sensitive_path(
-                    getattr(g, "path", None) or request.path or "-"
-                )
+                record.path = redact_sensitive_path(getattr(g, "path", None) or request.path or "-")
             except Exception:
                 record.path = "-"
         else:

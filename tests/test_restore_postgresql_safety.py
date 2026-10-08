@@ -89,9 +89,7 @@ def test_is_dangerous_destination_rechaza_coincidencia_completa():
 
 def test_validate_restore_target_lanza_si_coincide_con_produccion():
     with pytest.raises(ValueError, match="coincide con la base productiva"):
-        restore_postgresql.validate_restore_target(
-            "turnobot", "prod.example.com", "5432", PROD_URL
-        )
+        restore_postgresql.validate_restore_target("turnobot", "prod.example.com", "5432", PROD_URL)
 
 
 def test_restore_database_rechaza_productivo_sin_dropdb(monkeypatch, tmp_path):
@@ -116,9 +114,7 @@ def test_restore_database_rechaza_productivo_sin_dropdb(monkeypatch, tmp_path):
     assert ["dropdb", "--if-exists", "turnobot"] not in calls
 
 
-def test_restore_database_permite_temporal_y_ejecuta_dropdb_sobre_temporal(
-    monkeypatch, tmp_path
-):
+def test_restore_database_permite_temporal_y_ejecuta_dropdb_sobre_temporal(monkeypatch, tmp_path):
     """Caso A: un destino temporal valido avanza y ejecuta dropdb sobre el
     temporal, jamas sobre la base productiva."""
     backup = tmp_path / "turnobot-pg.dump"

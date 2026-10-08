@@ -89,10 +89,7 @@ def parse_database_identity(url: str) -> dict[str, str]:
 
 
 def is_dangerous_destination(
-    target_dbname: str,
-    target_host: str,
-    target_port: str,
-    production_url: str,
+    target_dbname: str, target_host: str, target_port: str, production_url: str
 ) -> bool:
     """Indica si un destino coincide con la base productiva (host, puerto, nombre).
 
@@ -113,10 +110,7 @@ def is_dangerous_destination(
 
 
 def validate_restore_target(
-    target_dbname: str,
-    target_host: str,
-    target_port: str,
-    production_url: str,
+    target_dbname: str, target_host: str, target_port: str, production_url: str
 ) -> None:
     """Barrera de seguridad: rechaza destinos peligrosos.
 

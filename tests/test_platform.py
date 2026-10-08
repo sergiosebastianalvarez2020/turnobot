@@ -196,16 +196,13 @@ class TestSuperadminBootstrapYLogin(PlatformBase):
             patch.object(application, "send_approved_invitation_email") as send_invitation,
         ):
             response = self.client.post(
-                "/superadmin/negocios/1/aprobar",
-                headers=host_headers,
-                data={"csrf_token": csrf},
+                "/superadmin/negocios/1/aprobar", headers=host_headers, data={"csrf_token": csrf}
             )
 
         self.assertEqual(response.status_code, 302)
         sent_link = send_invitation.call_args.args[2]
         self.assertEqual(
-            sent_link,
-            "https://canonical.example/b/el-corte/invitacion/fixed-invitation-token",
+            sent_link, "https://canonical.example/b/el-corte/invitacion/fixed-invitation-token"
         )
         self.assertNotIn("evil.example", sent_link)
 

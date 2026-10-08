@@ -183,9 +183,7 @@ def inject_business_settings():
         # base vacía levanta ValueError y convertía /login en un 500.
         business_id = _first_business_id()
     settings = (
-        _load_seam("get_business_settings_scoped")(business_id)
-        if business_id is not None
-        else None
+        _load_seam("get_business_settings_scoped")(business_id) if business_id is not None else None
     )
     return {
         "business_settings": settings,

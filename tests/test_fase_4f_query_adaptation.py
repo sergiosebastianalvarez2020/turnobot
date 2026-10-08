@@ -461,7 +461,9 @@ class TestBooleanLiteralsPorContexto(unittest.TestCase):
         )
 
     def test_columnas_no_booleanas_no_se_adaptan(self):
-        sql, _ = adapt_query_for_postgres("UPDATE services SET price = 0, duration = 0 WHERE id = ?")
+        sql, _ = adapt_query_for_postgres(
+            "UPDATE services SET price = 0, duration = 0 WHERE id = ?"
+        )
         self.assertIn("SET price = 0, duration = 0", sql)
         self.assertNotIn("TRUE", sql)
         self.assertNotIn("NOT", sql)
@@ -718,9 +720,15 @@ class TestBooleanLiteralsContraPostgresqlReal(unittest.TestCase):
             "INSERT INTO sessions (user_id, token_hash, expires_at, revoked) "
             "VALUES (?, ?, ?, 1), (?, ?, ?, 0), (?, ?, ?, 1)",
             (
-                self.user_id, tokens[0], "2099-01-01 00:00:00",
-                self.user_id, tokens[1], "2099-01-01 00:00:00",
-                self.user_id, tokens[2], "2099-01-01 00:00:00",
+                self.user_id,
+                tokens[0],
+                "2099-01-01 00:00:00",
+                self.user_id,
+                tokens[1],
+                "2099-01-01 00:00:00",
+                self.user_id,
+                tokens[2],
+                "2099-01-01 00:00:00",
             ),
         )
         self.connection.commit()
@@ -738,9 +746,18 @@ class TestBooleanLiteralsContraPostgresqlReal(unittest.TestCase):
             "INSERT INTO sessions (user_id, token_hash, expires_at, revoked) "
             "VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)",
             (
-                self.user_id, tokens[0], "2099-01-01 00:00:00", 1,
-                self.user_id, tokens[1], "2099-01-01 00:00:00", 0,
-                self.user_id, tokens[2], "2099-01-01 00:00:00", 1,
+                self.user_id,
+                tokens[0],
+                "2099-01-01 00:00:00",
+                1,
+                self.user_id,
+                tokens[1],
+                "2099-01-01 00:00:00",
+                0,
+                self.user_id,
+                tokens[2],
+                "2099-01-01 00:00:00",
+                1,
             ),
         )
         self.connection.commit()

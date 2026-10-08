@@ -70,11 +70,7 @@ class TestAdminSecurity(unittest.TestCase, PostgreSQLTestCase):
         csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
         response = self.client.post(
             "/login",
-            data={
-                "email": self._owner_email,
-                "password": "bootstrap-password",
-                "csrf_token": csrf,
-            },
+            data={"email": self._owner_email, "password": "bootstrap-password", "csrf_token": csrf},
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("Credenciales inválidas.", response.text)

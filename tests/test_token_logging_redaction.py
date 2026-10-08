@@ -142,9 +142,7 @@ class TestTokenLoggingEndToEnd(unittest.TestCase):
     def test_reset_token_redacted_in_http_log(self):
         records = self._capture_logs_for_request(f"/reset/{_REAL_TOKEN}")
         http_records = [
-            r
-            for r in records
-            if r.getMessage().startswith("HTTP") and "/reset/" in r.getMessage()
+            r for r in records if r.getMessage().startswith("HTTP") and "/reset/" in r.getMessage()
         ]
         self.assertTrue(len(http_records) > 0)
         for rec in http_records:
@@ -158,9 +156,7 @@ class TestTokenLoggingEndToEnd(unittest.TestCase):
             self.assertNotIn(_REAL_TOKEN, rec.path)
 
     def test_staff_invitation_token_absent_from_all_logs(self):
-        records = self._capture_logs_for_request(
-            f"/b/el-corte/invitacion-staff/{_REAL_TOKEN}"
-        )
+        records = self._capture_logs_for_request(f"/b/el-corte/invitacion-staff/{_REAL_TOKEN}")
         for rec in records:
             self.assertNotIn(_REAL_TOKEN, rec.getMessage())
             self.assertNotIn(_REAL_TOKEN, rec.path)
@@ -173,9 +169,7 @@ class TestTokenLoggingEndToEnd(unittest.TestCase):
 
     def test_normal_route_path_preserved_in_http_log(self):
         records = self._capture_logs_for_request("/health")
-        http_records = [
-            r for r in records if r.getMessage().startswith("HTTP")
-        ]
+        http_records = [r for r in records if r.getMessage().startswith("HTTP")]
         self.assertTrue(len(http_records) > 0)
         for rec in http_records:
             if "/health" in rec.getMessage():

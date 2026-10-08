@@ -244,9 +244,7 @@ class TestSesion(BaseMultiTenantAdminTest):
         # Creamos un usuario y una sesión persistente ya expirada.
         uid = self._make_user("b@test.com", "secreta", 2, "owner")
         token = "sesion-expirada"
-        create_session_scoped(
-            uid, application._hash_session_token(token), _expires_iso(-100)
-        )
+        create_session_scoped(uid, application._hash_session_token(token), _expires_iso(-100))
         # Simula una cookie de sesión HTTP pre-establecida para ese usuario.
         with self.client.session_transaction() as sess:
             sess["user_id"] = uid
@@ -258,9 +256,7 @@ class TestSesion(BaseMultiTenantAdminTest):
     def test_sesion_no_expirada_accede(self):
         uid = self._make_user("b@test.com", "secreta", 2, "owner")
         token = "sesion-activa"
-        create_session_scoped(
-            uid, application._hash_session_token(token), _expires_iso(3600)
-        )
+        create_session_scoped(uid, application._hash_session_token(token), _expires_iso(3600))
         with self.client.session_transaction() as sess:
             sess["user_id"] = uid
             sess["session_token"] = token
@@ -311,8 +307,7 @@ class TestModeloDatos(BaseMultiTenantAdminTest):
         tablas = {
             r["table_name"]
             for r in self._query(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'public'"
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
             )
         }
         self.assertTrue({"users", "roles", "business_users", "sessions"} <= tablas)

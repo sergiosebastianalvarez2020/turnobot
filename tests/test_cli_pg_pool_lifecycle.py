@@ -17,7 +17,6 @@ El pool real se sustituye por un doble: lo que se verifica es el ORDEN y el
 ciclo de vida, no la conectividad a un PostgreSQL de verdad.
 """
 
-
 import os
 
 import pytest

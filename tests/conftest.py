@@ -149,6 +149,7 @@ def app(pg_test_database: str, monkeypatch):
     monkeypatch.setenv("FLASK_ENV", "development")
 
     from application import create_app
+
     app = create_app()
     app.config["TESTING"] = True
     return app
@@ -171,6 +172,7 @@ def client(app):
 def seed_business(pg_test_database: str) -> int:
     """Crea un negocio mínimo en la base de tests y devuelve su ID."""
     from tests_pg._helpers import seed_business
+
     test_url = conninfo_to_url(pg_test_database)
     return seed_business(test_url)
 
@@ -179,6 +181,7 @@ def seed_business(pg_test_database: str) -> int:
 def seed_business_with_settings(pg_test_database: str, seed_business: int) -> int:
     """Crea un negocio con configuración completa (horarios, servicios)."""
     from tests_pg._helpers import seed_business_settings, seed_full_week, seed_service
+
     test_url = conninfo_to_url(pg_test_database)
     seed_business_settings(test_url, seed_business)
     seed_full_week(test_url, seed_business)

@@ -97,13 +97,7 @@ def backup_database(destination: str | Path | None = None) -> Path:
     env = build_pg_env(url)
     cmd = build_pg_dump_command(url, target)
 
-    result = subprocess.run(
-        cmd,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "pg_dump falló").strip()
         raise RuntimeError(f"pg_dump falló: {stderr}")

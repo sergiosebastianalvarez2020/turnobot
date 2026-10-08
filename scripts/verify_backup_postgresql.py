@@ -52,11 +52,7 @@ def verify_backup(backup_path: str | Path) -> bool:
 
     cmd = build_restore_listing_command(backup)
     result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=PG_RESTORE_LIST_TIMEOUT_SECONDS,
+        cmd, capture_output=True, text=True, check=False, timeout=PG_RESTORE_LIST_TIMEOUT_SECONDS
     )
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "pg_restore --list falló").strip()

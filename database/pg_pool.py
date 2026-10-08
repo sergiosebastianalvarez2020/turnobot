@@ -76,15 +76,7 @@ PG_LOCK_TIMEOUT = "5s"
 # tres adaptaciones que dependen de esta lista (predicados, asignaciones SET y
 # parámetros) deben coincidir exactamente: si divergen, se genera SQL inválido.
 _BOOLEAN_COLUMNS = frozenset(
-    {
-        "active",
-        "pending",
-        "is_open",
-        "needs_human",
-        "revoked",
-        "enabled",
-        "notifications_enabled",
-    }
+    {"active", "pending", "is_open", "needs_human", "revoked", "enabled", "notifications_enabled"}
 )
 
 
@@ -131,10 +123,7 @@ def normalize_database_url(url: str | None) -> str | None:
 
 
 def resolve_database_backend(
-    url: str | None = None,
-    *,
-    environment: str | None = None,
-    sqlite_opt_in: str | None = None,
+    url: str | None = None, *, environment: str | None = None, sqlite_opt_in: str | None = None
 ) -> tuple[str, str | None]:
     """Valida una única selección de backend y devuelve ``(backend, URL normalizada)``.
 
@@ -142,9 +131,7 @@ def resolve_database_backend(
     tests SQLite requiere ``DB_BACKEND=sqlite`` explícito; no hay fallback.
     """
     environment = environment if environment is not None else os.getenv("FLASK_ENV")
-    sqlite_opt_in = (
-        sqlite_opt_in if sqlite_opt_in is not None else os.getenv("DB_BACKEND")
-    )
+    sqlite_opt_in = sqlite_opt_in if sqlite_opt_in is not None else os.getenv("DB_BACKEND")
     normalized = normalize_database_url(url)
     if not normalized:
         if environment == "production":
@@ -163,7 +150,9 @@ def resolve_database_backend(
             raise RuntimeError(
                 "DATABASE_URL de producción debe usar PostgreSQL; SQLite no está permitido"
             )
-        raise RuntimeError("DATABASE_URL debe usar PostgreSQL; SQLite requiere DB_BACKEND=sqlite explícito")
+        raise RuntimeError(
+            "DATABASE_URL debe usar PostgreSQL; SQLite requiere DB_BACKEND=sqlite explícito"
+        )
 
     try:
         parsed = urlsplit(normalized)
@@ -647,10 +636,9 @@ def _adapt_nullable_placeholders(sql: str) -> str:
     (Note: uses PostgreSQL ::text cast syntax)
     """
     import re
+
     # (? IS NULL OR col = ?) -> (CAST(? AS TEXT) IS NULL OR col = ?)
-    pattern = re.compile(
-        r"\(\s*\?\s*IS\s+NULL\s+OR\s+(\w+)\s*=\s*\?\s*\)", re.IGNORECASE
-    )
+    pattern = re.compile(r"\(\s*\?\s*IS\s+NULL\s+OR\s+(\w+)\s*=\s*\?\s*\)", re.IGNORECASE)
     sql = pattern.sub(r"(CAST(? AS TEXT) IS NULL OR \1 = ?)", sql)
     return sql
 
@@ -1165,17 +1153,14 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
     boolean_columns = _BOOLEAN_COLUMNS
 
     import re
+
     # Match patterns like: SET col = ?  or SET col = ?, col2 = ?
     # We need to find which params correspond to boolean columns
     # Pattern: "SET col1 = ?, col2 = ?, col3 = ?"
     params_list = list(params)
 
     # Find SET clause and extract column->param_index mapping
-    set_match = re.search(
-        r"\bSET\s+(.+?)\s*(?:WHERE|$)",
-        sql,
-        re.IGNORECASE | re.DOTALL,
-    )
+    set_match = re.search(r"\bSET\s+(.+?)\s*(?:WHERE|$)", sql, re.IGNORECASE | re.DOTALL)
     if not set_match:
         return sql, params
 
@@ -1187,11 +1172,7 @@ def _adapt_update_boolean_params(sql: str, params: Any = None) -> tuple[str, Any
     # entrara en la lista desplazaria el indice de cada parametro posterior y
     # convertiria el valor equivocado.
     code_clause = _blank_sql_literals(set_clause)
-    assignments = re.findall(
-        r'(\w+)\s*=\s*(\?|%s|[\'"]?\d+[\'"]?)',
-        code_clause,
-        re.IGNORECASE,
-    )
+    assignments = re.findall(r'(\w+)\s*=\s*(\?|%s|[\'"]?\d+[\'"]?)', code_clause, re.IGNORECASE)
 
     # Count params before the SET clause to know the offset
     param_offset = 0
@@ -1241,7 +1222,9 @@ def _adapt_boolean_predicate_params(sql: str, params: Any = None) -> Any:
     params_list = list(params)
     positions: set[int] = set()
     for match in pattern.finditer(code):
-        param_start = match.start("right") if match.group("right") is not None else match.start("left")
+        param_start = (
+            match.start("right") if match.group("right") is not None else match.start("left")
+        )
         positions.add(len(re.findall(placeholder, code[:param_start])))
 
     for position in positions:

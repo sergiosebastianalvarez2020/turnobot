@@ -113,11 +113,7 @@ class TestCancelacionTelefonoCorrecto(PostgreSQLTestCase):
         )
         appointment_id = result["appointment_id"]
         assert appointments.cancel_appointment(
-            appointment_id,
-            "3838439222",
-            1,
-            result["management_token"],
-            customer_name="Ana Pérez",
+            appointment_id, "3838439222", 1, result["management_token"], customer_name="Ana Pérez"
         )
 
 
@@ -254,16 +250,12 @@ class _BaseConcurrencyAppointments(unittest.TestCase, PostgreSQLTestCase):
 
 class TestConcurrentBookings(_BaseConcurrencyAppointments):
     def test_slots_distintos_simultaneos_ambas_exitosas(self):
-        results = self._run_concurrently(
-            [lambda: self._book("09:00"), lambda: self._book("09:30")]
-        )
+        results = self._run_concurrently([lambda: self._book("09:00"), lambda: self._book("09:30")])
         assert [result["success"] for result in results] == [True, True]
 
     def test_dos_slots_libres_alrededor_de_uno_ocupado(self):
         assert self._book("10:00")["success"]
-        results = self._run_concurrently(
-            [lambda: self._book("09:00"), lambda: self._book("10:30")]
-        )
+        results = self._run_concurrently([lambda: self._book("09:00"), lambda: self._book("10:30")])
         assert [result["success"] for result in results] == [True, True]
         with self.app.app_context():
             connection = database.get_connection()
@@ -658,9 +650,9 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
         )
 
         assert reprogramado["success"], reprogramado
-        assert self.lock_calls == [
-            (1, appointments._appointment_day_ordinal(self.valid_date)),
-        ], "mismo día de origen y destino: un solo lock, no dos"
+        assert self.lock_calls == [(1, appointments._appointment_day_ordinal(self.valid_date))], (
+            "mismo día de origen y destino: un solo lock, no dos"
+        )
 
     def test_no_toma_locks_si_el_turno_no_existe(self):
         resultado = self._turno()
@@ -722,6 +714,7 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
     @staticmethod
     def _timeout(connection, business_id, lock_key=0):
         import database.database as db
+
         raise db.sqlite3.OperationalError("canceling statement due to lock timeout")
 
     def test_lock_timeout_devuelve_busy_sin_mover_el_turno(self):
@@ -774,7 +767,9 @@ class TestRescheduleLockTimeoutYRowcount(_BaseLockDeReschedule):
         )
         appointments.get_connection = self.original_get_connection
 
-        assert not fallido["success"], "un UPDATE con rowcount 0 no puede reportarse como rescheduled"
+        assert not fallido["success"], (
+            "un UPDATE con rowcount 0 no puede reportarse como rescheduled"
+        )
         assert fallido["reason"] == "not_found"
         fila = self._fila(resultado["appointment_id"])
         assert fila["appointment_date"].isoformat() == self.valid_date
@@ -881,6 +876,7 @@ class TestEstadoAdminTomaElLockYTienePredicado(PostgreSQLTestCase):
 
         def _timeout(connection, business_id, lock_key=0):
             import database.database as db
+
             raise db.sqlite3.OperationalError("canceling statement due to lock timeout")
 
         database.acquire_business_write_lock = _timeout

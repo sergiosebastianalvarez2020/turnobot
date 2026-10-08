@@ -67,9 +67,7 @@ class TestChatRecovery(unittest.TestCase):
             mock.patch("services.ai._call_gemini_with_retry", return_value=(response, 1, None)),
         ):
             first = ai.ask_ai("primer mensaje", business_id=1)
-            second = ai.ask_ai(
-                "segundo mensaje", business_id=1, public_token=first[2]
-            )
+            second = ai.ask_ai("segundo mensaje", business_id=1, public_token=first[2])
 
         self.assertEqual(first[1], second[1])
         self.assertEqual(first[2], second[2])
@@ -103,8 +101,12 @@ class TestChatRecovery(unittest.TestCase):
             own_b = visitor_b.get("/api/conversations/current/messages").get_json()["messages"]
             self.assertEqual([item["content"] for item in own_a], ["historial A"])
             self.assertEqual([item["content"] for item in own_b], ["historial B"])
-            self.assertEqual(visitor_a.get(f"/api/conversations/{token_b}/messages").status_code, 404)
-            self.assertEqual(visitor_b.get(f"/api/conversations/{token_a}/messages").status_code, 404)
+            self.assertEqual(
+                visitor_a.get(f"/api/conversations/{token_b}/messages").status_code, 404
+            )
+            self.assertEqual(
+                visitor_b.get(f"/api/conversations/{token_a}/messages").status_code, 404
+            )
 
             connection = database.get_connection()
             try:
@@ -137,9 +139,7 @@ class TestChatRecovery(unittest.TestCase):
         add_conversation_message_scoped(session_id, 1, "user", "Hola")
         add_conversation_message_scoped(session_id, 1, "assistant", "¡Hola!")
 
-        with mock.patch(
-            "app.ask_ai", return_value=("continuación", session_id, public_token)
-        ):
+        with mock.patch("app.ask_ai", return_value=("continuación", session_id, public_token)):
             self.client.post("/chat", json={"message": "continuación"})
 
         resp = self.client.get(f"/api/conversations/{public_token}/messages")

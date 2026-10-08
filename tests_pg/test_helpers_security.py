@@ -5,7 +5,6 @@ valida únicamente el nombre de la base de datos, y las funciones
 ``create_test_database``/``drop_test_database`` validan antes de conectar.
 """
 
-
 import pytest
 
 from tests_pg._helpers import (

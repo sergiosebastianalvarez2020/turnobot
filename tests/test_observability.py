@@ -1132,10 +1132,7 @@ class TestObservabilityBlockEtapa15(unittest.TestCase):
             ("/reset/reset-secret", "/reset/[REDACTED]"),
             ("/b/demo/invitacion/invite-secret", "/b/demo/invitacion/[REDACTED]"),
             ("/b/demo/turno/management-secret", "/b/demo/turno/[REDACTED]"),
-            (
-                "/api/conversations/public-secret/messages",
-                "/api/conversations/[REDACTED]/messages",
-            ),
+            ("/api/conversations/public-secret/messages", "/api/conversations/[REDACTED]/messages"),
         )
         from application.logging_config import RequestContextFilter
 

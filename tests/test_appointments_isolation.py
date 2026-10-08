@@ -85,9 +85,9 @@ class BaseAppointmentIsolationTest(unittest.TestCase, PostgreSQLTestCase):
                 connection.close()
 
     def _business_id_of(self, appointment_id):
-        return self._query(
-            "SELECT business_id FROM appointments WHERE id = %s", (appointment_id,)
-        )[0]["business_id"]
+        return self._query("SELECT business_id FROM appointments WHERE id = %s", (appointment_id,))[
+            0
+        ]["business_id"]
 
 
 # ============================================================

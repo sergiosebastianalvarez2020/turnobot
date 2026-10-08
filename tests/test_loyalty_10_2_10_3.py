@@ -15,7 +15,9 @@ from test_loyalty import LoyaltyBase
 class RewardsAndRetentionTests(LoyaltyBase):
     def setUp(self):
         super().setUp()
-        database.update_loyalty_settings_scoped(1, enabled=True, points_per_completed_appointment=10)
+        database.update_loyalty_settings_scoped(
+            1, enabled=True, points_per_completed_appointment=10
+        )
         account = loyalty.get_account(1, "3815000001")
         if not account:
             self._execute(
@@ -95,7 +97,9 @@ class RewardsAndRetentionTests(LoyaltyBase):
         self.assertIn(denied.status_code, (302, 403, 404))
 
     def test_off_disables_redeem(self):
-        database.update_loyalty_settings_scoped(1, enabled=False, points_per_completed_appointment=10)
+        database.update_loyalty_settings_scoped(
+            1, enabled=False, points_per_completed_appointment=10
+        )
         self.assertEqual(loyalty.redeem(1, self.account["id"], 999, "off")["reason"], "disabled")
 
     def test_http_historial_scoped_y_permisos(self):
@@ -131,7 +135,9 @@ class RewardsAndRetentionTests(LoyaltyBase):
         on_page = self.client.get("/admin/fidelizacion/recompensas")
         self.assertIn("Clientes recuperables", on_page.text)
         self.assertIn("Recuperable", on_page.text)
-        database.update_loyalty_settings_scoped(1, enabled=False, points_per_completed_appointment=10)
+        database.update_loyalty_settings_scoped(
+            1, enabled=False, points_per_completed_appointment=10
+        )
         off_page = self.client.get("/admin/fidelizacion/recompensas")
         self.assertNotIn("Clientes recuperables", off_page.text)
         bad = self.client.post(

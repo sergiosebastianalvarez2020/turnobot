@@ -128,13 +128,17 @@ class AdminPanelBase(unittest.TestCase):
         # Provisiona un owner real con credenciales conocidas en lugar de
         # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
         from database.seed_auth import provision_owner_from_bootstrap
+
         self._owner_email = "owner@test.local"
         self._owner_password = "testpass123"
-        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
 
         # Crear una nueva instancia de la app para aislar esta prueba
         # (evita el pool compartido del module-level app configurado por pg_isolate_module_app)
         from application import create_app
+
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -145,7 +149,14 @@ class AdminPanelBase(unittest.TestCase):
 
         login_page = self.client.get("/login")
         self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+        self.client.post(
+            "/login",
+            data={
+                "email": "owner@test.local",
+                "password": "testpass123",
+                "csrf_token": self.csrf_login,
+            },
+        )
 
         # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
         admin_page = self.client.get("/admin")
@@ -183,7 +194,9 @@ class AdminPanelBase(unittest.TestCase):
                 "SELECT appointment_date, appointment_time FROM appointments WHERE id = ?",
                 (appointment_id,),
             ).fetchone()
-            return _normalize_date(row["appointment_date"]), _normalize_time(row["appointment_time"])
+            return _normalize_date(row["appointment_date"]), _normalize_time(
+                row["appointment_time"]
+            )
         finally:
             c.close()
 
@@ -462,12 +475,16 @@ class TestAdminPagination(unittest.TestCase):
         # Provisiona un owner real con credenciales conocidas en lugar de
         # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
         from database.seed_auth import provision_owner_from_bootstrap
+
         self._owner_email = "owner@test.local"
         self._owner_password = "testpass123"
-        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
 
         # Crear una nueva instancia de la app para aislar esta prueba
         from application import create_app
+
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -478,7 +495,14 @@ class TestAdminPagination(unittest.TestCase):
 
         login_page = self.client.get("/login")
         self.csrf_token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_token})
+        self.client.post(
+            "/login",
+            data={
+                "email": "owner@test.local",
+                "password": "testpass123",
+                "csrf_token": self.csrf_token,
+            },
+        )
 
         # Crear 16 turnos (8 por día en 2 días hábiles consecutivos con horario de tarde, solo horas en punto)
         date_ = _next_open_weekday_with_afternoon()
@@ -594,12 +618,16 @@ class TestAdminAJAX(unittest.TestCase):
         # Provisiona un owner real con credenciales conocidas en lugar de
         # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
         from database.seed_auth import provision_owner_from_bootstrap
+
         self._owner_email = "owner@test.local"
         self._owner_password = "testpass123"
-        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
 
         # Crear una nueva instancia de la app para aislar esta prueba
         from application import create_app
+
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -610,7 +638,14 @@ class TestAdminAJAX(unittest.TestCase):
 
         login_page = self.client.get("/login")
         self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+        self.client.post(
+            "/login",
+            data={
+                "email": "owner@test.local",
+                "password": "testpass123",
+                "csrf_token": self.csrf_login,
+            },
+        )
 
         # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
         admin_page = self.client.get("/admin")
@@ -740,12 +775,16 @@ class TestAdminNoReportaCambiosInexistentes(unittest.TestCase):
         # Provisiona un owner real con credenciales conocidas en lugar de
         # depender del hash de bootstrap (ADMIN_PASSWORD_HASH).
         from database.seed_auth import provision_owner_from_bootstrap
+
         self._owner_email = "owner@test.local"
         self._owner_password = "testpass123"
-        provision_owner_from_bootstrap(1, self._owner_email, generate_password_hash(self._owner_password))
+        provision_owner_from_bootstrap(
+            1, self._owner_email, generate_password_hash(self._owner_password)
+        )
 
         # Crear una nueva instancia de la app para aislar esta prueba
         from application import create_app
+
         self.app = create_app()
         self.client = self.app.test_client()
 
@@ -756,7 +795,14 @@ class TestAdminNoReportaCambiosInexistentes(unittest.TestCase):
 
         login_page = self.client.get("/login")
         self.csrf_login = re.search(r'name="csrf_token" value="([^"]+)"', login_page.text).group(1)
-        self.client.post("/login", data={"email": "owner@test.local", "password": "testpass123", "csrf_token": self.csrf_login})
+        self.client.post(
+            "/login",
+            data={
+                "email": "owner@test.local",
+                "password": "testpass123",
+                "csrf_token": self.csrf_login,
+            },
+        )
 
         # Obtener CSRF fresco de la página admin (la sesión se regenera en login)
         admin_page = self.client.get("/admin")

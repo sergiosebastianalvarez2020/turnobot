@@ -44,6 +44,7 @@ class TestBusinessContext(PostgreSQLTestCase):
         with app.app_context():
             with app.test_request_context("/"):
                 from flask import g
+
                 assert not hasattr(g, "current_business")
                 assert tenant_module.get_current_business_id() is None
 
@@ -63,6 +64,7 @@ class TestBusinessContext(PostgreSQLTestCase):
                 tenant_module.load_current_business()
                 assert tenant_module.get_current_business_id() == 1
                 from flask import g
+
                 assert g.current_business["slug"] == "el-corte"
 
     def test_slug_route_resuelve_el_corte(self):
@@ -74,6 +76,7 @@ class TestBusinessContext(PostgreSQLTestCase):
                 tenant_module.load_current_business()
                 assert tenant_module.get_current_business_id() == 1
                 from flask import g
+
                 assert g.current_business["slug"] == "el-corte"
 
     def test_slug_inexistente_devuelve_404_y_no_fallback_al_corte(self):
@@ -85,6 +88,7 @@ class TestBusinessContext(PostgreSQLTestCase):
                 with pytest.raises(Exception):
                     tenant_module.load_current_business()
                 from flask import g
+
                 assert not hasattr(g, "current_business")
 
     def test_slug_existente_de_negocio_b_usa_su_config_publica(self):
@@ -113,6 +117,7 @@ class TestBusinessContext(PostgreSQLTestCase):
                 assert "Negocio de prueba" in body
                 assert "BB" in body
                 assert "El Corte" not in body
+
 
 class TestBusinessContextSinBase:
     """Casos de contexto que no leen ni escriben persistencia."""
