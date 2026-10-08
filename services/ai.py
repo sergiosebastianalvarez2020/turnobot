@@ -705,7 +705,7 @@ cancelar_turno_declaration = types.FunctionDeclaration(
                 ),
             },
         },
-        "required": ["appointment_id", "telefono"],
+        "required": ["appointment_id", "telefono", "management_token"],
         "additionalProperties": False,
     },
 )
@@ -714,7 +714,7 @@ cancelar_turno_declaration = types.FunctionDeclaration(
 # Gemini receives the H5 secret explicitly; the service enforces it for new appointments.
 cancelar_turno_declaration.parameters_json_schema["properties"]["management_token"] = {  # type: ignore[index]
     "type": "string",
-    "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
+    "description": "Token secreto devuelto al crear el turno; obligatorio para cancelar turnos.",
 }
 
 # ============================================================
@@ -749,7 +749,7 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
             },
             "management_token": {
                 "type": "string",
-                "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
+                "description": "Token secreto devuelto al crear el turno; obligatorio para reprogramar turnos.",
             },
             "nueva_fecha": {
                 "type": "string",
@@ -757,7 +757,7 @@ reprogramar_turno_declaration = types.FunctionDeclaration(
             },
             "nueva_hora": {"type": "string", "description": ("Nueva hora en formato HH:MM.")},
         },
-        "required": ["appointment_id", "telefono", "nueva_fecha", "nueva_hora"],
+        "required": ["appointment_id", "telefono", "nueva_fecha", "nueva_hora", "management_token"],
         "additionalProperties": False,
     },
 )
