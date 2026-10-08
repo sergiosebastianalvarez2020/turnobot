@@ -6,6 +6,7 @@ PostgreSQL reales (pool psycopg_pool o conexiones directas autocommit).
 
 import datetime
 import hashlib
+import re
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,31 @@ TURNOBOT_PG_URL_KEY = "TURNOBOT_PG_URL"
 INITIAL_SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "migrations_pg" / "001_initial_schema.sql"
 )
+
+# Guardia de seguridad: los nombres de base de datos de prueba de este harness
+# siguen el patrón `turnobot_test_<hex>` (`new_db_name`) o `turnobot_bootstrap_<hex>`
+# (usos legítimos de `init_database` en `tests_pg/test_schema_live.py`).
+# Ninguna base de producción coincide con este patrón, por lo que evita que
+# `CREATE DATABASE` / `DROP DATABASE ... WITH (FORCE)` actúen sobre una base
+# distinta de prueba, incluso si `TURNOBOT_PG_URL` apunta a un host no controlado.
+_TEST_DB_NAME_RE = re.compile(r"^turnobot_(test|bootstrap)_[0-9a-f]+$")
+
+
+def _validate_test_db_name(dbname: str) -> None:
+    """Rechaza nombres de base de datos que no sean de prueba.
+
+    Previene el uso accidentario de ``create_test_database``/``drop_test_database``
+    contra bases de producción o cualquier otra base no gestionada por este
+    harness. La verificación se hace sobre el nombre (no sobre el host/puerto
+    usuario), por lo que es compatible tanto con el entorno local (127.0.0.1:5433)
+    como con GitHub Actions (postgres:16-alpine en 5432).
+    """
+    if not _TEST_DB_NAME_RE.fullmatch(dbname):
+        raise ValueError(
+            "dbname no es una base de prueba de TURNOBOT: "
+            f"{dbname!r}. Solo se permiten 'turnobot_test_<hex>' o "
+            "'turnobot_bootstrap_<hex>'."
+        )
 
 
 def connect_autocommit(conninfo: str) -> psycopg.Connection:
@@ -52,11 +78,13 @@ def conninfo_to_url(conninfo: str) -> str:
 
 
 def create_test_database(base_url: str, dbname: str) -> None:
+    _validate_test_db_name(dbname)
     with connect_autocommit(base_url) as conn:
         conn.execute(f"CREATE DATABASE {dbname}")
 
 
 def drop_test_database(base_url: str, dbname: str) -> None:
+    _validate_test_db_name(dbname)
     with connect_autocommit(base_url) as conn:
         conn.execute(f"DROP DATABASE IF EXISTS {dbname} WITH (FORCE)")
 
