@@ -712,7 +712,7 @@ cancelar_turno_declaration = types.FunctionDeclaration(
 
 
 # Gemini receives the H5 secret explicitly; the service enforces it for new appointments.
-cancelar_turno_declaration.parameters_json_schema["properties"]["management_token"] = {
+cancelar_turno_declaration.parameters_json_schema["properties"]["management_token"] = {  # type: ignore[index]
     "type": "string",
     "description": "Token secreto devuelto al crear el turno; obligatorio para turnos nuevos.",
 }

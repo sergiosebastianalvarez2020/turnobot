@@ -21,7 +21,7 @@ RATE_LIMIT_MAX_KEYS = 10_000
 RATE_LIMIT_WINDOW_SECONDS = 60
 
 # Estado global del rate limiting: { key -> deque[timestamps] }
-rate_limit_state = defaultdict(deque)
+rate_limit_state: defaultdict[str, deque[float]] = defaultdict(deque)
 
 # Lock para acceso concurrente al estado de rate limiting
 _RATE_LIMIT_LOCK = threading.Lock()

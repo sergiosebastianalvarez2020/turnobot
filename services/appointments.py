@@ -8,9 +8,9 @@ from datetime import time as dt_time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if hasattr(re, "Pattern"):
-    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    _EMAIL_RE: re.Pattern[str] = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 else:  # pragma: no cover
-    _EMAIL_RE = None
+    _EMAIL_RE: re.Pattern[str] | None = None  # type: ignore[no-redef]
 
 from database.database import (
     acquire_business_write_lock,
