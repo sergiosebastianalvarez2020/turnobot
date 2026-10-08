@@ -6,30 +6,24 @@ Cubre las funciones de `database/database.py`:
 - `list_completed_appointments_without_loyalty_scoped` (earns faltantes);
 - `list_approved_businesses_without_invitations` (owners sin invitación).
 
-Son consultas read-only sobre SQLite temporal (patrón de
-tests/test_weekly_schedules.py): ninguna operación contra PostgreSQL y
-ningún envío real. No integran consumidores: validan que los detectores
-devuelven exactamente lo que dicen sus docstrings.
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estándar (negocio 1).
+No hay swap de `DATABASE_PATH` ni `init_database()`: sobre el backend PostgreSQL el
+`DATABASE_PATH` solo se lee en la rama SQLite de `get_connection()` y
+`init_database()` se limita a detectar que el schema ya está aplicado, así que ambos
+eran andamiaje muerto. El aislamiento entre tests es el de la base temporal.
+
+El contexto de aplicación se empuja en `setUp` para que `get_connection()` resuelva el
+pool vía `flask.current_app` y no por el respaldo global `_global_pool`.
 """
 
 import datetime as dt
-import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-import pytest
-
 import database.database as database
-
-
-@pytest.fixture(autouse=True)
-def pg_test_env():
-    """Tests SQLite puros: no se necesita PostgreSQL, por lo que no se aplica
-    el skip funcional del conftest (omite la suite cuando TURNOBOT_PG_URL no
-    está definida)."""
-    yield
+from database.database import get_connection
+from tests._pg_compat import PostgreSQLTestCase
 
 
 def _iso(minutes_ago=0):
@@ -38,75 +32,57 @@ def _iso(minutes_ago=0):
     )
 
 
-class RecoveryListsBase(unittest.TestCase):
+class RecoveryListsBase(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.root_dir = Path(self.temp_dir.name)
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = self.root_dir / "appointments.db"
+        # `self.app` lo aporta la fixture `app`: app y pool propios de este test,
+        # apuntando a la base temporal creada por `pg_test_database`. El contexto se
+        # empuja aquí (no en la fixture) porque el servicio y los helpers de este
+        # archivo llaman `get_connection()` directamente.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
-        self._original_db_backend = os.environ.get("DB_BACKEND")
-        self._original_db_url = os.environ.get("DATABASE_URL")
-        os.environ["DB_BACKEND"] = "sqlite"
-        os.environ.pop("DATABASE_URL", None)
-
-        database.init_database()
-        self._open_connections = []
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        if self._original_db_backend is not None:
-            os.environ["DB_BACKEND"] = self._original_db_backend
-        else:
-            os.environ.pop("DB_BACKEND", None)
-        if self._original_db_url is not None:
-            os.environ["DATABASE_URL"] = self._original_db_url
-        else:
-            os.environ.pop("DATABASE_URL", None)
-        for conn in self._open_connections:
-            conn.close()
-        self.temp_dir.cleanup()
-
-    def _conn(self):
-        conn = database.get_connection()
-        self._open_connections.append(conn)
-        return conn
+    @staticmethod
+    def _exec(sql, params=None):
+        c = get_connection()
+        try:
+            c.execute(sql, params or ())
+            c.commit()
+        finally:
+            c.close()
 
     def _business(self, bid, name, active=1, pending=0):
-        conn = self._conn()
-        conn.execute(
-            "INSERT OR IGNORE INTO businesses (id, name, slug) VALUES (?, ?, ?)", (bid, name, name)
+        self._exec(
+            "INSERT INTO businesses (id, name, slug) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (bid, name, name),
         )
-        conn.execute(
-            "UPDATE businesses SET active = ?, pending = ? WHERE id = ?", (active, pending, bid)
+        self._exec(
+            "UPDATE businesses SET active = %s, pending = %s WHERE id = %s", (active, pending, bid)
         )
-        conn.commit()
 
     def _appointment(self, aid, bid, status="confirmed"):
         # Hora distinta por turno: evita el índice único parcial de slots
         # confirmados (business_id, appointment_date, appointment_time).
         start = f"10:{aid:02d}"
-        self._conn().execute(
+        self._exec(
             "INSERT INTO appointments (id, business_id, customer_name, phone,"
             " service, appointment_date, appointment_time, appointment_end,"
             " duration, status)"
-            " VALUES (?, ?, 'Cli', '3815000001', 'Corte', '2026-01-01', ?,"
-            " '11:00', 60, ?)",
+            " VALUES (%s, %s, 'Cli', '3815000001', 'Corte', '2026-01-01', %s,"
+            " '11:00', 60, %s)",
             (aid, bid, start, status),
         )
-        self._open_connections[-1].commit()
 
 
 class TestStuckNotifications(RecoveryListsBase):
     def _log(self, aid, bid, status, minutes_ago, ntype="confirmation"):
         self._appointment(aid, bid)
-        self._conn().execute(
+        self._exec(
             "INSERT INTO notification_log (appointment_id, business_id, type,"
             " channel, destination, status, error, last_attempt_at)"
-            " VALUES (?, ?, ?, 'email', 'c@example.com', ?, '', ?)",
+            " VALUES (%s, %s, %s, 'email', 'c@example.com', %s, '', %s)",
             (aid, bid, ntype, status, _iso(minutes_ago)),
         )
-        self._open_connections[-1].commit()
 
     def test_solo_processing_vencido_es_stuck(self):
         self._business(101, "b1")
@@ -149,21 +125,27 @@ class TestStuckNotifications(RecoveryListsBase):
 
 class TestMissingLoyaltyEarn(RecoveryListsBase):
     def _earn(self, bid, aid, account_id=1):
-        self._conn().execute(
+        self._exec(
             "INSERT INTO points_ledger (business_id, account_id, delta, type,"
-            " reason, appointment_id) VALUES (?, ?, 10, 'earn', 't', ?)",
+            " reason, appointment_id) VALUES (%s, %s, 10, 'earn', 't', %s)",
             (bid, account_id, aid),
         )
-        self._open_connections[-1].commit()
 
     def _account(self, bid):
-        conn = self._conn()
-        conn.execute(
-            "INSERT INTO loyalty_accounts (business_id, customer_phone) VALUES (?, '3815000001')",
+        self._exec(
+            "INSERT INTO loyalty_accounts (business_id, customer_phone) VALUES (%s, '3815000001')",
             (bid,),
         )
-        conn.commit()
-        return conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        # Get the created account id
+        c = get_connection()
+        try:
+            row = c.execute(
+                "SELECT id FROM loyalty_accounts WHERE business_id = %s ORDER BY id DESC LIMIT 1",
+                (bid,),
+            ).fetchone()
+            return row["id"]
+        finally:
+            c.close()
 
     def test_solo_completed_sin_earn(self):
         self._business(101, "b1")
@@ -194,11 +176,11 @@ class TestMissingLoyaltyEarn(RecoveryListsBase):
         """El par detector+award es seguro: re-ejecutar award no duplica."""
         self._business(101, "b1")
         self._appointment(1, 101, status="completed")
-        self._conn().execute(
+        self._exec(
             "INSERT INTO loyalty_settings (business_id, enabled,"
-            " points_per_completed_appointment) VALUES (101, 1, 10)"
+            " points_per_completed_appointment) VALUES (%s, 1, 10)",
+            (101,),
         )
-        self._open_connections[-1].commit()
 
         from services import loyalty
 
@@ -211,23 +193,26 @@ class TestMissingLoyaltyEarn(RecoveryListsBase):
 
 class TestApprovedWithoutInvitations(RecoveryListsBase):
     def _owner(self, bid, email, with_invitation=True, used=False):
-        conn = self._conn()
-        conn.execute("INSERT INTO users (email, password_hash) VALUES (?, 'x')", (email,))
-        user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-        conn.execute(
-            "INSERT INTO business_users (user_id, business_id, role_id)"
-            " VALUES (?, ?, (SELECT id FROM roles WHERE name = 'owner'))",
-            (user_id, bid),
-        )
-        if with_invitation:
-            conn.execute(
-                "INSERT INTO invitations (business_id, user_id, role_name, email,"
-                " token_hash, expires_at, used_at)"
-                " VALUES (?, ?, 'owner', ?, 'h', '2099-01-01 00:00:00', ?)",
-                (bid, user_id, email, "2026-01-01 00:00:00" if used else None),
+        c = get_connection()
+        try:
+            c.execute("INSERT INTO users (email, password_hash) VALUES (%s, 'x')", (email,))
+            user_id = c.execute("SELECT id FROM users WHERE email = %s", (email,)).fetchone()["id"]
+            c.execute(
+                "INSERT INTO business_users (user_id, business_id, role_id)"
+                " VALUES (%s, %s, (SELECT id FROM roles WHERE name = 'owner'))",
+                (user_id, bid),
             )
-        conn.commit()
-        return user_id
+            if with_invitation:
+                c.execute(
+                    "INSERT INTO invitations (business_id, user_id, role_name, email,"
+                    " token_hash, expires_at, used_at)"
+                    " VALUES (%s, %s, 'owner', %s, 'h', '2099-01-01 00:00:00', %s)",
+                    (bid, user_id, email, "2026-01-01 00:00:00" if used else None),
+                )
+            c.commit()
+            return user_id
+        finally:
+            c.close()
 
     def test_aprobado_sin_invitacion_se_reporta(self):
         self._business(101, "b1", active=1, pending=0)

@@ -9,29 +9,23 @@ de `database/database.py`:
 - atomicidad: un día inválido o un fallo de BD no persiste ningún día;
 - aislamiento por business_id.
 
-Usan SQLite temporal (patrón de tests/test_backup_database.py): ninguna
-operación contra PostgreSQL.
+Ejecuta contra PostgreSQL mediante `tests._pg_compat.PostgreSQLTestCase`: cada test
+recibe una base `turnobot_test_<uuid>` desechable con la semilla estándar (negocio 1).
+No hay swap de `DATABASE_PATH` ni `init_database()`: sobre el backend PostgreSQL el
+`DATABASE_PATH` solo se lee en la rama SQLite de `get_connection()` y
+`init_database()` se limita a detectar que el schema ya está aplicado, así que ambos
+eran andamiaje muerto. El aislamiento entre tests es el de la base temporal.
+
+El contexto de aplicación se empuja en `setUp` para que `get_connection()` resuelva el
+pool vía `flask.current_app` y no por el respaldo global `_global_pool`.
 """
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-import pytest
-
 import database.database as database
-
-ROOT = Path(__file__).resolve().parent.parent
-
-
-@pytest.fixture(autouse=True)
-def pg_test_env():
-    """Tests SQLite puros: no se necesita PostgreSQL, por lo que no se aplica
-    el skip funcional del conftest (omite la suite cuando TURNOBOT_PG_URL no
-    está definida)."""
-    yield
+from database.database import get_connection
+from tests._pg_compat import PostgreSQLTestCase
 
 
 def _entry(day, is_open=True, ms="09:00", me="13:00", as_="15:00", ae="20:00"):
@@ -101,52 +95,39 @@ class TestValidateWeeklyScheduleEntry(unittest.TestCase):
                     database._validate_weekly_schedule_entry(_entry(1, ms=bad_time, me="13:00"))
 
 
-class TestSaveWeeklySchedulesScoped(unittest.TestCase):
+class TestSaveWeeklySchedulesScoped(unittest.TestCase, PostgreSQLTestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.root_dir = Path(self.temp_dir.name)
-        self.original_database_path = database.DATABASE_PATH
-        database.DATABASE_PATH = self.root_dir / "appointments.db"
-
-        self._original_db_backend = os.environ.get("DB_BACKEND")
-        self._original_db_url = os.environ.get("DATABASE_URL")
-        os.environ["DB_BACKEND"] = "sqlite"
-        os.environ.pop("DATABASE_URL", None)
-
-        database.init_database()
-        self._open_connections = []
-
-    def tearDown(self):
-        database.DATABASE_PATH = self.original_database_path
-        if self._original_db_backend is not None:
-            os.environ["DB_BACKEND"] = self._original_db_backend
-        else:
-            os.environ.pop("DB_BACKEND", None)
-        if self._original_db_url is not None:
-            os.environ["DATABASE_URL"] = self._original_db_url
-        else:
-            os.environ.pop("DATABASE_URL", None)
-        for conn in self._open_connections:
-            conn.close()
-        self.temp_dir.cleanup()
-
-    def _conn(self):
-        conn = database.get_connection()
-        self._open_connections.append(conn)
-        return conn
+        # `self.app` lo aporta la fixture `app`: app y pool propios de este test,
+        # apuntando a la base temporal creada por `pg_test_database`. El contexto se
+        # empuja aquí (no en la fixture) porque el servicio y los helpers de este
+        # archivo llaman `get_connection()` directamente.
+        self._app_context = self.app.app_context()
+        self._app_context.push()
+        self.addCleanup(self._app_context.pop)
 
     def _schedules(self, business_id=1):
-        rows = (
-            self._conn()
-            .execute(
+        c = get_connection()
+        try:
+            rows = c.execute(
                 "SELECT day_of_week, is_open, morning_start, morning_end,"
                 " afternoon_start, afternoon_end FROM weekly_schedules"
-                " WHERE business_id = ? ORDER BY day_of_week",
+                " WHERE business_id = %s ORDER BY day_of_week",
                 (business_id,),
-            )
-            .fetchall()
-        )
-        return [tuple(r) for r in rows]
+            ).fetchall()
+            # PostgreSQL devuelve tipos nativos (bool, time): se normalizan a la
+            # representación de SQLite (0/1, "HH:MM") que es la que esperan las
+            # aserciones de este archivo.
+            out = []
+            for r in rows:
+                v = list(r.values())
+                v[1] = int(v[1])
+                for i in range(2, 6):
+                    if v[i] is not None:
+                        v[i] = v[i].strftime("%H:%M")
+                out.append(tuple(v))
+            return out
+        finally:
+            c.close()
 
     def test_guarda_semana_valida_y_devuelve_true(self):
         self.assertTrue(database.save_weekly_schedules_scoped(1, _week()))
@@ -181,7 +162,6 @@ class TestSaveWeeklySchedulesScoped(unittest.TestCase):
 
         calls = {"updates": 0}
         real_conn = real_connect()
-        self._open_connections.append(real_conn)
         real_execute = real_conn.execute
 
         def flaky_execute(sql, params=None):
@@ -205,14 +185,20 @@ class TestSaveWeeklySchedulesScoped(unittest.TestCase):
         self.assertEqual(self._schedules(1), before)
 
     def test_aislamiento_por_business_id(self):
-        conn = self._conn()
-        conn.execute("INSERT INTO businesses (id, name, slug) VALUES (2, 'otro', 'otro')")
-        for day in range(7):
-            conn.execute(
-                "INSERT INTO weekly_schedules (business_id, day_of_week, is_open) VALUES (2, ?, 0)",
-                (day,),
+        c = get_connection()
+        try:
+            c.execute(
+                "INSERT INTO businesses (id, name, slug) VALUES (%s, %s, %s)", (2, "otro", "otro")
             )
-        conn.commit()
+            c.commit()
+            for day in range(7):
+                c.execute(
+                    "INSERT INTO weekly_schedules (business_id, day_of_week, is_open) VALUES (%s, %s, %s)",
+                    (2, day, 0),
+                )
+            c.commit()
+        finally:
+            c.close()
 
         week_b2 = [_closed(d) for d in range(7)]
         week_b2[0] = _entry(0, ms="08:00", me="12:00", as_=None, ae=None)
