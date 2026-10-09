@@ -98,10 +98,12 @@ turnobot/
 ├── database/
 │   ├── database.py                 # PostgreSQL connection/init + SQLite fallback
 │   ├── pg_pool.py                  # PostgreSQL connection pool and compatibility layer
+│   ├── pg_migrator.py              # Versioned PostgreSQL schema migrations runner
 │   ├── migrator.py                 # One-time SQLite → PostgreSQL data migration
 │   └── seed_auth.py                # Initial admin/superadmin seeding
 ├── migrations/                     # Legacy SQLite schema migrations (001–023)
-├── migrations_pg/                  # PostgreSQL production schema
+├── migrations_pg/                  # Versioned PostgreSQL schema migrations
+│   └── 001_initial_schema.sql      # Baseline (applied once, never edited retroactively)
 ├── templates/                      # 22 Jinja2 templates
 ├── static/                         # CSS & JavaScript assets
 ├── scripts/                        # Operational scripts
@@ -118,8 +120,9 @@ turnobot/
 │   ├── retry_failed_notifications.py
 │   ├── create_superadmin.py        # Superadmin bootstrap
 │   ├── provision_business.py       # Business provisioning
+│   ├── migrate_pg.py               # Apply pending PostgreSQL schema migrations
 │   └── notify_failure.py           # Failure alerting
-├── tests/                          # 59 test files, 787 tests
+├── tests/                          # tests/ suite only: 59 test files, 787 tests (historical count; global inventory in docs/TEST_SUITE_INVENTORY.md)
 ├── .github/workflows/tests.yml     # CI: pytest on push/PR
 ├── pyproject.toml                  # pytest + coverage config
 └── DEPLOYMENT.md                   # Deployment & ops guide
@@ -365,6 +368,27 @@ initialized from `migrations_pg/`. Missing, empty, malformed, or non-PostgreSQL
 falls back silently to SQLite. In development and tests, select SQLite
 explicitly with `DB_BACKEND=sqlite`. The SQLite implementation (WAL mode) and
 legacy migrations under `migrations/` remain available for that opt-in path.
+
+#### Schema migrations (PostgreSQL)
+
+Startup applies `migrations_pg/001_initial_schema.sql` only to an empty
+database. Incremental schema changes are versioned (`migrations_pg/00N_*.sql`)
+and applied EXPLICITLY with `python scripts/migrate_pg.py` — always run
+`--dry-run` first, and back up before applying:
+
+```bash
+python scripts/migrate_pg.py --dry-run
+python scripts/migrate_pg.py
+```
+
+The runner records applied migrations in `schema_migrations`
+(`version`, `name`, `checksum`, `applied_at`), wraps each migration in its own
+transaction (rollback on failure), refuses to re-apply or to apply out of order
+(checksum mismatch, gaps and a registry newer than the code all fail), adopts an
+existing bootstrap baseline without re-running it, and serializes concurrent
+runners with the same PostgreSQL advisory lock used by startup. Backups live in
+`scripts/backup_postgresql.py`; the SQLite runner under `migrations/` is
+unrelated and kept only for the opt-in SQLite path.
 
 ### Key Tables
 

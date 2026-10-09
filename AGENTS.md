@@ -7,7 +7,9 @@
 
 ## Test
 
-- Run tests: `python -m pytest tests/ -v --tb=short`
+- Run tests: `python -m pytest tests/ tests_pg/ -v --tb=short`
+  (la suite `tests_pg/` y los tests funcionales PG se omiten si `TURNOBOT_PG_URL`
+  no está definida)
 - Coverage is enabled by default via pyproject.toml configuration
 
 ## Pre-existing Test Failures (Baseline)
@@ -22,7 +24,9 @@ The following tests fail on Windows due to platform limitations, unrelated to fe
    - Failure cause: Windows symlink limitations (same as above)
    - This test validates backup symlink preservation during prune operations
 
-**Expected baseline:** 732 passed, 2 failed
+**Expected baseline:** el último run completo verificado (CI) fue **1.252 passed / 0 failed** y sigue siendo la referencia canónica. Tras la revisión post-auditoría del runner PG (`database/pg_migrator.py`) se añadieron 32 items —`tests/test_pg_migrator.py` (20) y `tests_pg/test_pg_migrator_live.py` (12)—. Las métricas actuales, medidas por separado, son **90 archivos de prueba**, **1.252 definiciones AST** de funciones/métodos `test_*` y **1.284 ítems recopilados por pytest** (`pytest tests/ tests_pg/ --collect-only -q` con `TURNOBOT_PG_URL`). Esos 1.284 ítems NO se han ejecutado en bloque: tras los +32 items la suite completa no se volvió a correr, así que el total real debe verificarse en CI (ver `docs/TEST_SUITE_INVENTORY.md`).
+
+Los 2 fallos de symlink en Windows y el flakiness de concurrencia listados abajo siguen siendo esperados como fallos preexistentes.
 
 ## Note on Flaky Windows Tests
 

@@ -63,9 +63,11 @@ split-on-trailing-comma = false
 python_version = "3.12"
 warn_unused_ignores = true
 explicit_package_bases = true
-files = ["services/product.py"]
+files = ["services/product.py", "database/pg_migrator.py", "scripts/migrate_pg.py"]
 # Incremental: solo los módulos listados exigen anotaciones. El resto del
 # código permanece sin tipos hasta que se cubra (ver docs/adr/ADR-0005).
+# El runner PostgreSQL y su CLI se incluyen para que `python -m mypy` (el
+# comando de CI) los compruebe explícitamente junto a services/product.py.
 
 [[tool.mypy.overrides]]
 module = "services.product"

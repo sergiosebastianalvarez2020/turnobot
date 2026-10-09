@@ -1,8 +1,8 @@
 # Inventario canónico de tests después del cutover PostgreSQL
 
-Estado auditado: **categoría A cerrada con 0 archivos / 0 tests**; `test_recovery_lists.py` y `test_weekly_schedules.py` fueron migrados a `PostgreSQLTestCase` en el commit `bc86ff1`. Los 88 archivos están clasificados en B/C/D/E sin pendencias de migración.
+Estado auditado: **categoría A cerrada con 0 archivos / 0 tests**; `test_recovery_lists.py` y `test_weekly_schedules.py` fueron migrados a `PostgreSQLTestCase` en el commit `bc86ff1`. Los 90 archivos están clasificados en B/C/D/E sin pendencias de migración.
 
-Este documento clasifica cada archivo `test_*.py` de `tests/` y `tests_pg/` exactamente una vez. Las cifras se verificaron contra una **colección real** (`pytest tests/ tests_pg/ --collect-only -q` con `TURNOBOT_PG_URL` configurada), que arroja **88 archivos y 1.252 items**, y de forma independiente contra un conteo **AST** de funciones y métodos `test_*`, que coincide archivo por archivo salvo los tres archivos parametrizados conocidos.
+Este documento clasifica cada archivo `test_*.py` de `tests/` y `tests_pg/` exactamente una vez. Las cifras se verificaron contra una **colección real** (`pytest tests/ tests_pg/ --collect-only -q` con `TURNOBOT_PG_URL` configurada), que arroja **90 archivos y 1.284 items**, y de forma independiente contra un conteo **AST** de funciones y métodos `test_*`, que coincide archivo por archivo salvo los tres archivos parametrizados conocidos.
 
 Histórico de discrepancias detectadas y corregidas contra la realidad:
 
@@ -19,8 +19,9 @@ Histórico de discrepancias detectadas y corregidas contra la realidad:
 - El total de items subió de 1.077 a **1.089** por los 12 tests nuevos del adapter añadidos en la corrección de `_adapt_boolean_comparisons` (`tests/test_fase_4f_query_adaptation.py`: 25 → 37). Las dos migraciones posteriores no alteraron el número total de tests.
 - **Revisión posterior (actualización anterior)**: la colección real pasó a **87 archivos / 1.231 items**. Se incorporaron los 6 archivos que faltaban en el documento — `test_postgresql_migrations` (4, B), `test_restore_postgresql_hardening` (26, B), `test_restore_postgresql_safety` (15, B), `test_token_logging_redaction` (20, B), `test_recovery_lists` (13, A) y `test_weekly_schedules` (13, A) — y se corrigieron los conteos de 13 archivos existentes que habían crecido sin actualizarse: `test_app_security` (6 → 14), `test_application_factory` (6 → 7), `test_chat_recovery` (6 → 9), `test_conversations` (18 → 20), `test_fase_4d_lifecycle` (8 → 10), `test_fase_4f_query_adaptation` (37 → 58), `test_membership_authorization` (22 → 23), `test_observability` (79 → 80), `test_pg_pool_hardening` (21 → 25), `test_platform` (18 → 23), `test_resources_public_api` (28 → 29), `test_staff_invitation` (10 → 11) y `test_turnogo_landing_wizard` (32 → 33). Balance: **+91** items por ficheros nuevos y **+51** por crecimiento interno → **1.089 → 1.231** items y **81 → 87** archivos.
 - **Revisión de cierre**: se incorporó `tests_pg/test_helpers_security.py` (21 tests, categoría B) y la colección real pasó a **88 archivos / 1.252 items**; el total coincide con los **1252 passed / 0 failed** de la suite completa.
+- **Revisión post-auditoría del runner PG**: se incorporaron los tests del runner `database/pg_migrator.py` — `tests/test_pg_migrator.py` (16 tests, B) y `tests_pg/test_pg_migrator_live.py` (11 tests, B) — y esta revisión los llevó a **20 y 12 tests** al implementar el límite de espera del advisory lock (`MigrationLockTimeout`, 4 unit + 1 live). La colección real pasó a **90 archivos / 1.284 items** y el AST a **90 archivos / 1.252 tests**. La suite completa NO se volvió a ejecutar tras estos +32 items: el último run completo verificado sigue siendo **1252 passed / 0 failed**, y el total recolectado actual (**1.284**) debe re-verificarse en CI.
 
-`tests/test_cli_pg_pool_lifecycle.py` declara 9 funciones de test y una está parametrizada con dos valores (10 items); `tests/test_restore_postgresql_hardening.py` declara 11 funciones de test, 3 parametrizadas con 5, 3 y 10 valores (26 items); `tests_pg/test_helpers_security.py` declara 5 funciones de test, 2 parametrizadas con 6 y 12 valores (21 items). Esos tres son las únicas diferencias entre AST y colección: `1.220 + 1 + 15 + 16 = 1.252`.
+`tests/test_cli_pg_pool_lifecycle.py` declara 9 funciones de test y una está parametrizada con dos valores (10 items); `tests/test_restore_postgresql_hardening.py` declara 11 funciones de test, 3 parametrizadas con 5, 3 y 10 valores (26 items); `tests_pg/test_helpers_security.py` declara 5 funciones de test, 2 parametrizadas con 6 y 12 valores (21 items). Esos tres son las únicas diferencias entre AST y colección: `1.252 + 1 + 15 + 16 = 1.284`.
 
 ## A — Migrar/normalizar al patrón PostgreSQL
 
@@ -87,6 +88,7 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests/test_observability.py` | 80 | B | Nunca arrastró preparación SQLite; el único ajuste fue en un doble de test (`sqlite3.OperationalError` → excepción genérica). Bloques funcionales sobre la base temporal del harness y mocks unitarios de locks conservados. | Mantener; el peso es de cobertura, no de migración. |
 | `tests/test_onboarding.py` | 7 | B | Migrado: estado de onboarding persistido en PG. | Mantener como cobertura PG. |
 | `tests/test_password_reset.py` | 13 | B | Migrado: recuperación de contraseña sobre PG — token de un solo uso, contraseña débil rechazada, anti-enumeración de emails y revocación de las sesiones del usuario tras el reset. | Mantener como canónica de recuperación de contraseña. |
+| `tests/test_pg_migrator.py` | 20 | B | Runner de migraciones PostgreSQL (`database/pg_migrator.py`): unit tests con conexión/cursores falsos (descubrimiento/validación de archivos, plan, auto-baseline, checksum, huecos de versión, rollback, dry-run sin escribir) y el timeout del advisory lock (`MigrationLockTimeout`). Gated por el skip de conftest; corre con `TURNOBOT_PG_URL`. | Mantener como validación del runner PG (paralelo a `test_postgresql_migrations`). |
 | `tests/test_platform.py` | 23 | B | Migrado: superadmin, bootstrap de login, auditoría y logout selectivo sobre PG vía `PostgreSQLTestCase`. Corrige un falso positivo previo: `PgRowProxy` itera claves, no valores, por lo que la auditoría ahora lee `dict(row).values()`. | Mantener como canónica de plataforma. |
 | `tests/test_postgres_config.py` | 12 | B | Resolver/configuración PostgreSQL; el rechazo de SQLite en producción sigue siendo contrato vigente. | Mantener como unit tests de configuración. |
 | `tests/test_postgres_schema.py` | 17 | B | Inspecciona `migrations_pg/001_initial_schema.sql`; las menciones SQLite son assertions negativas del esquema PostgreSQL. | Mantener como validación estática PG. |
@@ -118,13 +120,14 @@ Incluye integración live en `tests_pg/`, funcionalidad ya ejecutada mediante el
 | `tests_pg/test_helpers_security.py` | 21 | B | Guardia de nombres de base en `tests_pg/_helpers.py`: `_TEST_DB_NAME_RE` + `_validate_test_db_name()` rechazan con `ValueError` cualquier nombre fuera de `turnobot_(test|bootstrap)_[0-9a-f]+` antes de `CREATE DATABASE`/`DROP DATABASE`; `new_db_name()` solo genera nombres que superan ese filtro. Unit tests puros sin servidor (la validación lanza antes de conectar); 5 funciones, 2 parametrizadas en 6 y 12 casos. | Mantener como contrato de seguridad del harness PG. |
 | `tests_pg/test_knowledge_search_live.py` | 12 | B | Búsqueda PostgreSQL live. | Mantener; la cobertura equivalente ya está en `tests/test_knowledge.py` (B). |
 | `tests_pg/test_migrator.py` | 15 | B | PostgreSQL es el destino/objeto de integración; crea SQLite local solo como origen controlado de `migrator.py`. | Mantener como integración PG de migración; documentar explícitamente su origen SQLite. |
+| `tests_pg/test_pg_migrator_live.py` | 12 | B | Runner de migraciones contra bases `turnobot_test_<hex>` descartables: baseline en vacío + idempotencia, adopción de baseline bootstrapeado, orden incremental, checksum mismatch, hueco de versión, esquema parcial, rollback de migración fallida, dry-run sin escrituras, concurrencia serializada y timeout del advisory lock; más el CLI (`scripts/migrate_pg.py`) en dry-run y URL no-PG. | Mantener en integración PG. |
 | `tests_pg/test_pool_live.py` | 7 | B | Pool/conexiones/transacciones PostgreSQL live. | Mantener en integración PG. |
 | `tests_pg/test_reschedule_admin_lock_live.py` | 7 | B | Reprogramación y lock contra PostgreSQL live. | Mantener en integración PG. |
 | `tests_pg/test_schema_live.py` | 14 | B | Aplica/verifica schema PostgreSQL live. | Mantener; es complementaria a la validación estática. |
 | `tests_pg/test_seed_sequences.py` | 8 | B | Cobertura del harness: `sync_identity_sequences()` sincroniza las secuencias IDENTITY tanto en bases solo-schema como schema+seed. | Mantener como contrato del seed. |
 | `tests_pg/test_session_live.py` | 12 | B | Session, app factory y errores sobre pool PostgreSQL live. | Mantener en integración PG. |
 
-**70 archivos / 1.053 tests.**
+**72 archivos / 1.085 tests.**
 
 ## C — Mantener SQLite por razón técnica vigente
 
@@ -186,15 +189,15 @@ Los items por archivo cuentan la expansión parametrizada indicada arriba.
 | Categoría | Archivos | Tests/items |
 | --- | ---: | ---: |
 | A — Migrar/normalizar a PostgreSQL | 0 | 0 |
-| B — PostgreSQL ya cubierto | 70 | 1.053 |
+| B — PostgreSQL ya cubierto | 72 | 1.085 |
 | C — Mantener SQLite legítimo | 8 | 40 |
 | D — Consolidación resuelta | 1 | 10 |
 | E — Revisión manual/unit desacoplable | 9 | 149 |
-| **TOTAL** | **88** | **1.252** |
+| **TOTAL** | **90** | **1.284** |
 
-Comprobación: `0 + 70 + 8 + 1 + 9 = 88`; `0 + 1.053 + 40 + 10 + 149 = 1.252`.
+Comprobación: `0 + 72 + 8 + 1 + 9 = 90`; `0 + 1.085 + 40 + 10 + 149 = 1.284`.
 
-Las cifras por categoría quedan **forzadas por la aritmética**: B = total − A − C − D − E, es decir `88 − 0 − 8 − 1 − 9 = 70` archivos y `1.252 − 0 − 40 − 10 − 149 = 1.053` tests. Cualquier otro total para B dejaría el inventario descuadrado respecto al total canónico de 88 archivos / 1.252 items.
+Las cifras por categoría quedan **forzadas por la aritmética**: B = total − A − C − D − E, es decir `90 − 0 − 8 − 1 − 9 = 72` archivos y `1.284 − 0 − 40 − 10 − 149 = 1.085` tests. Cualquier otro total para B dejaría el inventario descuadrado respecto al total canónico de 90 archivos / 1.284 items.
 
 ## Adaptador de compatibilidad: corrección de `_adapt_boolean_comparisons`
 
@@ -239,12 +242,13 @@ Quedan fuera de la cola por diseño, no por olvido:
 ## Límites de esta revisión
 
 - Las cifras provienen de una **colección real** (`pytest tests/ tests_pg/ --collect-only -q`) ejecutada con `TURNOBOT_PG_URL` apuntando a la base de tests local. No se usó una URL ficticia ni una base de producción.
-- La colección confirma **88 archivos / 1.252 items**; los totales por categoría reconcilian exactamente contra ese número, y cada archivo está clasificado una sola vez (verificado sin duplicados, sin sobrantes y sin archivos sin clasificar).
-- Conteo independiente por **AST** (funciones y métodos `test_*`): **88 archivos / 1.220 tests**. Las únicas diferencias frente a pytest son los tres archivos parametrizados ya documentados: `tests/test_cli_pg_pool_lifecycle.py` (AST 9, colección 10), `tests/test_restore_postgresql_hardening.py` (AST 11, colección 26) y `tests_pg/test_helpers_security.py` (AST 5, colección 21); `1.220 + 1 + 15 + 16 = 1.252`. No hay ninguna otra divergencia.
-- El incremento de 1.089 → 1.252 se explica por los **91** items de los 6 archivos nuevos y los **51** tests añadidos a 13 archivos existentes (ambos desgloses en el histórico de arriba), más los **21** tests de `tests_pg/test_helpers_security.py` añadido en la revisión de cierre; las reclasificaciones de categoría no alteran el total.
+- La colección confirma **90 archivos / 1.284 items**; los totales por categoría reconcilian exactamente contra ese número, y cada archivo está clasificado una sola vez (verificado sin duplicados, sin sobrantes y sin archivos sin clasificar).
+- Conteo independiente por **AST** (funciones y métodos `test_*`): **90 archivos / 1.252 tests**. Las únicas diferencias frente a pytest son los tres archivos parametrizados ya documentados: `tests/test_cli_pg_pool_lifecycle.py` (AST 9, colección 10), `tests/test_restore_postgresql_hardening.py` (AST 11, colección 26) y `tests_pg/test_helpers_security.py` (AST 5, colección 21); `1.252 + 1 + 15 + 16 = 1.284`. No hay ninguna otra divergencia.
+- El incremento de 1.089 → 1.252 se explica por los **91** items de los 6 archivos nuevos, los **51** tests añadidos a 13 archivos existentes y los **21** tests de `tests_pg/test_helpers_security.py` (desglose en el histórico de arriba). Tras la revisión post-auditoría, el total pasó a **1.284** por los 32 items del runner PG (`tests/test_pg_migrator.py` 20 y `tests_pg/test_pg_migrator_live.py` 12) y se mantiene **72** el subtotal B (1.085 tests); las reclasificaciones de categoría no alteran el total.
 - El cierre de A se verificó **ejecutando**, no solo por inspección: los 8 archivos migrados se corrieron juntos contra PostgreSQL con `TURNOBOT_PG_URL` y dieron `268 passed`.
 - El residuo inerte de `test_rate_limiting.py` (ver sección A) se documenta en vez de declararse cerrado sin más: el archivo es verde y funcionalmente migrado, pero conserva texto SQLite muerto. No altera ninguna cifra.
-- No se cambió ninguna prueba, fixture, servicio, configuración, sistema remoto ni archivo de producción al actualizar este inventario.
+- No se cambió ninguna prueba, fixture, servicio, configuración, sistema remoto ni archivo de producción al actualizar las revisiones anteriores de este inventario.
+- Esta revisión sí modificó código y tests (las anteriores solo documentaron): `database/pg_migrator.py` implementa el límite de espera del advisory lock (`MigrationLockTimeout`, por defecto 60 s, configurable vía `lock_timeout` en `run_migrations`/`apply_pending_migrations`). Los conteos del inventario ya incluyen esos tests (unit 20, live 12).
 
 ## Drift detectado fuera de esta tarea (requiere decisión)
 

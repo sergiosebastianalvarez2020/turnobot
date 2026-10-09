@@ -16,8 +16,51 @@ y tests, SQLite solo se habilita mediante `DB_BACKEND=sqlite` explícito.
 
 El arranque solo aplica `migrations_pg/001_initial_schema.sql` a una base vacía.
 Si ya existe `businesses`, asume que el esquema está actualizado y no aplica
-migraciones incrementales. No desplegar cambios de esquema PostgreSQL hasta
-incorporar y ejecutar un proceso explícito de migración versionada.
+migraciones incrementales. Los cambios de esquema tienen un proceso EXPLÍCITO,
+separado del arranque:
+
+```powershell
+python scripts\migrate_pg.py --url "$env:DATABASE_URL" --dry-run   # revisar
+python scripts\migrate_pg.py --url "$env:DATABASE_URL"             # aplicar
+```
+
+Flujo recomendado: backup → dry-run → aplicar → verificar → arrancar.
+
+El runner (`database/pg_migrator.py`) mantiene `migrations_pg/` versionada y
+registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
+
+- Aplica migraciones pendientes (`migrations_pg/00N_nombre.sql`) en orden
+  determinista, cada una en su propia transacción (rollback si una falla).
+- Nunca repite una ya aplicada; falla ante checksum modificado, huecos de
+  versión o un registro más nuevo que el código.
+- En una base vacía aplica `001_initial_schema.sql` y lo registra.
+- Si la base ya fue bootstrapeada por el arranque (001 completo, sin
+  `schema_migrations`), registra el baseline sin re-ejecutarlo y continúa.
+- Un esquema parcial produce un error explícito sin tocar DDL.
+- Usa un advisory lock compartido con el bootstrap para serializar ejecuciones
+  concurrentes, con una espera **acotada**: por defecto 60 s, configurable con
+  `lock_timeout` en `run_migrations`/`apply_pending_migrations`. Si otro runner
+  o el bootstrap retiene el lock más tiempo, la ejecución falla con
+  `MigrationLockTimeout` en lugar de quedarse bloqueada indefinidamente.
+
+### Restricción del parser SQL
+
+`split_sql_statements` (el parser que parte el `.sql` en sentencias) NO soporta:
+
+- Cuerpos procedimentales `$...$` (funciones/`DO`/configuración con `$$...$$`):
+  el parser parte por `;` y un `$$` no cerrado produce SQL inválido o
+  sentencias truncadas.
+- `SET TRANSACTION` ni `SAVEPOINT` (y el runner descarta `BEGIN`/`COMMIT`/
+  `ROLLBACK` propios del archivo para conservar la atomicidad por migración).
+
+Las migraciones deben ser **DDL puro** (una o más sentencias `CREATE`/`ALTER`/
+`DROP`/`COMMENT`/`GRANT`, terminadas en `;`). Si se necesitara un cuerpo
+procedimental, hay que migrar el esquema por otro medio y documentar el cambio
+aquí; el parser no se va a ampliar para cubrirlo.
+
+Cualquier cambio de esquema se agrega como un nuevo archivo
+`migrations_pg/00N_nombre.sql` (N = siguiente versión) y se aplica con este
+runner; `001_initial_schema.sql` no debe editarse retroactivamente.
 
 ## Arranque
 
