@@ -640,8 +640,13 @@ def adapt_query_for_postgres(query: str, params: Any = None) -> tuple[str | None
     # 7. Reemplazar placeholders '?' por '%s' fuera de comillas
     sql = replace_placeholders(sql)
 
-    # 8. Escapar '%' literales para el parser de psycopg3
-    sql = escape_literal_percent(sql)
+    # 8. Escapar '%' literales para el parser de psycopg3 SOLO en consultas parametrizadas.
+    # Psycopg3 solo interpreta '%' como placeholder cuando hay parámetros; en SQL sin
+    # parámetros los '%' literales (DEFAULT, COMMENT, LIKE, etc.) deben conservarse.
+    # Usamos `params is not None` para que una tupla vacía `()` también active el escape,
+    # ya que psycopg3 parsea la consulta igual aunque la tupla esté vacía.
+    if params is not None:
+        sql = escape_literal_percent(sql)
 
     return sql, params
 
