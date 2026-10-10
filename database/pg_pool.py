@@ -97,16 +97,38 @@ def configure_pg_session(connection: Any) -> None:
         connection.autocommit = False
 
 
-def sanitize_database_url(url: str | None) -> str | None:
-    """Enmascara la contraseña en una URL/DSN de base de datos para logging o reporting.
+_URL_PASSWORD_RE = re.compile(r"://([^:@]+):([^@\s]+)@")
 
-    Ejemplo:
-        postgresql://user:secret123@localhost:5432/turnobot
-        -> postgresql://user:***@localhost:5432/turnobot
+
+def _mask_dsn_password(match: re.Match[str]) -> str:
+    """Reemplaza por ``***`` el valor de ``password=``/``pwd=`` de un DSN."""
+    value = match.group(2)
+    if value.startswith("'"):
+        return match.group(1) + "'***'"
+    return match.group(1) + "***"
+
+
+_DSN_PASSWORD_RE = re.compile(
+    r"((?:^|\s)(?:password|pwd)\s*=\s*)(('[^']*')|[^\s'\"]*)", re.IGNORECASE
+)
+
+
+def sanitize_database_url(url: str | None) -> str | None:
+    """Enmascara la contraseña en una URL/DSN de conexión para logging o reporting.
+
+    Cubre la forma URL (``postgresql://user:secret123@localhost:5432/turnobot``,
+    incluidas contraseñas de caracteres especiales codificados ``%XX``), la
+    forma DSN clave/valor aceptada por libpq/psycopg
+    (``host=db user=u password=secreto dbname=x``, con ``password=``/``pwd=``,
+    mayúsculas, espacios múltiples y valores citados) y subcadenas embebidas en
+    textos mayores (p. ej. mensajes de excepción). La contraseña queda como
+    ``***`` y el resto de la información diagnóstica (host, base, tipo de error)
+    se conserva.
     """
     if not url:
         return None
-    return re.sub(r"://([^:@]+):([^@]+)@", r"://\1:***@", url)
+    masked = _URL_PASSWORD_RE.sub(r"://\1:***@", url)
+    return _DSN_PASSWORD_RE.sub(_mask_dsn_password, masked)
 
 
 def normalize_database_url(url: str | None) -> str | None:

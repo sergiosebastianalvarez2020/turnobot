@@ -34,6 +34,16 @@ from database.pg_pool import get_database_backend, sanitize_database_url
 logger = logging.getLogger("turnobot.pg_migrator.cli")
 
 
+def _safe_error(error: BaseException) -> str:
+    """Representación de un error sin credenciales (defensa en profundidad).
+
+    Las excepciones de la capa de conexión (psycopg) pueden incluir la URL o el
+    DSN original en su mensaje; se enmascaran antes de emitirlas a stdout, stderr
+    o al logger.
+    """
+    return sanitize_database_url(str(error)) or ""
+
+
 def _format_report(result: MigrationResult) -> str:
     lines = ["Migraciones PostgreSQL"]
     if result.dry_run:
@@ -83,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         backend = get_database_backend(args.url)
     except RuntimeError as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        print(f"ERROR: {_safe_error(error)}", file=sys.stderr)
         return 1
     if backend != "postgresql":
         print("ERROR: el runner solo aplica a PostgreSQL.", file=sys.stderr)
@@ -93,10 +103,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_migrations(args.url, migrations_dir=args.migrations_dir, dry_run=args.dry_run)
     except MigrationError as error:
-        print(f"ERROR: {error}", file=sys.stderr)
+        print(f"ERROR: {_safe_error(error)}", file=sys.stderr)
         return 1
     except Exception as error:  # noqa: BLE001 - reportar fallo de DDL/conexión sin traza cruda
-        logger.error("Fallo aplicando migraciones: %s", error)
+        logger.error("Fallo aplicando migraciones: %s", _safe_error(error))
         return 1
 
     print(_format_report(result))
