@@ -249,16 +249,26 @@ def test_apply_executes_and_records(tmp_path):
     assert any("CREATE TABLE businesses" in sql for sql, _ in conn.calls)
 
 
-def test_apply_adopts_complete_baseline_then_applies_next(tmp_path):
+def test_apply_adopts_complete_baseline_then_applies_next_fails_without_metadata(tmp_path):
+    """
+    Política D2: base con esquema 001 completo (simulado via tables={"businesses"})
+    pero SIN metadata, y migraciones posteriores a 001 descubiertas -> MigrationError.
+    """
     _baseline_dir(tmp_path)
     _write(tmp_path, "002_widgets.sql", NEXT_SQL)
+    # Simula base con esquema 001 completo (tabla businesses e índice) pero SIN metadata
     conn = _FakeConnection(tables={"businesses"}, indexes={"idx_businesses"})
 
-    result = pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
+    with pytest.raises(pgm.MigrationError) as exc_info:
+        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
 
-    assert [item.version for item in result.adopted] == [1]
-    assert [item.version for item in result.applied] == [2]
-    assert result.current_version == 2
+    error_msg = str(exc_info.value)
+    assert "metadata" in error_msg.lower() or "schema_migrations" in error_msg.lower()
+    assert "posterior" in error_msg.lower() or "001" in error_msg
+
+    # Verificar que no se intentó crear schema_migrations ni registrar nada
+    assert not any("CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS" in sql.upper() for sql, _ in conn.calls)
+    assert conn.applied == []
 
 
 def test_apply_rolls_back_and_does_not_record_on_failure(tmp_path):

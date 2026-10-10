@@ -21,8 +21,12 @@ Contrato:
   retiene el lock más tiempo, falla con ``MigrationLockTimeout`` (no cuelga).
 - Cada migración se aplica en su PROPIA transacción: si una falla, se hace
   rollback de esa transacción y NO se registra como aplicada.
-- Auto-baseline: si no hay metadata pero el esquema 001 ya está completo, se
-  registra la versión 1 SIN ejecutarla y se continúa con las pendientes.
+- Auto-baseline: si no hay metadata pero el esquema 001 ya está completo Y solo
+  existe la migración 001, se registra la versión 1 SIN ejecutarla.
+- Pérdida de metadata: si no hay metadata, el esquema 001 está completo y se
+  descubren migraciones posteriores a la 001, el runner falla con
+  ``MigrationError`` explicativo. No intenta inferir el estado real ni re-ejecutar
+  migraciones posteriores.
 
 El mecanismo SQLite (``database.database.apply_migrations``) permanece intacto e
 independiente: este runner nunca lee ``migrations/``.
@@ -274,6 +278,19 @@ def plan_migrations(conn, migrations_dir: Path | str = MIGRATIONS_PG_DIR) -> Mig
             "no se aplica el baseline automáticamente. Reparar o re-bootstrapear."
         )
     if state == "complete":
+        # Política D2: si existen migraciones posteriores a la 001 y falta la
+        # tabla de metadata, NO hacemos auto-baseline. No es posible determinar
+        # si las migraciones posteriores ya fueron aplicadas (p.ej. ALTER TABLE
+        # sin CREATE TABLE detectable). Fallamos explícitamente para evitar
+        # re-ejecución silenciosa.
+        if len(migrations) > 1:
+            raise MigrationError(
+                "Pérdida de metadata detectada: la tabla schema_migrations no existe "
+                "pero el esquema contiene la versión 1 completa y se descubren "
+                f"{len(migrations) - 1} migración(es) posterior(es). No es posible "
+                "determinar el estado real del esquema. Restaurar backup o "
+                "reconstruir metadata manualmente antes de continuar."
+            )
         logger.info(
             "Baseline %s detectado completo; se registra sin ejecutar (auto-baseline).",
             baseline.name,
@@ -370,8 +387,6 @@ def apply_pending_migrations(
     """
     try:
         _acquire_lock(conn, timeout=lock_timeout)
-        if not dry_run:
-            _ensure_metadata_table(conn)
 
         plan = plan_migrations(conn, migrations_dir)
 
@@ -383,6 +398,11 @@ def apply_pending_migrations(
                 pending=[*plan.to_adopt, *plan.to_apply],
                 current_version=_current_version(conn),
             )
+
+        # La tabla de metadata se crea SOLO después de validar el plan.
+        # Esto evita crear/commitear schema_migrations en ejecuciones que fallarán
+        # (p.ej. esquema parcial, pérdida de metadata, checksum mismatch).
+        _ensure_metadata_table(conn)
 
         for migration in plan.to_adopt:
             logger.info("Registrando baseline %s sin ejecutar (auto-baseline).", migration.name)

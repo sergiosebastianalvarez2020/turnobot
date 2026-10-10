@@ -35,7 +35,14 @@ registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
   versión o un registro más nuevo que el código.
 - En una base vacía aplica `001_initial_schema.sql` y lo registra.
 - Si la base ya fue bootstrapeada por el arranque (001 completo, sin
-  `schema_migrations`), registra el baseline sin re-ejecutarlo y continúa.
+  `schema_migrations`) **y solo existe la migración 001**, registra el baseline
+  sin re-ejecutarlo y continúa.
+- Si la base tiene 001 completo, falta `schema_migrations` **y se descubren
+  migraciones posteriores a la 001**, el runner falla con `MigrationError`
+  explicando la pérdida de metadata. No es posible determinar si las
+  migraciones posteriores ya fueron aplicadas (p.ej. `ALTER TABLE` sin `CREATE
+  TABLE` detectable). Requiere intervención manual: restaurar backup o
+  reconstruir metadata antes de continuar.
 - Un esquema parcial produce un error explícito sin tocar DDL.
 - Usa un advisory lock compartido con el bootstrap para serializar ejecuciones
   concurrentes, con una espera **acotada**: por defecto 60 s, configurable con

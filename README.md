@@ -385,8 +385,19 @@ The runner records applied migrations in `schema_migrations`
 (`version`, `name`, `checksum`, `applied_at`), wraps each migration in its own
 transaction (rollback on failure), refuses to re-apply or to apply out of order
 (checksum mismatch, gaps and a registry newer than the code all fail), adopts an
-existing bootstrap baseline without re-running it, and serializes concurrent
-runners with the same PostgreSQL advisory lock used by startup. Backups live in
+existing bootstrap baseline without re-running it **only when the 001 migration
+is the only one available**, and serializes concurrent runners with the same
+PostgreSQL advisory lock used by startup.
+
+**Metadata loss protection (D2):** If the database has the 001 schema complete
+but `schema_migrations` is missing **and** migrations beyond 001 are discovered,
+the runner fails with a clear `MigrationError` instead of silently re-running
+later migrations. This prevents undetectable `ALTER TABLE` / `DROP COLUMN`
+changes from being re-applied. Recovery requires restoring a backup or
+manually reconstructing `schema_migrations`; never run the migrator against
+production to diagnose state.
+
+Backups live in
 `scripts/backup_postgresql.py`; the SQLite runner under `migrations/` is
 unrelated and kept only for the opt-in SQLite path.
 
