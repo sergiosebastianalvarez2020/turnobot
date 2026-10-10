@@ -407,6 +407,35 @@ Python API. An unauthorized external directory raises `MigrationError`
 authorization only permits changing the SQL location; it does **not** disable
 validations of names, gaps, checksums, versions, or downgrades.
 
+### Migration naming convention (D1/D10)
+
+Migration files in `migrations_pg/` **must** follow the pattern:
+
+```
+<version>_<name>.sql
+```
+
+- **Version**: integer with **at least 3 digits** (e.g., `001`, `002`, `010`, `1000`). No arbitrary upper limit.
+- **Name**: must start with an **ASCII letter** (`A-Z`, `a-z`), followed by letters, digits, or underscores (`_`).
+- **Extension**: mandatory `.sql`.
+
+**Valid examples:**
+- `001_initial_schema.sql`
+- `002_add_widgets.sql`
+- `010_fix_user_bug.sql`
+- `1000_add_big_feature.sql`
+
+**Invalid (raise MigrationError):**
+- `schema.sql` — missing version prefix
+- `002_2badname.sql` — name starts with digit
+- `2024_01_01_fix.sql` — date-like prefix, name starts with digit
+- `1_initial.sql` — version has fewer than 3 digits
+- `001_.sql` — empty name
+
+Non-`.sql` files are silently ignored.
+
+Files are applied in **numeric version order** (natural integer order). Versions must be **contiguous from 1** with no gaps or duplicates.
+
 Backups live in
 `scripts/backup_postgresql.py`; the SQLite runner under `migrations/` is
 unrelated and kept only for the opt-in SQLite path.

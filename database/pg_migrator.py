@@ -63,7 +63,10 @@ _PG_SCHEMA_LOCK = _PG_SCHEMA_BOOTSTRAP_LOCK
 _LOCK_WAIT_TIMEOUT = 60.0
 _LOCK_POLL_INTERVAL = 0.25
 
-_MIGRATION_FILENAME_RE = re.compile(r"^(\d{3,})_([A-Za-z0-9_]+)\.sql$")
+# Patrón: versión (mínimo 3 dígitos) + '_' + nombre que EMPIEZA con letra ASCII
+# y continúa con letras, dígitos o '_'. Rechaza nombres que empiecen por dígito
+# (p.ej. 2024_01_01_fix.sql) para evitar colisiones de versión.
+_MIGRATION_FILENAME_RE = re.compile(r"^(\d{3,})_([A-Za-z][A-Za-z0-9_]*)\.sql$")
 _CREATE_TABLE_RE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_]\w*)", re.I)
 _CREATE_INDEX_RE = re.compile(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z_]\w*)", re.I)
 _TRANSACTION_COMMANDS = frozenset({"BEGIN", "COMMIT", "ROLLBACK"})
@@ -156,15 +159,20 @@ def discover_migrations(
 ) -> list[MigrationFile]:
     """Descubre y valida las migraciones de un directorio.
 
-    Exige versiones únicas y contiguas desde 1 sin huecos. Un hueco o un nombre
-    inválido produce ``MigrationError`` antes de tocar la base de datos.
+    Exige versiones únicas y contiguas desde 1 sin huecos. Un hueco, un nombre
+    inválido o un archivo .sql que no cumpla el patrón de nombres produce
+    ``MigrationError`` antes de tocar la base de datos.
     """
     directory = _validate_migrations_dir(migrations_dir, allow_external=allow_external)
     discovered: list[MigrationFile] = []
     for path in directory.glob("*.sql"):
         match = _MIGRATION_FILENAME_RE.match(path.name)
         if match is None:
-            continue
+            raise MigrationError(
+                f"Archivo de migración con nombre inválido: {path.name}. "
+                f"El formato requerido es: <versión>_<nombre>.sql, "
+                f"donde versión son al menos 3 dígitos y nombre empieza con letra."
+            )
         discovered.append(
             MigrationFile(
                 version=int(match.group(1)),

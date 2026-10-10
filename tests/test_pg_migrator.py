@@ -128,14 +128,99 @@ def test_discover_migrations_rejects_empty_directory(tmp_path):
         pgm.discover_migrations(tmp_path, allow_external=True)
 
 
-def test_discover_migrations_ignores_non_matching_files(tmp_path):
+# ---------------------------------------------------------------------------
+# Política de nombres (D1/D10)
+# ---------------------------------------------------------------------------
+
+
+def test_discover_migrations_accepts_valid_three_digit_version(tmp_path):
+    """Versión de 3 dígitos con nombre válido se acepta."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "002_add_widgets.sql", NEXT_SQL)
+
+    migrations = pgm.discover_migrations(tmp_path, allow_external=True)
+
+    assert [item.version for item in migrations] == [1, 2]
+    assert migrations[0].name == "001_initial_schema.sql"
+    assert migrations[1].name == "002_add_widgets.sql"
+
+
+def test_discover_migrations_accepts_valid_four_digit_version(tmp_path):
+    """Versión de 4+ dígitos con nombre válido se acepta (sin límite de 999).
+
+    Nota: las versiones deben ser contiguas desde 1, así que usamos 1 y 1001
+    para demostrar que 4+ dígitos funciona, pero requerimos contigüidad.
+    """
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    # No podemos saltar a 1000 porque requiere contigüidad.
+    # Este test verifica que el regex acepta 4 dígitos, no que se pueda saltar.
+    # Para demostrar 4 dígitos sin huecos, necesitaríamos 1000 archivos.
+    # Aquí solo verificamos que el regex no rechaza 4 dígitos.
+    _write(tmp_path, "0002_add_feature.sql", NEXT_SQL)
+
+    migrations = pgm.discover_migrations(tmp_path, allow_external=True)
+
+    assert [item.version for item in migrations] == [1, 2]
+    assert migrations[1].name == "0002_add_feature.sql"
+
+
+def test_discover_migrations_rejects_invalid_sql_filename(tmp_path):
+    """Archivos .sql con nombre inválido deben fallar explícitamente (D1)."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "notes.txt", "ignore me")  # no es .sql, se ignora
+    _write(tmp_path, "schema.sql", "CREATE TABLE nope (id int);")  # .sql pero nombre inválido
+    _write(tmp_path, "002_2badname.sql", "CREATE TABLE t (id int);")  # nombre empieza con dígito
+
+    with pytest.raises(pgm.MigrationError, match="nombre inválido"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
+
+
+def test_discover_migrations_rejects_date_prefixed_filename(tmp_path):
+    """Nombres con prefijo tipo fecha (ej. 2024_01_01_fix.sql) se rechazan (D10)."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "2024_01_01_fix.sql", "CREATE TABLE t (id int);")
+
+    with pytest.raises(pgm.MigrationError, match="nombre inválido"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
+
+
+def test_discover_migrations_ignores_non_sql_files(tmp_path):
+    """Archivos que no son .sql se ignoran silenciosamente."""
     _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
     _write(tmp_path, "notes.txt", "ignore me")
-    _write(tmp_path, "schema.sql", "CREATE TABLE nope (id int);")
+    _write(tmp_path, "README.md", "# docs")
+    _write(tmp_path, "script.py", "print('hi')")
 
     migrations = pgm.discover_migrations(tmp_path, allow_external=True)
 
     assert [item.name for item in migrations] == ["001_initial_schema.sql"]
+
+
+def test_discover_migrations_rejects_duplicate_versions(tmp_path):
+    """Versiones duplicadas siguen rechazándose."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "001_duplicate.sql", NEXT_SQL)
+
+    with pytest.raises(pgm.MigrationError, match="duplicadas"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
+
+
+def test_discover_migrations_rejects_gap_naming_policy(tmp_path):
+    """Huecos en la numeración siguen rechazándose (bajo política de nombres)."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "003_widgets.sql", NEXT_SQL)
+
+    with pytest.raises(pgm.MigrationError, match="Huecos"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
+
+
+def test_discover_migrations_external_dir_same_rules(tmp_path):
+    """Directorios externos autorizados (D13) siguen las mismas reglas de nombres."""
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "002_2badname.sql", NEXT_SQL)  # nombre empieza con dígito
+
+    with pytest.raises(pgm.MigrationError, match="nombre inválido"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
 
 
 # ---------------------------------------------------------------------------

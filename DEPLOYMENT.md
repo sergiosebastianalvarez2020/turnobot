@@ -78,6 +78,37 @@ Cualquier cambio de esquema se agrega como un nuevo archivo
 `migrations_pg/00N_nombre.sql` (N = siguiente versión) y se aplica con este
 runner; `001_initial_schema.sql` no debe editarse retroactivamente.
 
+### Convención de nombres de migraciones (D1/D10)
+
+Los archivos de migración en `migrations_pg/` deben seguir estrictamente el formato:
+
+```
+<versión>_<nombre>.sql
+```
+
+- **Versión**: número entero de **al menos 3 dígitos** (p.ej. `001`, `002`, `010`, `1000`). No hay límite superior arbitrario (no está restringido a 999).
+- **Nombre**: debe empezar con una **letra ASCII** (`A-Z` o `a-z`), seguida de letras, dígitos o guiones bajos (`_`). Ejemplos válidos: `initial_schema`, `add_widgets`, `fix_user_bug`.
+- **Extensión**: obligatoriamente `.sql`.
+
+**Ejemplos válidos:**
+- `001_initial_schema.sql`
+- `002_add_widgets.sql`
+- `010_fix_user_bug.sql`
+- `1000_add_big_feature.sql`
+
+**Ejemplos INVÁLIDOS (producen MigrationError):**
+- `schema.sql` — falta prefijo de versión
+- `002_2badname.sql` — el nombre empieza con dígito
+- `2024_01_01_fix.sql` — prefijo tipo fecha, el nombre empieza con dígito
+- `1_initial.sql` — versión con menos de 3 dígitos
+- `001_.sql` — nombre vacío
+
+Los archivos que **no** tienen extensión `.sql` se ignoran silenciosamente (p.ej. `notes.txt`, `README.md`).
+
+Cualquier archivo `.sql` que no cumpla el patrón provoca `MigrationError` **explícito** antes de tocar la base de datos (D1). Esto evita que migraciones mal formadas pasen desapercibidas.
+
+El orden de aplicación es **numérico por versión** (orden natural de enteros). Las versiones deben ser **contiguas desde 1** sin huecos ni duplicados.
+
 ## Arranque
 
 ```powershell
