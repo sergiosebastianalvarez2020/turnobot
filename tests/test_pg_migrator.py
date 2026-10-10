@@ -102,7 +102,7 @@ def test_discover_migrations_orders_by_version_and_hashes(tmp_path):
     _write(tmp_path, "002_widgets.sql", NEXT_SQL)
     _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
 
-    migrations = pgm.discover_migrations(tmp_path)
+    migrations = pgm.discover_migrations(tmp_path, allow_external=True)
 
     assert [item.version for item in migrations] == [1, 2]
     assert migrations[0].name == "001_initial_schema.sql"
@@ -114,12 +114,12 @@ def test_discover_migrations_rejects_gap(tmp_path):
     _write(tmp_path, "003_widgets.sql", NEXT_SQL)
 
     with pytest.raises(pgm.MigrationError, match="Huecos"):
-        pgm.discover_migrations(tmp_path)
+        pgm.discover_migrations(tmp_path, allow_external=True)
 
 
 def test_discover_migrations_rejects_empty_directory(tmp_path):
     with pytest.raises(pgm.MigrationError, match="No se encontraron"):
-        pgm.discover_migrations(tmp_path)
+        pgm.discover_migrations(tmp_path, allow_external=True)
 
 
 def test_discover_migrations_ignores_non_matching_files(tmp_path):
@@ -127,7 +127,7 @@ def test_discover_migrations_ignores_non_matching_files(tmp_path):
     _write(tmp_path, "notes.txt", "ignore me")
     _write(tmp_path, "schema.sql", "CREATE TABLE nope (id int);")
 
-    migrations = pgm.discover_migrations(tmp_path)
+    migrations = pgm.discover_migrations(tmp_path, allow_external=True)
 
     assert [item.name for item in migrations] == ["001_initial_schema.sql"]
 
@@ -140,7 +140,7 @@ def test_discover_migrations_ignores_non_matching_files(tmp_path):
 def test_plan_fresh_database_applies_baseline(tmp_path):
     conn = _FakeConnection()
 
-    plan = pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+    plan = pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
     assert [item.version for item in plan.to_apply] == [1]
     assert plan.to_adopt == []
@@ -149,7 +149,7 @@ def test_plan_fresh_database_applies_baseline(tmp_path):
 def test_plan_complete_baseline_is_adopted(tmp_path):
     conn = _FakeConnection(tables={"businesses"}, indexes={"idx_businesses"})
 
-    plan = pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+    plan = pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
     assert [item.version for item in plan.to_adopt] == [1]
     assert plan.to_apply == []
@@ -159,14 +159,14 @@ def test_plan_partial_baseline_raises(tmp_path):
     conn = _FakeConnection(tables={"businesses"}, indexes=set())
 
     with pytest.raises(pgm.MigrationError, match="parcial"):
-        pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+        pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
 
 def test_plan_partial_when_only_index_present_raises(tmp_path):
     conn = _FakeConnection(tables=set(), indexes={"idx_businesses"})
 
     with pytest.raises(pgm.MigrationError, match="parcial"):
-        pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+        pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
 
 def test_plan_pending_only_new_versions(tmp_path):
@@ -176,7 +176,7 @@ def test_plan_pending_only_new_versions(tmp_path):
         has_metadata=True, applied=[(1, "001_initial_schema.sql", _sha256(BASELINE_SQL))]
     )
 
-    plan = pgm.plan_migrations(conn, tmp_path)
+    plan = pgm.plan_migrations(conn, tmp_path, allow_external=True)
 
     assert plan.to_adopt == []
     assert [item.version for item in plan.to_apply] == [2]
@@ -186,7 +186,7 @@ def test_plan_detects_checksum_change(tmp_path):
     conn = _FakeConnection(has_metadata=True, applied=[(1, "001_initial_schema.sql", "0" * 64)])
 
     with pytest.raises(pgm.MigrationError, match="Checksum"):
-        pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+        pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
 
 def test_plan_detects_unknown_applied_version(tmp_path):
@@ -199,7 +199,7 @@ def test_plan_detects_unknown_applied_version(tmp_path):
     )
 
     with pytest.raises(pgm.MigrationError, match="no conoce"):
-        pgm.plan_migrations(conn, _baseline_dir(tmp_path))
+        pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
 
 def test_plan_detects_non_contiguous_registry(tmp_path):
@@ -215,7 +215,7 @@ def test_plan_detects_non_contiguous_registry(tmp_path):
     )
 
     with pytest.raises(pgm.MigrationError, match="no contiguo"):
-        pgm.plan_migrations(conn, tmp_path)
+        pgm.plan_migrations(conn, tmp_path, allow_external=True)
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ def test_dry_run_writes_nothing(tmp_path):
     conn = _FakeConnection()
 
     result = pgm.apply_pending_migrations(
-        conn, migrations_dir=_baseline_dir(tmp_path), dry_run=True
+        conn, migrations_dir=_baseline_dir(tmp_path), dry_run=True, allow_external=True
     )
 
     assert result.dry_run is True
@@ -241,7 +241,7 @@ def test_dry_run_writes_nothing(tmp_path):
 def test_apply_executes_and_records(tmp_path):
     conn = _FakeConnection()
 
-    result = pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path))
+    result = pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True)
 
     assert [item.version for item in result.applied] == [1]
     assert result.current_version == 1
@@ -260,7 +260,7 @@ def test_apply_adopts_complete_baseline_then_applies_next_fails_without_metadata
     conn = _FakeConnection(tables={"businesses"}, indexes={"idx_businesses"})
 
     with pytest.raises(pgm.MigrationError) as exc_info:
-        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
+        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path, allow_external=True)
 
     error_msg = str(exc_info.value)
     assert "metadata" in error_msg.lower() or "schema_migrations" in error_msg.lower()
@@ -276,7 +276,7 @@ def test_apply_rolls_back_and_does_not_record_on_failure(tmp_path):
     conn = _FakeConnection()
 
     with pytest.raises(RuntimeError, match="simulated DDL failure"):
-        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
+        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path, allow_external=True)
 
     assert conn.applied == []
     assert conn.rollbacks >= 1
@@ -291,7 +291,7 @@ def test_acquire_lock_timeout_raises_without_touching_schema(tmp_path):
 
     with pytest.raises(pgm.MigrationLockTimeout, match="advisory lock"):
         pgm.apply_pending_migrations(
-            conn, migrations_dir=_baseline_dir(tmp_path), lock_timeout=0.05
+            conn, migrations_dir=_baseline_dir(tmp_path), lock_timeout=0.05, allow_external=True
         )
 
     assert any("PG_TRY_ADVISORY_LOCK" in sql.upper() for sql, _ in conn.calls)
@@ -305,14 +305,128 @@ def test_acquire_lock_uses_default_timeout_when_not_specified(monkeypatch, tmp_p
     conn = _FakeConnection(lock_available=False)
 
     with pytest.raises(pgm.MigrationLockTimeout):
-        pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path))
+        pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True)
 
 
 def test_acquire_lock_success_uses_shared_session_key(tmp_path):
     conn = _FakeConnection(lock_available=True)
 
-    pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path))
+    pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True)
 
     lock_calls = [params for sql, params in conn.calls if "PG_TRY_ADVISORY_LOCK" in sql.upper()]
     assert lock_calls
     assert all(params == (pgm._PG_SCHEMA_LOCK,) for params in lock_calls)
+
+
+# ---------------------------------------------------------------------------
+# Validación de directorio de migraciones (D13)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_migrations_dir_accepts_official_dir():
+    """El directorio oficial MIGRATIONS_PG_DIR se acepta por defecto."""
+    # No debe elevar excepción
+    validated = pgm._validate_migrations_dir(pgm.MIGRATIONS_PG_DIR)
+    assert validated == pgm.MIGRATIONS_PG_DIR.resolve()
+
+
+def test_validate_migrations_dir_accepts_subdir_of_base_dir(tmp_path):
+    """Un subdirectorio dentro de BASE_DIR se acepta sin flag externo."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    # Crear una estructura que simule estar dentro de BASE_DIR
+    # Usamos el BASE_DIR real del proyecto
+    base = pgm.BASE_DIR
+    test_subdir = base / "test_migrations_d13"
+    test_subdir.mkdir(exist_ok=True)
+    try:
+        validated = pgm._validate_migrations_dir(test_subdir)
+        assert validated == test_subdir.resolve()
+    finally:
+        test_subdir.rmdir()
+
+
+def test_validate_migrations_dir_rejects_external_without_flag(tmp_path):
+    """Una ruta absoluta externa se rechaza sin autorización."""
+    with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+        pgm._validate_migrations_dir(tmp_path, allow_external=False)
+
+
+def test_validate_migrations_dir_accepts_external_with_flag(tmp_path):
+    """Una ruta externa se acepta con autorización explícita."""
+    validated = pgm._validate_migrations_dir(tmp_path, allow_external=True)
+    assert validated == tmp_path.resolve()
+
+
+def test_validate_migrations_dir_rejects_symlink_outside_base_dir(tmp_path):
+    """Un enlace simbólico que apunta fuera de BASE_DIR se rechaza sin flag."""
+    # Crear directorio destino fuera de BASE_DIR
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    # Crear symlink dentro de BASE_DIR que apunta fuera
+    base = pgm.BASE_DIR
+    link_path = base / "test_symlink_d13"
+    try:
+        link_path.symlink_to(outside_dir)
+        with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+            pgm._validate_migrations_dir(link_path, allow_external=False)
+    except (OSError, NotImplementedError):
+        # Windows sin privilegios de admin no permite crear symlinks
+        pytest.skip("El sistema no permite crear enlaces simbólicos")
+    finally:
+        if link_path.exists():
+            link_path.unlink()
+
+
+def test_validate_migrations_dir_rejected_before_psycopg_connect(tmp_path, monkeypatch):
+    """Ruta no autorizada se rechaza antes de llamar a psycopg.connect()."""
+    connect_called = False
+
+    def mock_connect(*args, **kwargs):
+        nonlocal connect_called
+        connect_called = True
+        raise RuntimeError("no debería llamarse")
+
+    monkeypatch.setattr(pgm.psycopg, "connect", mock_connect)
+
+    with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+        pgm.run_migrations("postgresql://user:pass@host/db", migrations_dir=tmp_path)
+
+    assert not connect_called
+
+
+def test_apply_pending_migrations_rejected_before_lock(tmp_path):
+    """Ruta no autorizada se rechaza antes de adquirir lock en apply_pending_migrations."""
+    conn = _FakeConnection()
+
+    with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
+
+    # No debe haber intentos de lock
+    lock_calls = [sql for sql, _ in conn.calls if "PG_TRY_ADVISORY_LOCK" in sql.upper()]
+    assert lock_calls == []
+
+
+def test_run_migrations_and_apply_pending_do_not_bypass_validation(tmp_path):
+    """Llamadas directas a run_migrations y apply_pending_migrations no eluden la validación."""
+    # run_migrations
+    with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+        pgm.run_migrations("postgresql://user:pass@host/db", migrations_dir=tmp_path)
+
+    # apply_pending_migrations
+    conn = _FakeConnection()
+    with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+        pgm.apply_pending_migrations(conn, migrations_dir=tmp_path)
+
+
+def test_external_flag_does_not_disable_other_validations(tmp_path):
+    """El flag externo no desactiva el resto de validaciones del migrador."""
+    # Directorio vacío -> debe fallar por "No se encontraron migraciones"
+    with pytest.raises(pgm.MigrationError, match="No se encontraron"):
+        pgm.discover_migrations(tmp_path, allow_external=True)
+
+    # Directorio con hueco -> debe fallar por "Huecos"
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "003_widgets.sql", NEXT_SQL)
+    with pytest.raises(pgm.MigrationError, match="Huecos"):
+        pgm.discover_migrations(tmp_path, allow_external=True)

@@ -78,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(MIGRATIONS_PG_DIR),
         help="Directorio de migraciones .sql (por defecto migrations_pg/)",
     )
+    parser.add_argument(
+        "--allow-external-migrations-dir",
+        action="store_true",
+        help="Permite usar un directorio de migraciones fuera del repositorio (uso en tests/desarrollo)",
+    )
     return parser
 
 
@@ -101,7 +106,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Destino: {target}")
     try:
-        result = run_migrations(args.url, migrations_dir=args.migrations_dir, dry_run=args.dry_run)
+        result = run_migrations(
+            args.url,
+            migrations_dir=args.migrations_dir,
+            dry_run=args.dry_run,
+            allow_external=args.allow_external_migrations_dir,
+        )
     except MigrationError as error:
         print(f"ERROR: {_safe_error(error)}", file=sys.stderr)
         return 1

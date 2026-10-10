@@ -107,7 +107,7 @@ def test_applies_incremental_migrations_in_order(pg_enabled, tmp_path):
         encoding="utf-8",
     )
     with _disposable_db(pg_enabled) as conninfo:
-        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         assert [item.version for item in result.applied] == [1, 2]
         assert [_row[0] for _row in _migration_rows(conninfo)] == [1, 2]
@@ -129,7 +129,7 @@ def test_incremental_after_existing_baseline_fails_without_metadata(pg_enabled, 
         apply_initial_schema(conninfo)  # Crea esquema 001, SIN metadata
 
         with pytest.raises(pgm.MigrationError) as exc_info:
-            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         error_msg = str(exc_info.value)
         assert "metadata" in error_msg.lower() or "schema_migrations" in error_msg.lower()
@@ -151,13 +151,13 @@ def test_checksum_mismatch_fails_before_applying(pg_enabled, tmp_path):
         "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\n", encoding="utf-8"
     )
     with _disposable_db(pg_enabled) as conninfo:
-        pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+        pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         (tmp_path / "002_widgets.sql").write_text(
             "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\n-- touched\n", encoding="utf-8"
         )
         with pytest.raises(pgm.MigrationError, match="Checksum"):
-            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         assert [_row[0] for _row in _migration_rows(conninfo)] == [1, 2]
 
@@ -169,7 +169,7 @@ def test_version_gap_fails_without_schema_changes(pg_enabled, tmp_path):
     )
     with _disposable_db(pg_enabled) as conninfo:
         with pytest.raises(pgm.MigrationError, match="Huecos"):
-            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         tables = _public_tables(conninfo)
         assert "businesses" not in tables
@@ -192,7 +192,7 @@ def test_failed_migration_rolls_back_and_is_not_recorded(pg_enabled, tmp_path):
     )
     with _disposable_db(pg_enabled) as conninfo:
         with pytest.raises(Exception):
-            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         assert [_row[0] for _row in _migration_rows(conninfo)] == [1]
         assert "mig_widgets" not in _public_tables(conninfo)
@@ -217,7 +217,7 @@ def test_concurrent_runners_serialize(pg_enabled, tmp_path):
 
         def run() -> pgm.MigrationResult:
             barrier.wait()
-            return pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            return pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             first, second = pool.map(lambda _: run(), (None, None))
@@ -289,7 +289,7 @@ INSERT INTO mig_d2_marker (migration_version) VALUES (2);
 
     with _disposable_db(pg_enabled) as conninfo:
         # 2. Primera ejecución: ambas migraciones se aplican
-        result1 = pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+        result1 = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
         assert [item.version for item in result1.applied] == [1, 2]
         assert result1.current_version == 2
 
@@ -318,7 +318,7 @@ INSERT INTO mig_d2_marker (migration_version) VALUES (2);
         # 4. Segunda ejecución: el migrador DEBE detectar la pérdida y fallar
         # con MigrationError antes de re-ejecutar 002.
         with pytest.raises(pgm.MigrationError) as exc_info:
-            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         # El error debe ser explicativo sobre la pérdida de metadata / estado inconsistente
         error_msg = str(exc_info.value)
@@ -334,3 +334,87 @@ INSERT INTO mig_d2_marker (migration_version) VALUES (2);
             "El marcador se duplicó: la migración 002 se re-ejecutó silenciosamente "
             "tras la pérdida de schema_migrations. Esto confirma el defecto D2."
         )
+
+
+# ---------------------------------------------------------------------------
+# Validación de directorio de migraciones (D13) - Tests live
+# ---------------------------------------------------------------------------
+
+
+def test_run_migrations_rejects_external_dir_without_flag(pg_enabled, tmp_path):
+    """Sin autorización, un directorio externo se rechaza antes de modificar la base."""
+    _baseline_copy(tmp_path)
+    with _disposable_db(pg_enabled) as conninfo:
+        with pytest.raises(pgm.MigrationError, match="fuera del repositorio"):
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path)
+
+        # Verificar que la base no fue modificada
+        assert _public_tables(conninfo) == set()
+        with connect_autocommit(conninfo) as conn:
+            exists = conn.execute(
+                "SELECT to_regclass('public.schema_migrations')"
+            ).fetchone()[0]
+        assert exists is None
+
+
+def test_run_migrations_accepts_external_dir_with_flag(pg_enabled, tmp_path):
+    """Con autorización explícita, un directorio temporal válido puede ejecutarse normalmente."""
+    _baseline_copy(tmp_path)
+    with _disposable_db(pg_enabled) as conninfo:
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
+
+        assert [item.version for item in result.applied] == [1]
+        assert result.current_version == 1
+        assert "businesses" in _public_tables(conninfo)
+        rows = _migration_rows(conninfo)
+        assert len(rows) == 1
+        assert rows[0][0] == 1
+        assert rows[0][1] == "001_initial_schema.sql"
+
+
+def test_run_migrations_external_flag_preserves_checksum_validation(pg_enabled, tmp_path):
+    """El flag externo no desactiva la validación de checksums."""
+    _baseline_copy(tmp_path)
+    (tmp_path / "002_widgets.sql").write_text(
+        "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\n", encoding="utf-8"
+    )
+    with _disposable_db(pg_enabled) as conninfo:
+        pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
+
+        # Modificar el archivo para cambiar el checksum
+        (tmp_path / "002_widgets.sql").write_text(
+            "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\n-- modified\n", encoding="utf-8"
+        )
+
+        with pytest.raises(pgm.MigrationError, match="Checksum"):
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
+
+        # Verificar que no se aplicó la migración modificada
+        assert [_row[0] for _row in _migration_rows(conninfo)] == [1, 2]
+
+
+def test_run_migrations_external_flag_preserves_gap_validation(pg_enabled, tmp_path):
+    """El flag externo no desactiva la validación de huecos de versión."""
+    _baseline_copy(tmp_path)
+    (tmp_path / "003_widgets.sql").write_text(
+        "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\n", encoding="utf-8"
+    )
+    with _disposable_db(pg_enabled) as conninfo:
+        with pytest.raises(pgm.MigrationError, match="Huecos"):
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
+
+        assert _public_tables(conninfo) == set()
+
+
+def test_run_migrations_external_flag_preserves_rollback_on_failure(pg_enabled, tmp_path):
+    """El flag externo no desactiva el rollback en caso de fallo de DDL."""
+    _baseline_copy(tmp_path)
+    (tmp_path / "002_widgets.sql").write_text(
+        "CREATE TABLE mig_widgets (id bigint PRIMARY KEY);\nSELECT 1/0;\n", encoding="utf-8"
+    )
+    with _disposable_db(pg_enabled) as conninfo:
+        with pytest.raises(Exception):
+            pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
+
+        assert [_row[0] for _row in _migration_rows(conninfo)] == [1]
+        assert "mig_widgets" not in _public_tables(conninfo)

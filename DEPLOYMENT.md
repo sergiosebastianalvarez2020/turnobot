@@ -49,6 +49,15 @@ registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
   `lock_timeout` en `run_migrations`/`apply_pending_migrations`. Si otro runner
   o el bootstrap retiene el lock más tiempo, la ejecución falla con
   `MigrationLockTimeout` en lugar de quedarse bloqueada indefinidamente.
+- **Seguridad del directorio de migraciones (D13):** por defecto, el runner solo
+  acepta directorios dentro del repositorio (`BASE_DIR`). El directorio oficial
+  `migrations_pg/` funciona sin flags adicionales. Para usar un directorio
+  externo (p.ej. en tests o desarrollo), se debe autorizar explícitamente con
+  `--allow-external-migrations-dir` en la CLI o `allow_external=True` en la
+  API Python. Un directorio externo sin autorización produce `MigrationError`
+  **antes** de conectar a PostgreSQL, adquirir locks o ejecutar SQL. La
+  autorización solo permite cambiar la ubicación del SQL; **no** desactiva las
+  validaciones de nombres, huecos, checksums, versiones ni downgrades.
 
 ### Restricción del parser SQL
 

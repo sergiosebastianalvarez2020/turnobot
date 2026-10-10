@@ -397,6 +397,16 @@ changes from being re-applied. Recovery requires restoring a backup or
 manually reconstructing `schema_migrations`; never run the migrator against
 production to diagnose state.
 
+**Migrations directory security (D13):** By default, the runner only accepts
+migration directories inside the repository (`BASE_DIR`). The official
+`migrations_pg/` directory works without additional flags. To use an external
+directory (e.g., in tests or development), explicitly authorize it with
+`--allow-external-migrations-dir` on the CLI or `allow_external=True` in the
+Python API. An unauthorized external directory raises `MigrationError`
+**before** connecting to PostgreSQL, acquiring locks, or executing SQL. The
+authorization only permits changing the SQL location; it does **not** disable
+validations of names, gaps, checksums, versions, or downgrades.
+
 Backups live in
 `scripts/backup_postgresql.py`; the SQLite runner under `migrations/` is
 unrelated and kept only for the opt-in SQLite path.

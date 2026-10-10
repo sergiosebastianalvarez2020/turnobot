@@ -123,13 +123,43 @@ def _checksum(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def discover_migrations(migrations_dir: Path | str = MIGRATIONS_PG_DIR) -> list[MigrationFile]:
+def _validate_migrations_dir(migrations_dir: Path | str, *, allow_external: bool = False) -> Path:
+    """Valida que el directorio de migraciones esté dentro de BASE_DIR.
+
+    Args:
+        migrations_dir: Ruta al directorio de migraciones.
+        allow_external: Si True, permite directorios fuera de BASE_DIR.
+
+    Returns:
+        Path resuelto del directorio.
+
+    Raises:
+        MigrationError: Si el directorio está fuera de BASE_DIR y no se permite.
+    """
+    path = Path(migrations_dir).resolve()
+    base = BASE_DIR.resolve()
+    if not allow_external:
+        try:
+            path.relative_to(base)
+        except ValueError as exc:
+            raise MigrationError(
+                f"Directorio de migraciones fuera del repositorio: {path}. "
+                f"Use --allow-external-migrations-dir para autorizarlo."
+            ) from exc
+    return path
+
+
+def discover_migrations(
+    migrations_dir: Path | str = MIGRATIONS_PG_DIR,
+    *,
+    allow_external: bool = False,
+) -> list[MigrationFile]:
     """Descubre y valida las migraciones de un directorio.
 
     Exige versiones únicas y contiguas desde 1 sin huecos. Un hueco o un nombre
     inválido produce ``MigrationError`` antes de tocar la base de datos.
     """
-    directory = Path(migrations_dir)
+    directory = _validate_migrations_dir(migrations_dir, allow_external=allow_external)
     discovered: list[MigrationFile] = []
     for path in directory.glob("*.sql"):
         match = _MIGRATION_FILENAME_RE.match(path.name)
@@ -257,9 +287,14 @@ def _verify_applied(migrations: list[MigrationFile], applied: dict[int, dict]) -
             )
 
 
-def plan_migrations(conn, migrations_dir: Path | str = MIGRATIONS_PG_DIR) -> MigrationPlan:
+def plan_migrations(
+    conn,
+    migrations_dir: Path | str = MIGRATIONS_PG_DIR,
+    *,
+    allow_external: bool = False,
+) -> MigrationPlan:
     """Calcula qué migraciones adoptar (baseline) y aplicar. No muta la base."""
-    migrations = discover_migrations(migrations_dir)
+    migrations = discover_migrations(migrations_dir, allow_external=allow_external)
     applied = _load_applied(conn)
     _verify_applied(migrations, applied)
 
@@ -375,6 +410,7 @@ def apply_pending_migrations(
     migrations_dir: Path | str = MIGRATIONS_PG_DIR,
     dry_run: bool = False,
     lock_timeout: float | None = None,
+    allow_external: bool = False,
 ) -> MigrationResult:
     """Aplica las migraciones pendientes bajo advisory lock.
 
@@ -385,10 +421,13 @@ def apply_pending_migrations(
     Con ``dry_run=True`` no escribe nada (ni siquiera la tabla de metadata): solo
     calcula el plan y lo reporta en ``pending``.
     """
+    # Validar directorio ANTES de adquirir lock o tocar la base
+    _validate_migrations_dir(migrations_dir, allow_external=allow_external)
+
     try:
         _acquire_lock(conn, timeout=lock_timeout)
 
-        plan = plan_migrations(conn, migrations_dir)
+        plan = plan_migrations(conn, migrations_dir, allow_external=allow_external)
 
         if dry_run:
             return MigrationResult(
@@ -430,16 +469,24 @@ def run_migrations(
     migrations_dir: Path | str = MIGRATIONS_PG_DIR,
     dry_run: bool = False,
     lock_timeout: float | None = None,
+    allow_external: bool = False,
 ) -> MigrationResult:
     """Abre una conexión PostgreSQL dedicada y aplica las migraciones pendientes.
 
     ``lock_timeout`` acota la espera del advisory lock compartido (por defecto
     ``_LOCK_WAIT_TIMEOUT``) y se propaga a :func:`apply_pending_migrations`.
     """
+    # Validar directorio ANTES de abrir conexión a PostgreSQL
+    _validate_migrations_dir(migrations_dir, allow_external=allow_external)
+
     normalized = normalize_database_url(conninfo)
     if not normalized:
         raise MigrationError("conninfo PostgreSQL vacío")
     with psycopg.connect(normalized) as conn:
         return apply_pending_migrations(
-            conn, migrations_dir=migrations_dir, dry_run=dry_run, lock_timeout=lock_timeout
+            conn,
+            migrations_dir=migrations_dir,
+            dry_run=dry_run,
+            lock_timeout=lock_timeout,
+            allow_external=allow_external,
         )
