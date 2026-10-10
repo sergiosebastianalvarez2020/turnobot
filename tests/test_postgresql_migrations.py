@@ -7,6 +7,12 @@ import pytest
 import database.database as database
 
 
+@pytest.fixture(autouse=True)
+def pg_test_env():
+    """Tests puros con mocks: sin PostgreSQL real, sin skip funcional del conftest."""
+    yield
+
+
 class _Result:
     def __init__(self, rows=()):
         self._rows = rows

@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest import mock
 
+import pytest
 from flask import Flask
 
 from application.config import build_config
@@ -17,6 +18,12 @@ from database.pg_pool import (
     resolve_database_backend,
     sanitize_database_url,
 )
+
+
+@pytest.fixture(autouse=True)
+def pg_test_env():
+    """Tests puros con mocks: sin PostgreSQL real, sin skip funcional del conftest."""
+    yield
 
 
 class TestPostgresConfig(unittest.TestCase):

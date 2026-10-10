@@ -13,6 +13,12 @@ import pytest
 
 import database.pg_migrator as pgm
 
+
+@pytest.fixture(autouse=True)
+def pg_test_env():
+    """Tests puros con mocks: sin PostgreSQL real, sin skip funcional del conftest."""
+    yield
+
 BASELINE_SQL = (
     "CREATE TABLE businesses (id bigint);\nCREATE INDEX idx_businesses ON businesses (id);\n"
 )
