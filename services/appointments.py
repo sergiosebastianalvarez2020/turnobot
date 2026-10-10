@@ -943,49 +943,79 @@ PUBLIC_APPOINTMENT_COLUMNS = (
 )
 
 
-def get_customer_appointments(customer_name, phone=None, business_id=None):
+def get_customer_appointments(
+    customer_name, phone=None, business_id=None, management_token=None
+):
     """
-    Busca los turnos confirmados de un cliente.
+    Busca los turnos confirmados de un cliente previa VERIFICACIÓN.
 
-    La búsqueda principal se realiza por nombre.
+    Autorización OBLIGATORIA: `management_token` de UNO de los turnos del
+    cliente en ESTE negocio (el secreto entregado al reservar, en el enlace de
+    gestión). El token debe corresponder a un turno cuyo nombre y teléfono
+    coincidan con los consultados: un token faltante, inválido, de otra
+    persona o de OTRO negocio no autoriza. La verificación se evalúa siempre
+    contra `business_id`; nunca se acepta un negocio aportado por el cliente.
 
-    Si además se proporciona teléfono,
-    se utiliza como filtro adicional.
+    nombre+teléfono por sí solos NO autorizan: son identificadores no
+    secretos (P2-01 de la auditoría multi-tenant).
+
+    Devuelve:
+      - None si la verificación falla: el llamador NO debe devolver datos
+        personales ni revelar si el cliente existe (anti-enumeración).
+      - lista (posiblemente vacía) de turnos confirmados del cliente
+        verificado.
 
     Devuelve SOLO columnas públicas (nunca management_token_hash).
     """
 
     if business_id is None:
         raise ValueError("business_id es obligatorio")
+    if (
+        not phone
+        or not management_token
+        or not isinstance(management_token, str)
+        or len(management_token) > 256
+    ):
+        return None
+
+    token_hash = hashlib.sha256(management_token.encode("utf-8")).hexdigest()
     connection = get_connection()
 
     try:
-        if phone:
-            rows = connection.execute(
-                f"""
-                SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
-                FROM appointments
-                WHERE LOWER(customer_name) = LOWER(?)
-                AND phone = ?
-                AND status = 'confirmed'
-                AND business_id = ?
-                ORDER BY appointment_date, appointment_time
-                """,
-                (customer_name, normalize_phone(phone), business_id),
-            ).fetchall()
+        # ---------------------------------------------------------------
+        # VERIFICACIÓN DE POSESIÓN (token + persona + negocio)
+        #
+        # Mismos predicados de nombre/teléfono que el listado de abajo, de
+        # modo que un token solo autoriza sobre los turnos de SU titular y
+        # dentro de SU negocio, sin distinguir el motivo del rechazo.
+        # ---------------------------------------------------------------
+        authorized = connection.execute(
+            """
+            SELECT 1
+            FROM appointments
+            WHERE business_id = ?
+            AND management_token_hash = ?
+            AND LOWER(customer_name) = LOWER(?)
+            AND phone = ?
+            LIMIT 1
+            """,
+            (business_id, token_hash, customer_name, normalize_phone(phone)),
+        ).fetchone()
+        if not authorized:
+            return None
 
-        else:
-            rows = connection.execute(
-                f"""
-                SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
-                FROM appointments
-                WHERE LOWER(customer_name) = LOWER(?)
-                AND status = 'confirmed'
-                AND business_id = ?
-                ORDER BY appointment_date, appointment_time
-                """,
-                (customer_name, business_id),
-            ).fetchall()
+        rows = connection.execute(
+            f"""
+            SELECT {", ".join(PUBLIC_APPOINTMENT_COLUMNS)}
+            FROM appointments
+            WHERE LOWER(customer_name) = LOWER(?)
+            AND phone = ?
+            AND status = 'confirmed'
+            AND business_id = ?
+            ORDER BY appointment_date, appointment_time
+            """,
+            (customer_name, normalize_phone(phone), business_id),
+        ).fetchall()
 
         return [dict(row) for row in rows]
 

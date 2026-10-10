@@ -425,14 +425,21 @@ CONSULTAR TURNOS DEL CLIENTE
 16. Si el cliente quiere consultar, cancelar o reprogramar
     un turno, primero necesitás identificar sus turnos.
 
-17. Si no conocés el nombre del cliente, pedilo.
+17. Si no conocés el nombre o el teléfono del cliente, pedilos.
 
-18. Utilizá buscar_turnos_cliente para obtener sus turnos.
+18. Para buscar turnos también necesitás el management_token
+    de uno de los turnos del cliente: se entrega al reservar
+    y llega en el enlace de gestión por email. Sin ese token
+    la herramienta NO devuelve turnos del cliente.
 
-19. Si el cliente tiene varios turnos, NO elijas uno al azar.
+19. Si el cliente no tiene a mano el token, pedile el enlace
+    de gestión o el management_token ANTES de llamar a
+    buscar_turnos_cliente.
 
-20. Mostrá los turnos relevantes y preguntá cuál quiere
-    cancelar o reprogramar.
+20. Con nombre, teléfono y management_token utilizá
+    buscar_turnos_cliente. Si el cliente tiene varios turnos,
+    NO elijas uno al azar: mostrá los relevantes y preguntá
+    cuál quiere cancelar o reprogramar.
 
 
 ============================================================
@@ -656,6 +663,8 @@ buscar_turnos_declaration = types.FunctionDeclaration(
     name="buscar_turnos_cliente",
     description=(
         "Busca los turnos confirmados de un cliente. "
+        "Requiere el management_token de uno de sus turnos "
+        "como comprobante de propiedad (se entrega al reservar). "
         "Debe utilizarse antes de cancelar o reprogramar "
         "un turno cuando sea necesario identificarlo."
     ),
@@ -666,6 +675,10 @@ buscar_turnos_declaration = types.FunctionDeclaration(
             "telefono": {
                 "type": "string",
                 "description": "Teléfono con el que se registró el turno.",
+            },
+            "management_token": {
+                "type": "string",
+                "description": "management_token de uno de los turnos del cliente (se devuelve al reservar y llega en el enlace de gestión). Sin ello la herramienta no devuelve turnos.",
             },
         },
         "required": ["nombre", "telefono"],
@@ -946,9 +959,30 @@ def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None):
 
         telefono = arguments["telefono"]
 
+        management_token = (arguments.get("management_token") or "").strip()
+
+        if not management_token:
+            return {
+                "success": False,
+                "error": (
+                    "Necesito el management_token de uno de tus turnos "
+                    "para buscarlos. Revisá el enlace de gestión que "
+                    "recibiste al reservar."
+                ),
+            }
+
         turnos = get_customer_appointments(
-            customer_name=nombre, phone=telefono, business_id=business_id
+            nombre, telefono, business_id, management_token
         )
+
+        if turnos is None:
+            return {
+                "success": False,
+                "error": (
+                    "No pudimos verificar tu identidad. "
+                    "Revisá el enlace de gestión que recibiste al reservar."
+                ),
+            }
 
         return {"success": True, "turnos": turnos}
 

@@ -12,6 +12,9 @@ deben sobrescribir el backend en el propio test, no aquí.
 
 import atexit
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -77,6 +80,38 @@ if TURNOBOT_PG_URL:
     os.environ.setdefault("DB_BACKEND", "postgresql")
     os.environ.setdefault("FLASK_ENV", "development")
     atexit.register(_drop_default_test_database)
+else:
+    # Modo SQLite local (sin PostgreSQL de tests).
+    #
+    # Algunos módulos de `tests/` hacen `import app` en el top-level, y `app.py`
+    # ejecuta `create_app()` durante la importación, ANTES de que corra cualquier
+    # fixture. En modo SQLite esa inicialización (`create_app` -> `init_database`
+    # -> `apply_migrations` -> `get_connection`) usa el global
+    # `database.database.DATABASE_PATH`, que por defecto apunta a
+    # `database/appointments.db` (la base del repositorio). Redirigimos ese
+    # global a un archivo temporal FUERA de `database/` antes de que se importe
+    # la aplicación, para que la recolección de pytest jamás abra ni migre la
+    # base real.
+    #
+    # Además fijamos el entorno coherente con SQLite: el `.env` del proyecto trae
+    # `FLASK_ENV=production`, que haría que `resolve_database_backend` exija
+    # PostgreSQL y abortara la importación. Es el mismo entorno que ya aplica la
+    # rama PostgreSQL (`FLASK_ENV=development`), de modo que no se altera el
+    # comportamiento de la suite funcional.
+    #
+    # Cuando TURNOBOT_PG_URL está definida, esta rama no se ejecuta y la
+    # infraestructura PostgreSQL permanece intacta.
+    from database import database as _database_module
+
+    _sqlite_import_dir = tempfile.mkdtemp(prefix="turnobot_import_sqlite_")
+    _database_module.DATABASE_PATH = Path(_sqlite_import_dir) / "appointments.db"
+    os.environ.setdefault("DB_BACKEND", "sqlite")
+    os.environ.setdefault("FLASK_ENV", "development")
+
+    def _cleanup_import_sqlite_dir() -> None:
+        shutil.rmtree(_sqlite_import_dir, ignore_errors=True)
+
+    atexit.register(_cleanup_import_sqlite_dir)
 
 
 @pytest.fixture(autouse=True)

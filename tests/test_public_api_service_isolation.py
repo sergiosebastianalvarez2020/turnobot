@@ -188,10 +188,13 @@ class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
         self.assertNotIn("Barba", {item["nombre"] for item in data["servicios"]})
 
     def test_api_turnos_business_a_ve_solo_sus_turnos(self):
-        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
         self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response = self.client.get("/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111")
+        response = self.client.get(
+            "/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111"
+            f"&management_token={self._token(app_a)}"
+        )
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -201,9 +204,12 @@ class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
 
     def test_api_turnos_business_b_ve_solo_sus_turnos(self):
         self._insert_confirmed_appointment("Cliente A", "111111111", 1)
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response = self.client.get("/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222")
+        response = self.client.get(
+            "/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222"
+            f"&management_token={self._token(app_b)}"
+        )
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -212,46 +218,92 @@ class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
         self.assertEqual(data["turnos"][0]["customer_name"], "Cliente B")
 
     def test_api_turnos_no_cruza_de_a_a_b(self):
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        """Con su token, B no es visible desde el tenant de A (P2-01)."""
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response = self.client.get("/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222")
+        response = self.client.get(
+            "/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+            f"&management_token={self._token(app_b)}"
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["turnos"], [])
+        # El tenant lo resuelve el slug (A, id=1): el token de B no autoriza.
+        self.assertEqual(response.status_code, 401)
+        data = response.get_json()
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente B", body)
+        self.assertNotIn("222222222", body)
 
     def test_api_turnos_no_cruza_de_b_a_a(self):
-        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        """Con su token, A no es visible desde el tenant de B (P2-01)."""
+        app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
 
-        response = self.client.get("/b/business-b/api/turnos?nombre=Cliente+A&telefono=111111111")
+        response = self.client.get(
+            "/b/business-b/api/turnos?nombre=Cliente+A&telefono=111111111"
+            f"&management_token={self._token(app_a)}"
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["turnos"], [])
+        # El tenant lo resuelve el slug (B, id=2): el token de A no autoriza.
+        self.assertEqual(response.status_code, 401)
+        data = response.get_json()
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente A", body)
+        self.assertNotIn("111111111", body)
 
     def test_api_turnos_cambiar_telefono_no_cruza_de_business(self):
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        """Cambiar el teléfono no cruza de negocio: el token de B no autoriza en A."""
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response = self.client.get("/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222")
+        response = self.client.get(
+            "/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+            f"&management_token={self._token(app_b)}"
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["turnos"], [])
+        # El tenant es el del slug (A, id=1): el token de B (negocio 2) no
+        # autoriza y no se expone el turno de B.
+        self.assertEqual(response.status_code, 401)
+        data = response.get_json()
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente B", body)
+        self.assertNotIn("222222222", body)
 
     def test_api_turnos_cambiar_nombre_no_cruza_de_business(self):
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        """Cambiar el nombre no cruza de negocio: el token de B no autoriza en A."""
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response = self.client.get("/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222")
+        response = self.client.get(
+            "/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222"
+            f"&management_token={self._token(app_b)}"
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["turnos"], [])
+        # El tenant es el del slug (A, id=1): el token de B (negocio 2) no
+        # autoriza y no se expone el turno de B.
+        self.assertEqual(response.status_code, 401)
+        data = response.get_json()
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente B", body)
+        self.assertNotIn("222222222", body)
 
     def test_api_turnos_business_id_artificial_no_cambia_el_tenant(self):
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        """El business_id de la query no cambia el tenant del slug (P2-01)."""
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
         response = self.client.get(
             "/b/business-a/api/turnos?nombre=Cliente+B&telefono=222222222&business_id=2"
+            f"&management_token={self._token(app_b)}"
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["turnos"], [])
+        # Si el business_id artificial sí cambiara el tenant, el token de B
+        # autorizaría y expondría el turno: la 401 prueba que no escala.
+        self.assertEqual(response.status_code, 401)
+        data = response.get_json()
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente B", body)
+        self.assertNotIn("222222222", body)
 
     def test_api_turnos_slug_inexistente_devuelve_404_sin_fallback(self):
         self._insert_confirmed_appointment("Cliente A", "111111111", 1)
@@ -263,30 +315,47 @@ class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_api_turnos_legacy_continua_funcionando(self):
-        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        """El endpoint legacy exige el management_token (P2-01)."""
+        app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
 
-        response = self.client.get("/api/turnos?nombre=Cliente+A&telefono=111111111")
+        response = self.client.get(
+            "/api/turnos?nombre=Cliente+A&telefono=111111111"
+            f"&management_token={self._token(app_a)}"
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
         self.assertEqual(len(response.get_json()["turnos"]), 1)
 
     def test_api_turnos_el_corte_continua_funcionando(self):
-        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        """El slug 'el-corte' sigue exigiendo token y respondiendo 200 (P2-01)."""
+        app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
         self._execute("UPDATE businesses SET name = 'El Corte', slug = 'el-corte' WHERE id = 1")
 
-        response = self.client.get("/b/el-corte/api/turnos?nombre=Cliente+A&telefono=111111111")
+        response = self.client.get(
+            "/b/el-corte/api/turnos?nombre=Cliente+A&telefono=111111111"
+            f"&management_token={self._token(app_a)}"
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
 
     def test_api_turnos_dos_requests_consecutivos_mantienen_tenant(self):
-        self._insert_confirmed_appointment("Cliente A", "111111111", 1)
-        self._insert_confirmed_appointment("Cliente B", "222222222", 2)
+        """Cada request usa su token; el tenant se mantiene por slug (P2-01)."""
+        app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
+        app_b = self._insert_confirmed_appointment("Cliente B", "222222222", 2)
 
-        response_a = self.client.get("/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111")
-        response_b = self.client.get("/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222")
+        response_a = self.client.get(
+            "/b/business-a/api/turnos?nombre=Cliente+A&telefono=111111111"
+            f"&management_token={self._token(app_a)}"
+        )
+        response_b = self.client.get(
+            "/b/business-b/api/turnos?nombre=Cliente+B&telefono=222222222"
+            f"&management_token={self._token(app_b)}"
+        )
 
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
         self.assertEqual(response_a.get_json()["turnos"][0]["customer_name"], "Cliente A")
         self.assertEqual(response_b.get_json()["turnos"][0]["customer_name"], "Cliente B")
 

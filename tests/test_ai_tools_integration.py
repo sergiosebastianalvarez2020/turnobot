@@ -122,36 +122,73 @@ class TestConsultarDisponibilidadTool(BaseAIToolsTest):
 
 class TestBuscarTurnosClienteTool(BaseAIToolsTest):
     def test_devuelve_turnos_del_cliente(self):
-        appointments.create_appointment(
+        """Con su management_token, la herramienta devuelve los turnos del cliente."""
+        creado = appointments.create_appointment(
             "Cliente", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )
+        self.assertTrue(creado["success"])
 
         result = execute_tool(
-            "buscar_turnos_cliente", {"nombre": "Cliente", "telefono": "3838439222"}, 1
+            "buscar_turnos_cliente",
+            {
+                "nombre": "Cliente",
+                "telefono": "3838439222",
+                "management_token": creado["management_token"],
+            },
+            1,
         )
 
         self.assertTrue(result["success"])
         self.assertEqual(len(result["turnos"]), 1)
         self.assertEqual(result["turnos"][0]["customer_name"], "Cliente")
+        self.assertEqual(result["turnos"][0]["business_id"], 1)
 
     def test_sin_turnos_devuelve_lista_vacia(self):
+        """Cliente verificado sin turnos CONFIRMADOS devuelve lista vacía."""
+        creado = appointments.create_appointment(
+            "Sin Turno", "3838439000", "Corte", self.valid_date, "09:00", business_id=1
+        )
+        self.assertTrue(creado["success"])
+        cancelado = appointments.cancel_appointment(
+            creado["appointment_id"],
+            "3838439000",
+            business_id=1,
+            management_token=creado["management_token"],
+            customer_name="Sin Turno",
+        )
+        self.assertTrue(cancelado)
+
         result = execute_tool(
-            "buscar_turnos_cliente", {"nombre": "Sin Turno", "telefono": "3838439000"}, 1
+            "buscar_turnos_cliente",
+            {
+                "nombre": "Sin Turno",
+                "telefono": "3838439000",
+                "management_token": creado["management_token"],
+            },
+            1,
         )
         self.assertTrue(result["success"])
         self.assertEqual(result["turnos"], [])
 
     def test_no_expone_turnos_de_otro_negocio(self):
-        appointments.create_appointment(
+        """El token del negocio 1 no autoriza consultas en el contexto del 2."""
+        creado = appointments.create_appointment(
             "Cliente", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )
+        self.assertTrue(creado["success"])
 
         result = execute_tool(
-            "buscar_turnos_cliente", {"nombre": "Cliente", "telefono": "3838439222"}, 2
+            "buscar_turnos_cliente",
+            {
+                "nombre": "Cliente",
+                "telefono": "3838439222",
+                "management_token": creado["management_token"],
+            },
+            2,
         )
 
-        self.assertTrue(result["success"])
-        self.assertEqual(result["turnos"], [])
+        self.assertFalse(result["success"])
+        self.assertNotIn("turnos", result)
 
 
 class TestToolDispatchContract(BaseAIToolsTest):
@@ -248,10 +285,29 @@ class TestGeminiMalformedResponses(BaseAIToolsTest):
         self.assertEqual(result, "Disculpá, no pude generar una respuesta.")
 
     def test_buscar_turnos_sin_resultados_formatea_no_encontramos(self):
+        """Token verificado con turnos sin confirmar: formatea 'no encontramos'."""
+        creado = appointments.create_appointment(
+            "Nadie", "3838439000", "Corte", self.valid_date, "09:00", business_id=1
+        )
+        self.assertTrue(creado["success"])
+        cancelado = appointments.cancel_appointment(
+            creado["appointment_id"],
+            "3838439000",
+            business_id=1,
+            management_token=creado["management_token"],
+            customer_name="Nadie",
+        )
+        self.assertTrue(cancelado)
+
         mock_client = _FakeGenAIClient(
             responses=[
                 _ToolCallResponse(
-                    "buscar_turnos_cliente", {"nombre": "Nadie", "telefono": "3838439000"}
+                    "buscar_turnos_cliente",
+                    {
+                        "nombre": "Nadie",
+                        "telefono": "3838439000",
+                        "management_token": creado["management_token"],
+                    },
                 )
             ]
         )

@@ -121,14 +121,24 @@ class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
         self.assertNotIn("Cliente A", nombres_b)
 
     def test_busqueda_por_cliente_filtra_por_negocio(self):
-        appointments.create_appointment(
+        """La búsqueda exige el management_token del cliente (P2-01)."""
+        creado_a = appointments.create_appointment(
             "Cliente X", "3838439222", "Corte", self.valid_date, "09:00", business_id=1
         )
-        appointments.create_appointment(
+        creado_b = appointments.create_appointment(
             "Cliente X", "3838439333", "Corte B", self.valid_date, "10:00", business_id=2
         )
-        turnos_b = appointments.get_customer_appointments("Cliente X", "3838439333", business_id=2)
+        self.assertTrue(creado_a["success"] and creado_b["success"])
+
+        turnos_b = appointments.get_customer_appointments(
+            "Cliente X",
+            "3838439333",
+            business_id=2,
+            management_token=creado_b["management_token"],
+        )
+        self.assertIsNotNone(turnos_b)
         self.assertEqual(len(turnos_b), 1)
+        self.assertEqual(turnos_b[0]["business_id"], 2)
 
 
 # ============================================================
@@ -297,18 +307,25 @@ class TestConfigIsolation(BaseAppointmentIsolationTest):
 
 class TestNoClientEscapesContext(BaseAppointmentIsolationTest):
     def test_business_id_inyectado_no_permite_ver_turnos_de_b(self):
-        appointments.create_appointment(
+        """El business_id de la query no escala: el contexto es el de A (P2-01)."""
+        creado_b = appointments.create_appointment(
             "Cliente B", "3838439333", "Corte B", self.valid_date, "09:00", business_id=2
         )
+        self.assertTrue(creado_b["success"])
         self.login(1)
-        # Cliente A intenta consultar turnos con business_id=2 en query string
+        # Cliente A intenta consultar turnos con business_id=2 en query string,
+        # incluso con el management_token de B: el backend usa el contexto de A
+        # (id=1), donde el token de B no autoriza -> 401 sin exfiltrar PII.
         response = self.client.get(
             "/api/turnos?nombre=Cliente+B&telefono=3838439333&business_id=2&business=2"
+            f"&management_token={creado_b['management_token']}"
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 401)
         data = response.get_json()
-        # No debe ver el turno de B porque el backend usa el contexto de A (id=1)
-        self.assertEqual(data["turnos"], [])
+        self.assertEqual(data.get("code"), "verification_required")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Cliente B", body)
+        self.assertNotIn("3838439333", body)
 
 
 if __name__ == "__main__":

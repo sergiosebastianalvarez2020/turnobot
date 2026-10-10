@@ -430,7 +430,37 @@ def business_api_disponibilidad(slug, fecha):
 # ============================================================
 
 
+# Mensaje ÚNICO para toda falla de verificación (sin token, token inválido,
+# token de otra persona o de otro negocio): idéntico en todos los casos para
+# no revelar si el cliente o el turno existen (anti-enumeración).
+_TURNOS_VERIFICATION_ERROR = (
+    "No pudimos verificar tu consulta. Ingresá el management_token "
+    "que recibiste al reservar (en el enlace de gestión del turno)."
+)
+
+
+def _verification_required_response():
+    return (
+        jsonify(
+            {
+                "success": False,
+                "code": "verification_required",
+                "error": _TURNOS_VERIFICATION_ERROR,
+            }
+        ),
+        401,
+    )
+
+
 def _get_public_appointments_response(business_id):
+    """Consulta de turnos del cliente con VERIFICACIÓN de posesión.
+
+    Exige nombre + teléfono (validación de forma) y `management_token` en la
+    query string: sin un token válido perteneciente a UNO de los turnos de
+    ese cliente en ESTE negocio, la respuesta es 401 `verification_required`
+    sin datos personales. El filtro por business_id (tenant de la URL) se
+    mantiene en la capa de servicio.
+    """
     from app import get_client_ip, is_api_request_allowed
 
     if not is_api_request_allowed(get_client_ip(), "api:turnos", business_id):
@@ -454,8 +484,17 @@ def _get_public_appointments_response(business_id):
             {"success": False, "error": "El teléfono es obligatorio para consultar tus turnos."}
         ), 400
 
+    management_token = (request.args.get("management_token") or "").strip()
+    if not management_token:
+        return _verification_required_response()
+
     try:
-        turnos = get_customer_appointments(nombre, telefono, business_id)
+        turnos = get_customer_appointments(
+            nombre, telefono, business_id, management_token
+        )
+
+        if turnos is None:
+            return _verification_required_response()
 
         return jsonify({"success": True, "turnos": turnos})
 
