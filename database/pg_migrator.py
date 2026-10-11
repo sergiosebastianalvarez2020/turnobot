@@ -44,7 +44,7 @@ from pathlib import Path
 import psycopg
 
 from database.database import _PG_SCHEMA_BOOTSTRAP_LOCK
-from database.pg_pool import normalize_database_url, split_sql_statements
+from database.pg_pool import configure_pg_session, normalize_database_url, split_sql_statements
 
 logger = logging.getLogger("turnobot.pg_migrator")
 
@@ -491,6 +491,7 @@ def run_migrations(
     if not normalized:
         raise MigrationError("conninfo PostgreSQL vacío")
     with psycopg.connect(normalized) as conn:
+        configure_pg_session(conn)
         return apply_pending_migrations(
             conn,
             migrations_dir=migrations_dir,

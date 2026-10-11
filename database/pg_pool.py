@@ -70,6 +70,12 @@ PG_SESSION_TIMEZONE = "UTC"
 #     responden con el mismo código HTTP que en SQLite en vez de colgarse.
 PG_LOCK_TIMEOUT = "5s"
 
+# `statement_timeout` acota el tiempo máximo de ejecución de una sentencia SQL.
+# Valor 30s: lo suficientemente holgado para DDL legítimo (CREATE INDEX,
+# ALTER TABLE en tablas medianas) y lo suficientemente estricto para evitar
+# cuelgues indefinidos por sentencias bloqueadas o excesivamente costosas.
+PG_STATEMENT_TIMEOUT = "30s"
+
 # Columnas BOOLEAN del esquema PostgreSQL (ver migrations_pg/001_initial_schema.sql).
 # El esquema las declara BOOLEAN mientras que el código de aplicación —heredado de
 # SQLite— las manipula con los literales enteros 0/1. Vive en UN solo lugar porque las
@@ -93,6 +99,7 @@ def configure_pg_session(connection: Any) -> None:
     try:
         connection.execute("SELECT set_config('TimeZone', %s, false)", (PG_SESSION_TIMEZONE,))
         connection.execute("SELECT set_config('lock_timeout', %s, false)", (PG_LOCK_TIMEOUT,))
+        connection.execute("SELECT set_config('statement_timeout', %s, false)", (PG_STATEMENT_TIMEOUT,))
     finally:
         connection.autocommit = False
 
