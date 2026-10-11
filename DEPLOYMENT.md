@@ -49,6 +49,13 @@ registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
   `lock_timeout` en `run_migrations`/`apply_pending_migrations`. Si otro runner
   o el bootstrap retiene el lock más tiempo, la ejecución falla con
   `MigrationLockTimeout` en lugar de quedarse bloqueada indefinidamente.
+- **Alcance global del advisory lock (D17):** la clave (`_PG_SCHEMA_LOCK` =
+  `6076853768564197445`) es un `bigint` constante compartido entre el runner y el
+  bootstrap. En PostgreSQL, los advisory locks identificados por un `bigint` tienen
+  **alcance global al servidor**, no por base de datos. En un despliegue con
+  múltiples bases en un mismo servidor PostgreSQL, migraciones o bootstraps de
+  distintas bases se serializan entre sí hasta el límite de espera (60 s o
+  `lock_timeout`). Esto no afecta a despliegues single-database-per-server.
 - **Seguridad del directorio de migraciones (D13):** por defecto, el runner solo
   acepta directorios dentro del repositorio (`BASE_DIR`). El directorio oficial
   `migrations_pg/` funciona sin flags adicionales. Para usar un directorio
@@ -68,6 +75,20 @@ registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
   sentencias truncadas.
 - `SET TRANSACTION` ni `SAVEPOINT` (y el runner descarta `BEGIN`/`COMMIT`/
   `ROLLBACK` propios del archivo para conservar la atomicidad por migración).
+
+### Incompatibilidad de `CONCURRENTLY` (D16)
+
+El runner aplica cada migración en una única transacción. PostgreSQL no permite
+ejecutar `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY` ni
+`REINDEX CONCURRENTLY` dentro de un bloque transaccional, así que una migración
+que los use fallará siempre. `DEPLOYMENT.md` documenta otras restricciones del
+parser (`$...$`, `SET TRANSACTION`, `SAVEPOINT`) pero **no** menciona ésta.
+
+Si se necesitara un índice concurrente en el futuro, la migración debe aplicarse
+fuera de este runner (ej. `psql -d "$URL" -c "CREATE INDEX CONCURRENTLY ..."`
+como paso manual documentado), o bien se debe introducir un modo explícito de
+ejecución no transaccional. Hasta entonces, se recomienda crear índices con
+`CREATE INDEX` estándar dentro de las migraciones del runner.
 
 Las migraciones deben ser **DDL puro** (una o más sentencias `CREATE`/`ALTER`/
 `DROP`/`COMMENT`/`GRANT`, terminadas en `;`). Si se necesitara un cuerpo

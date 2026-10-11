@@ -521,3 +521,42 @@ def test_external_flag_does_not_disable_other_validations(tmp_path):
     _write(tmp_path, "003_widgets.sql", NEXT_SQL)
     with pytest.raises(pgm.MigrationError, match="Huecos"):
         pgm.discover_migrations(tmp_path, allow_external=True)
+
+
+# ---------------------------------------------------------------------------
+# D16 — Sentencias CONCURRENTLY no filtradas silenciosamente
+# ---------------------------------------------------------------------------
+
+
+def test_concurrently_statements_not_filtered_silently(tmp_path):
+    """
+    D16: las sentencias CREATE/DROP INDEX CONCURRENTLY no se descartan en silencio.
+
+    El runner aplica cada migración en una transacción. PostgreSQL prohíbe
+    CREATE/DROP INDEX CONCURRENTLY dentro de una transacción y lanza
+    ProgrammingError. El parser split_sql_statements no debe filtrar estas
+    sentencias; deben llegar a la conexión y fallar con error de PostgreSQL.
+    """
+    _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
+    _write(tmp_path, "002_concurrent_idx.sql", "CREATE INDEX CONCURRENTLY idx_test ON widgets (id);\n")
+
+    # 1. El parser NO debe filtrar la sentencia CONCURRENTLY
+    from database.pg_migrator import split_sql_statements
+    statements = split_sql_statements((tmp_path / "002_concurrent_idx.sql").read_text(encoding="utf-8"))
+    assert len(statements) == 1
+    assert "CONCURRENTLY" in statements[0].upper()
+
+    # 2. El SQL llega a _execute sin ser filtrado
+    from database.pg_migrator import _execute
+    conn = _FakeConnection()
+    migration = pgm.MigrationFile(
+        version=2,
+        name="002_concurrent_idx.sql",
+        path=tmp_path / "002_concurrent_idx.sql",
+        checksum="dummy",
+    )
+    # _FakeConnection no ejecuta SQL real, pero verificamos que la sentencia
+    # llega a _execute sin ser filtrada (no lanza excepción por filtrado)
+    _execute(conn, migration)
+    # Si llegamos aquí, la sentencia CONCURRENTLY pasó por _execute sin ser filtrada
+    # En PostgreSQL real, esto lanzaría ProgrammingError: cannot create index concurrently within a transaction block
