@@ -9,8 +9,13 @@ Flujo operativo recomendado:
 NO se conecta a producción salvo que se le indique la URL correcta; no toca la
 suite SQLite ni ``migrations/``. Nunca imprime la contraseña de la conexión.
 
+Carga ``.env`` igual que el resto de los scripts operativos (D8), de modo que la
+URL por defecto se resuelve desde el entorno del proceso o desde el archivo
+``.env`` del repositorio antes de leerla.
+
 Uso:
     python scripts/migrate_pg.py [--url DATABASE_URL] [--dry-run] [--migrations-dir DIR]
+                                 [--lock-timeout SEGUNDOS]
 
 Exit codes:
     0  éxito (aplicado, adoptado baseline, o nada pendiente);
@@ -27,6 +32,12 @@ from pathlib import Path
 
 # Asegurar que desde cron/CLI pueda importar el paquete del proyecto.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from dotenv import load_dotenv
+
+# Igual que app.py y los workers CLI: cargar .env antes de leer la configuración
+# de conexión. `override=False` conserva la precedencia del entorno existente.
+load_dotenv()
 
 from database.pg_migrator import MIGRATIONS_PG_DIR, MigrationError, MigrationResult, run_migrations
 from database.pg_pool import get_database_backend, sanitize_database_url
@@ -63,12 +74,35 @@ def _format_report(result: MigrationResult) -> str:
     return "\n".join(lines)
 
 
+def _positive_float(value: str) -> float:
+    """Tipo argparse: número de segundos estrictamente positivo (D7)."""
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"se esperaba un número en segundos, no {value!r}"
+        ) from None
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"debe ser mayor que 0 segundos, no {value!r}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Runner de migraciones PostgreSQL")
     parser.add_argument(
         "--url",
         default=os.environ.get("DATABASE_URL"),
         help="URL/DSN PostgreSQL (por defecto DATABASE_URL del entorno)",
+    )
+    parser.add_argument(
+        "--lock-timeout",
+        type=_positive_float,
+        default=None,
+        metavar="SEGUNDOS",
+        help=(
+            "Espera máxima para adquirir el advisory lock de esquema, en segundos "
+            "(por defecto la del migrador: 60 s)"
+        ),
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Calcula y reporta el plan sin escribir nada"
@@ -110,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             args.url,
             migrations_dir=args.migrations_dir,
             dry_run=args.dry_run,
+            lock_timeout=args.lock_timeout,
             allow_external=args.allow_external_migrations_dir,
         )
     except MigrationError as error:

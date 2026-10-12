@@ -20,9 +20,15 @@ migraciones incrementales. Los cambios de esquema tienen un proceso EXPLÍCITO,
 separado del arranque:
 
 ```powershell
-python scripts\migrate_pg.py --url "$env:DATABASE_URL" --dry-run   # revisar
-python scripts\migrate_pg.py --url "$env:DATABASE_URL"             # aplicar
+# La CLI carga `.env` (igual que la app) y `--url` es opcional si
+# `DATABASE_URL` ya está en el entorno o en `.env`.
+python scripts\migrate_pg.py --dry-run   # revisar
+python scripts\migrate_pg.py             # aplicar
 ```
+
+La URL también puede fijarse explícitamente con `--url "$env:DATABASE_URL"`.
+Para acotar la espera del advisory lock, agregar `--lock-timeout SEGUNDOS`
+(por defecto 60 s; debe ser estrictamente mayor que 0).
 
 Flujo recomendado: backup → dry-run → aplicar → verificar → arrancar.
 
@@ -44,9 +50,25 @@ registra en `schema_migrations` (`version`, `name`, `checksum`, `applied_at`):
   TABLE` detectable). Requiere intervención manual: restaurar backup o
   reconstruir metadata antes de continuar.
 - Un esquema parcial produce un error explícito sin tocar DDL.
+- **Verificación de "esquema completo" solo por nombre (D11):** tanto la
+  clasificación del baseline (`_classify_against_baseline`) como el bootstrap
+  (`database/database.py::_init_postgresql`) comprueban **nombres** de tablas
+  (`information_schema.tables`) e índices (`pg_indexes`), no columnas, `CHECK`,
+  `NOT NULL`, claves foráneas, `UNIQUE` ni la definición real de los índices. Una
+  base con todos los nombres esperados pero a la que le falte una columna o un
+  constraint se clasifica `complete`. Para una comprobación estructural completa,
+  usar una verificación externa (p. ej. `pg_dump --schema-only` contra un baseline
+  conocido).
+- **`migrations_pg/001_initial_schema.sql` congelado:** no debe editarse
+  retroactivamente. El runner compara el SHA-256 del archivo **completo**
+  (comentarios incluidos) contra el registrado en `schema_migrations`, de modo que
+  cualquier edición —aunque sea de un comentario— provoca `MigrationError`
+  (checksum modificado) en bases que ya registraron la 001. Por eso su encabezado
+  puede quedar desactualizado respecto al número de archivos de `migrations/`.
 - Usa un advisory lock compartido con el bootstrap para serializar ejecuciones
   concurrentes, con una espera **acotada**: por defecto 60 s, configurable con
-  `lock_timeout` en `run_migrations`/`apply_pending_migrations`. Si otro runner
+  `lock_timeout` (`run_migrations`/`apply_pending_migrations`) o el flag
+  `--lock-timeout SEGUNDOS` de la CLI. Si otro runner
   o el bootstrap retiene el lock más tiempo, la ejecución falla con
   `MigrationLockTimeout` en lugar de quedarse bloqueada indefinidamente.
 - **Alcance global del advisory lock (D17):** la clave (`_PG_SCHEMA_LOCK` =

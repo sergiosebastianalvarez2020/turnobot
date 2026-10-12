@@ -122,7 +122,7 @@ turnobot/
 │   ├── provision_business.py       # Business provisioning
 │   ├── migrate_pg.py               # Apply pending PostgreSQL schema migrations
 │   └── notify_failure.py           # Failure alerting
-├── tests/                          # tests/ suite only: 59 test files, 787 tests (historical count; global inventory in docs/TEST_SUITE_INVENTORY.md)
+├── tests/                          # tests/ suite only: 82 test files, 1226 tests (global inventory in docs/TEST_SUITE_INVENTORY.md)
 ├── .github/workflows/tests.yml     # CI: pytest on push/PR
 ├── pyproject.toml                  # pytest + coverage config
 └── DEPLOYMENT.md                   # Deployment & ops guide

@@ -281,6 +281,32 @@ def test_plan_detects_checksum_change(tmp_path):
         pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
 
 
+def test_plan_detects_renamed_migration_with_same_checksum(tmp_path):
+    """D12: renombrar un archivo sin cambiar su contenido debe fallar la auditoría.
+
+    El checksum coincide (mismo SQL) y la versión coincide, pero el nombre
+    registrado ya no refleja el archivo aplicado: el registro mentiría.
+    """
+    conn = _FakeConnection(
+        has_metadata=True, applied=[(1, "001_otro_nombre.sql", _sha256(BASELINE_SQL))]
+    )
+
+    with pytest.raises(pgm.MigrationError, match="Nombre"):
+        pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
+
+
+def test_plan_accepts_matching_name_and_checksum(tmp_path):
+    """D12: nombre y checksum correctos no deben romper el plan."""
+    conn = _FakeConnection(
+        has_metadata=True, applied=[(1, "001_initial_schema.sql", _sha256(BASELINE_SQL))]
+    )
+
+    plan = pgm.plan_migrations(conn, _baseline_dir(tmp_path), allow_external=True)
+
+    assert plan.to_adopt == []
+    assert plan.to_apply == []
+
+
 def test_plan_detects_unknown_applied_version(tmp_path):
     conn = _FakeConnection(
         has_metadata=True,

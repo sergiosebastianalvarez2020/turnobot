@@ -247,7 +247,14 @@ def _expected_objects(sql: str) -> tuple[set[str], set[str]]:
 
 
 def _classify_against_baseline(conn, baseline: MigrationFile) -> str:
-    """Clasifica la base frente al baseline: ``fresh``, ``partial`` o ``complete``."""
+    """Clasifica la base frente al baseline: ``fresh``, ``partial`` o ``complete``.
+
+    D11: la comprobación es **solo por nombre** de tabla e índice (igual que
+    ``database/database.py::_init_postgresql``), no por columnas, ``CHECK``,
+    ``NOT NULL``, claves foráneas, ``UNIQUE`` ni la definición real del índice.
+    Una base con todos los nombres esperados pero con columnas o constraints
+    faltantes se clasifica ``complete``.
+    """
     expected_tables, expected_indexes = _expected_objects(baseline.path.read_text(encoding="utf-8"))
     existing_tables, existing_indexes = _database_objects(conn)
 
@@ -263,7 +270,7 @@ def _classify_against_baseline(conn, baseline: MigrationFile) -> str:
 
 
 def _verify_applied(migrations: list[MigrationFile], applied: dict[int, dict]) -> None:
-    """Valida registro aplicado contra los archivos: contigüidad, downgrade y checksum."""
+    """Valida registro aplicado: contigüidad, downgrade, nombre y checksum."""
     if not applied:
         return
 
@@ -283,12 +290,19 @@ def _verify_applied(migrations: list[MigrationFile], applied: dict[int, dict]) -
         )
 
     for version in applied_versions:
-        expected = by_version[version].checksum
+        migration = by_version[version]
+        recorded_name = applied[version]["name"]
+        if recorded_name != migration.name:
+            raise MigrationError(
+                f"Nombre de migración modificado en la versión {version}: "
+                f"registrado {recorded_name!r} != archivo {migration.name!r}"
+            )
+        expected = migration.checksum
         recorded = applied[version]["checksum"]
         if recorded != expected:
             raise MigrationError(
                 f"Checksum modificado en la migración {version} "
-                f"({by_version[version].name}): registrado {recorded[:12]}… != "
+                f"({migration.name}): registrado {recorded[:12]}… != "
                 f"archivo {expected[:12]}…"
             )
 

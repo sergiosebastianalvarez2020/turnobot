@@ -82,6 +82,7 @@ check_untyped_defs = true
 
 # Patrón deliberado de bootstrap: load_dotenv()/sys.path antes de imports
 # de módulos del proyecto (scripts standalone y tests que lo simulan).
+"scripts/migrate_pg.py" = ["E402"]
 "scripts/retry_failed_notifications.py" = ["E402"]
 "scripts/send_reminders.py" = ["E402"]
 "tests/test_check_health.py" = ["E402"]

@@ -257,6 +257,33 @@ def test_cli_dry_run_and_invalid_url(pg_enabled, capsys):
     assert code == 1
 
 
+def test_cli_lock_timeout_flag_limits_wait_on_held_lock(pg_enabled, capsys):
+    """D7: ``--lock-timeout`` acota la espera real del advisory lock en la CLI."""
+    from scripts import migrate_pg
+
+    with _disposable_db(pg_enabled) as conninfo:
+        blocker = connect_autocommit(conninfo)
+        try:
+            blocker.execute("SELECT pg_advisory_lock(%s)", (pgm._PG_SCHEMA_LOCK,))
+
+            code = migrate_pg.main(["--url", conninfo_to_url(conninfo), "--lock-timeout", "0.5"])
+
+            assert code == 1
+            err = capsys.readouterr().err
+            assert "ERROR" in err
+            assert "advisory lock" in err
+            assert _public_tables(conninfo) == set()
+        finally:
+            blocker.execute("SELECT pg_advisory_unlock(%s)", (pgm._PG_SCHEMA_LOCK,))
+            blocker.close()
+
+        code_ok = migrate_pg.main(
+            ["--url", conninfo_to_url(conninfo), "--lock-timeout", "5", "--dry-run"]
+        )
+        assert code_ok == 0
+        assert "Pendientes" in capsys.readouterr().out
+
+
 def test_metadata_loss_detection_regresses_d2(pg_enabled, tmp_path):
     """
     Regresión D2: pérdida de metadata (schema_migrations) no debe causar
