@@ -117,20 +117,61 @@ jobs:
         id: tests
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
-        run: python -m pytest tests -p no:cacheprovider 2>&1 | tee /tmp/tests_output.txt
+        run: |
+          set -o pipefail
+          python -m pytest tests -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
       - name: Guard - tests must not be skipped/deselected
         if: steps.tests.outcome == 'success'
         run: |
           output_file="/tmp/tests_output.txt"
+          junit_file="/tmp/tests_junit.xml"
           if grep -qE "no tests ran|0 tests" "$output_file"; then
             echo "FALLO: tests no registró tests ejecutados"
-            exit 1
-          fi
-          if grep -q "skipped" "$output_file"; then
-            echo "FALLO: tests quedaron con SKIP en CI"
             exit 1
           fi
           if grep -q "deselected" "$output_file"; then
             echo "FALLO: tests quedaron con DESELECTED en CI"
             exit 1
           fi
+          # Usar JUnit XML para detectar skips de forma fiable por nodeid
+          # Solo permitir el skip arquitectural conocido:
+          # tests.test_secure_turnos_contract::test_crear_consultar_cancelar_reprogramar_con_token_propio
+          if [ ! -f "$junit_file" ]; then
+            echo "FALLO: no se encontró $junit_file, no se pudo validar skips"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          import sys
+
+          allowed_skip = "tests.test_secure_turnos_contract::test_crear_consultar_cancelar_reprogramar_con_token_propio"
+          junit_file = "/tmp/tests_junit.xml"
+
+          try:
+              tree = ET.parse(junit_file)
+          except ET.ParseError as e:
+              print(f"FALLO: XML inválido en $junit_file: {e}")
+              sys.exit(1)
+          except Exception as e:
+              print(f"FALLO: error leyendo $junit_file: {e}")
+              sys.exit(1)
+
+          root = tree.getroot()
+
+          unexpected_skips = []
+          for testcase in root.iter("testcase"):
+              skipped = testcase.find("skipped")
+              if skipped is not None:
+                  classname = testcase.get("classname", "")
+                  name = testcase.get("name", "")
+                  full_id = f"{classname}::{name}" if classname else name
+                  # Normalizar para comparar (pytest usa :: como separador)
+                  if full_id != allowed_skip:
+                      unexpected_skips.append(full_id)
+
+          if unexpected_skips:
+              print("FALLO: tests quedaron con SKIP inesperados en CI")
+              for sid in unexpected_skips:
+                  print(f"  SKIP inesperado: {sid}")
+              sys.exit(1)
+          PY

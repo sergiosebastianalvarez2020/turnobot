@@ -31,6 +31,7 @@ import database.pg_pool as pg_pool_mod
 from database.pg_pool import (
     PG_LOCK_TIMEOUT,
     PG_SESSION_TIMEZONE,
+    PG_STATEMENT_TIMEOUT,
     PgConnectionProxy,
     close_pg_pool,
     configure_pg_session,
@@ -355,7 +356,7 @@ def test_sqlite_sigue_funcionando_exactamente_igual(monkeypatch, tmp_path):
 
 
 def test_configure_pg_session_fija_timezone_utc_y_lock_timeout():
-    """Cada conexión nueva recibe timezone=UTC y lock_timeout con valores fijos."""
+    """Cada conexión nueva recibe timezone=UTC, lock_timeout y statement_timeout con valores fijos."""
     connection = _FakeConn()
 
     configure_pg_session(connection)
@@ -363,6 +364,7 @@ def test_configure_pg_session_fija_timezone_utc_y_lock_timeout():
     assert connection.executed == [
         ("SELECT set_config('TimeZone', %s, false)", ("UTC",)),
         ("SELECT set_config('lock_timeout', %s, false)", ("5s",)),
+        ("SELECT set_config('statement_timeout', %s, false)", ("30s",)),
     ]
     # Los set_config(.., false) son de SESIÓN: se aplican en autocommit y no
     # pueden quedar pendientes de un COMMIT posterior de la aplicación.
@@ -373,6 +375,7 @@ def test_constantes_de_sesion_documentan_los_valores_esperados():
     """Los valores por defecto son los que los tests de integración verifican."""
     assert PG_SESSION_TIMEZONE == "UTC"
     assert PG_LOCK_TIMEOUT == "5s"
+    assert PG_STATEMENT_TIMEOUT == "30s"
 
 
 def test_create_pg_pool_registra_el_configurador_de_sesion(monkeypatch):
