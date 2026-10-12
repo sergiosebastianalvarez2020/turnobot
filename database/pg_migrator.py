@@ -375,14 +375,26 @@ def _acquire_lock(conn, *, timeout: float | None = None) -> None:
 
 
 def _release_lock(conn) -> None:
-    try:
-        conn.execute("SELECT pg_advisory_unlock(%s)", (_PG_SCHEMA_LOCK,))
-        conn.commit()
-    except Exception:  # pragma: no cover - cierre/abort ya libera la sesión
+    """Libera el advisory lock de sesión, tolerando una transacción abortada.
+
+    Si la transacción llegó en estado ``INERROR`` (p.ej. tras un fallo que no
+    revirtió), ``pg_advisory_unlock`` no llega a ejecutarse y sólo se hace
+    rollback; el lock de SESIÓN quedaría retenido y bloquearía a los runners
+    posteriores. Por eso, tras revertir, se reintenta el unlock una vez (el
+    rollback limpia el estado abortado y el reintento libera el mismo lock).
+    Nunca propaga errores: la liberación es best-effort y, en último caso, el
+    cierre de la sesión libera el lock de todos modos.
+    """
+    for _ in range(2):
         try:
-            conn.rollback()
+            conn.execute("SELECT pg_advisory_unlock(%s)", (_PG_SCHEMA_LOCK,))
+            conn.commit()
+            return
         except Exception:
-            pass
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 
 def _record(conn, migration: MigrationFile) -> None:
