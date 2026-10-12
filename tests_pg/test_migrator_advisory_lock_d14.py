@@ -37,9 +37,7 @@ def _public_tables(conninfo: str) -> set[str]:
 
 def _metadata_table_exists(conninfo: str) -> bool:
     with connect_autocommit(conninfo) as conn:
-        row = conn.execute(
-            "SELECT to_regclass('public.schema_migrations')"
-        ).fetchone()
+        row = conn.execute("SELECT to_regclass('public.schema_migrations')").fetchone()
     return bool(row and row[0])
 
 
@@ -64,9 +62,7 @@ def test_advisory_lock_session_transaction_crossover(pg_enabled: str) -> None:
         for old in tmp_dir.glob("*.sql"):
             old.unlink()
         (tmp_dir / "001_initial_schema.sql").write_text(
-            (pgm.MIGRATIONS_PG_DIR / "001_initial_schema.sql").read_text(
-                encoding="utf-8"
-            ),
+            (pgm.MIGRATIONS_PG_DIR / "001_initial_schema.sql").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 
@@ -78,18 +74,14 @@ def test_advisory_lock_session_transaction_crossover(pg_enabled: str) -> None:
         blocker = connect_autocommit(test_url)
         try:
             blocker.execute("BEGIN")
-            blocker.execute(
-                "SELECT pg_advisory_xact_lock(%s)", (pgm._PG_SCHEMA_LOCK,)
-            )
+            blocker.execute("SELECT pg_advisory_xact_lock(%s)", (pgm._PG_SCHEMA_LOCK,))
 
             # 2. Runner con espera explícita y corta (sobre una conexión real).
             runner = psycopg.connect(test_url)
             try:
                 with pytest.raises(pgm.MigrationLockTimeout, match="advisory lock"):
                     pgm.apply_pending_migrations(
-                        conn=runner,
-                        migrations_dir=tmp_dir,
-                        lock_timeout=0.5,
+                        conn=runner, migrations_dir=tmp_dir, lock_timeout=0.5
                     )
             finally:
                 runner.close()
@@ -109,9 +101,7 @@ def test_advisory_lock_session_transaction_crossover(pg_enabled: str) -> None:
         runner = psycopg.connect(test_url)
         try:
             result = pgm.apply_pending_migrations(
-                conn=runner,
-                migrations_dir=tmp_dir,
-                lock_timeout=None,
+                conn=runner, migrations_dir=tmp_dir, lock_timeout=None
             )
         finally:
             runner.close()

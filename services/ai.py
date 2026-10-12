@@ -971,9 +971,7 @@ def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None):
                 ),
             }
 
-        turnos = get_customer_appointments(
-            nombre, telefono, business_id, management_token
-        )
+        turnos = get_customer_appointments(nombre, telefono, business_id, management_token)
 
         if turnos is None:
             return {

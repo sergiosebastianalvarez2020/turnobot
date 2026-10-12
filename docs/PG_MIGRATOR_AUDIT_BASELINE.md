@@ -254,8 +254,8 @@ El orden real de operaciones es:
 ```python
 _acquire_lock(conn, timeout=lock_timeout)
 if not dry_run:
-    _ensure_metadata_table(conn)     # CREATE TABLE IF NOT EXISTS + COMMIT
-plan = plan_migrations(conn, migrations_dir)   # puede elevar MigrationError
+    _ensure_metadata_table(conn)  # CREATE TABLE IF NOT EXISTS + COMMIT
+plan = plan_migrations(conn, migrations_dir)  # puede elevar MigrationError
 ```
 
 `_ensure_metadata_table` ejecuta el DDL y hace `commit()` **antes** de que `plan_migrations` valide. Si la validación luego falla (por ejemplo `MigrationError` por "esquema parcial/incompleto sin registro"), la base ya quedó mutada por una corrida que reportó error.

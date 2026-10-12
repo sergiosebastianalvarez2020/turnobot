@@ -157,14 +157,10 @@ def _seed(conn):
 
     # Turno del cliente verificado (token 1) en biz-p2. Hora propia para no
     # colisionar con el índice UNIQUE parcial de slot confirmado.
-    _seed_appointment(
-        conn, "Cliente P2", "11-5555-1234", "tok-p2-0001", biz_p2_id, "10:00"
-    )
+    _seed_appointment(conn, "Cliente P2", "11-5555-1234", "tok-p2-0001", biz_p2_id, "10:00")
 
     # Turno de otro cliente, mismo business (para rechazo de propiedad).
-    _seed_appointment(
-        conn, "Otro Cliente", "11-5555-9999", "tok-oTro-0002", biz_p2_id, "11:00"
-    )
+    _seed_appointment(conn, "Otro Cliente", "11-5555-9999", "tok-oTro-0002", biz_p2_id, "11:00")
 
     # Turno de Cliente P2 en OTRO business (para rechazo de negocio).
     biz_b_id = conn.execute(
@@ -176,9 +172,7 @@ def _seed(conn):
         "VALUES (?, 'Servicio B', 1200, 30, 1)",
         (biz_b_id,),
     )
-    _seed_appointment(
-        conn, "Cliente P2", "11-5555-1234", "tok-p2-B-0003", biz_b_id, "10:00"
-    )
+    _seed_appointment(conn, "Cliente P2", "11-5555-1234", "tok-p2-B-0003", biz_b_id, "10:00")
 
     return {"biz_p2": biz_p2_id, "biz_b": biz_b_id}
 
@@ -217,13 +211,9 @@ def _asserccion_401_idenrica(resp):
     """Verificación del contrato de anti-enumeración (mismo código para todo)."""
     assert resp.status_code == 401
     data = resp.get_json()
-    assert data == {
-        "success": False,
-        "code": "verification_required",
-        "error": _TURNOS_ERROR,
-    }
+    assert data == {"success": False, "code": "verification_required", "error": _TURNOS_ERROR}
     body = resp.get_data(as_text=True)
-    assert "\"turnos\"" not in body
+    assert '"turnos"' not in body
     assert "Cliente P2" not in body
     assert "Otro Cliente" not in body
     assert "Negocio" not in body
@@ -247,9 +237,7 @@ def test_token_inválido_devuelve_401_idenrica(turnos_client):
 
 def test_token_otro_cliente_devuelve_401_idenrica(turnos_client):
     # Token válido, pero del cliente "Otro Cliente" (mismo business).
-    resp = turnos_client.get(
-        TURNOS_URL + "&management_token=tok-oTro-0002"
-    )
+    resp = turnos_client.get(TURNOS_URL + "&management_token=tok-oTro-0002")
     _asserccion_401_idenrica(resp)
 
 
@@ -257,8 +245,7 @@ def test_token_otro_negocio_devuelve_401_idenrica(turnos_client):
     # Token válido del cliente en biz-p2, pero el slug apunta a biz-b
     # (otro business): el filtro por business_id del tenant de la URL rechaza.
     resp = turnos_client.get(
-        "/b/biz-b/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234"
-        "&management_token=tok-p2-0001"
+        "/b/biz-b/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234&management_token=tok-p2-0001"
     )
     _asserccion_401_idenrica(resp)
 
@@ -269,18 +256,12 @@ def test_token_malformado_devuelve_401_idenrica(turnos_client):
 
 
 def test_token_excede_límite_de_256_caracteres_devuelve_401(turnos_client):
-    resp = turnos_client.get(
-        TURNOS_URL + "&management_token=" + "a" * 257
-    )
+    resp = turnos_client.get(TURNOS_URL + "&management_token=" + "a" * 257)
     _asserccion_401_idenrica(resp)
 
 
-def test_token_valido_devuelve_200_solo_turnos_propios_del_mismo_business(
-    turnos_client,
-):
-    resp = turnos_client.get(
-        TURNOS_URL + "&management_token=tok-p2-0001"
-    )
+def test_token_valido_devuelve_200_solo_turnos_propios_del_mismo_business(turnos_client):
+    resp = turnos_client.get(TURNOS_URL + "&management_token=tok-p2-0001")
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["success"] is True
@@ -331,20 +312,13 @@ def test_ai_con_token_si_devuelve_solo_turnos_verificados(turnos_env):
         from services.ai import _execute_buscar_turnos_cliente
 
         resultado = _execute_buscar_turnos_cliente(
-            {
-                "nombre": "Cliente P2",
-                "telefono": "11-5555-1234",
-                "management_token": "tok-p2-0001",
-            },
+            {"nombre": "Cliente P2", "telefono": "11-5555-1234", "management_token": "tok-p2-0001"},
             business_id=turnos_env.config["P2_SEED_IDS"]["biz_p2"],
             session_id=None,
         )
         assert resultado["success"] is True
         assert len(resultado["turnos"]) == 1
-        assert (
-            resultado["turnos"][0]["business_id"]
-            == turnos_env.config["P2_SEED_IDS"]["biz_p2"]
-        )
+        assert resultado["turnos"][0]["business_id"] == turnos_env.config["P2_SEED_IDS"]["biz_p2"]
         assert resultado["turnos"][0]["customer_name"] == "Cliente P2"
 
 
@@ -352,16 +326,12 @@ def test_rate_limit_aplica_antes_de_la_verificacion(turnos_client):
     """La tasa se cuenta sobre todas las peticiones api:turnos, ANTES de que
     el token se evalúe en el servicio. Este run pre-verifica que el
     throttling prioriza la protección sobre la obtención de datos."""
-    resp = turnos_client.get(
-        "/b/biz-p2/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234"
-    )
+    resp = turnos_client.get("/b/biz-p2/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234")
     # Primer intento (sin token) -> 401, no es rate limit.
     assert resp.status_code == 401
 
     for _ in range(64):
-        resp = turnos_client.get(
-            "/b/biz-p2/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234"
-        )
+        resp = turnos_client.get("/b/biz-p2/api/turnos?nombre=Cliente%20P2&telefono=11-5555-1234")
 
     assert resp.status_code == 429
     data = resp.get_json()

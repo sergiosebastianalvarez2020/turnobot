@@ -19,6 +19,7 @@ def pg_test_env():
     """Tests puros con mocks: sin PostgreSQL real, sin skip funcional del conftest."""
     yield
 
+
 BASELINE_SQL = (
     "CREATE TABLE businesses (id bigint);\nCREATE INDEX idx_businesses ON businesses (id);\n"
 )
@@ -332,7 +333,9 @@ def test_dry_run_writes_nothing(tmp_path):
 def test_apply_executes_and_records(tmp_path):
     conn = _FakeConnection()
 
-    result = pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True)
+    result = pgm.apply_pending_migrations(
+        conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True
+    )
 
     assert [item.version for item in result.applied] == [1]
     assert result.current_version == 1
@@ -358,7 +361,9 @@ def test_apply_adopts_complete_baseline_then_applies_next_fails_without_metadata
     assert "posterior" in error_msg.lower() or "001" in error_msg
 
     # Verificar que no se intentó crear schema_migrations ni registrar nada
-    assert not any("CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS" in sql.upper() for sql, _ in conn.calls)
+    assert not any(
+        "CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS" in sql.upper() for sql, _ in conn.calls
+    )
     assert conn.applied == []
 
 
@@ -396,7 +401,9 @@ def test_acquire_lock_uses_default_timeout_when_not_specified(monkeypatch, tmp_p
     conn = _FakeConnection(lock_available=False)
 
     with pytest.raises(pgm.MigrationLockTimeout):
-        pgm.apply_pending_migrations(conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True)
+        pgm.apply_pending_migrations(
+            conn, migrations_dir=_baseline_dir(tmp_path), allow_external=True
+        )
 
 
 def test_acquire_lock_success_uses_shared_session_key(tmp_path):
@@ -538,16 +545,22 @@ def test_concurrently_statements_not_filtered_silently(tmp_path):
     sentencias; deben llegar a la conexión y fallar con error de PostgreSQL.
     """
     _write(tmp_path, "001_initial_schema.sql", BASELINE_SQL)
-    _write(tmp_path, "002_concurrent_idx.sql", "CREATE INDEX CONCURRENTLY idx_test ON widgets (id);\n")
+    _write(
+        tmp_path, "002_concurrent_idx.sql", "CREATE INDEX CONCURRENTLY idx_test ON widgets (id);\n"
+    )
 
     # 1. El parser NO debe filtrar la sentencia CONCURRENTLY
     from database.pg_migrator import split_sql_statements
-    statements = split_sql_statements((tmp_path / "002_concurrent_idx.sql").read_text(encoding="utf-8"))
+
+    statements = split_sql_statements(
+        (tmp_path / "002_concurrent_idx.sql").read_text(encoding="utf-8")
+    )
     assert len(statements) == 1
     assert "CONCURRENTLY" in statements[0].upper()
 
     # 2. El SQL llega a _execute sin ser filtrado
     from database.pg_migrator import _execute
+
     conn = _FakeConnection()
     migration = pgm.MigrationFile(
         version=2,

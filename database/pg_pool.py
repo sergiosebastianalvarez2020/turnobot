@@ -99,7 +99,9 @@ def configure_pg_session(connection: Any) -> None:
     try:
         connection.execute("SELECT set_config('TimeZone', %s, false)", (PG_SESSION_TIMEZONE,))
         connection.execute("SELECT set_config('lock_timeout', %s, false)", (PG_LOCK_TIMEOUT,))
-        connection.execute("SELECT set_config('statement_timeout', %s, false)", (PG_STATEMENT_TIMEOUT,))
+        connection.execute(
+            "SELECT set_config('statement_timeout', %s, false)", (PG_STATEMENT_TIMEOUT,)
+        )
     finally:
         connection.autocommit = False
 

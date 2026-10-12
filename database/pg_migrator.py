@@ -153,9 +153,7 @@ def _validate_migrations_dir(migrations_dir: Path | str, *, allow_external: bool
 
 
 def discover_migrations(
-    migrations_dir: Path | str = MIGRATIONS_PG_DIR,
-    *,
-    allow_external: bool = False,
+    migrations_dir: Path | str = MIGRATIONS_PG_DIR, *, allow_external: bool = False
 ) -> list[MigrationFile]:
     """Descubre y valida las migraciones de un directorio.
 
@@ -296,10 +294,7 @@ def _verify_applied(migrations: list[MigrationFile], applied: dict[int, dict]) -
 
 
 def plan_migrations(
-    conn,
-    migrations_dir: Path | str = MIGRATIONS_PG_DIR,
-    *,
-    allow_external: bool = False,
+    conn, migrations_dir: Path | str = MIGRATIONS_PG_DIR, *, allow_external: bool = False
 ) -> MigrationPlan:
     """Calcula qué migraciones adoptar (baseline) y aplicar. No muta la base."""
     migrations = discover_migrations(migrations_dir, allow_external=allow_external)

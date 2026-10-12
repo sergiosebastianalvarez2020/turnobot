@@ -131,10 +131,7 @@ class TestAppointmentReadIsolation(BaseAppointmentIsolationTest):
         self.assertTrue(creado_a["success"] and creado_b["success"])
 
         turnos_b = appointments.get_customer_appointments(
-            "Cliente X",
-            "3838439333",
-            business_id=2,
-            management_token=creado_b["management_token"],
+            "Cliente X", "3838439333", business_id=2, management_token=creado_b["management_token"]
         )
         self.assertIsNotNone(turnos_b)
         self.assertEqual(len(turnos_b), 1)

@@ -943,9 +943,7 @@ PUBLIC_APPOINTMENT_COLUMNS = (
 )
 
 
-def get_customer_appointments(
-    customer_name, phone=None, business_id=None, management_token=None
-):
+def get_customer_appointments(customer_name, phone=None, business_id=None, management_token=None):
     """
     Busca los turnos confirmados de un cliente previa VERIFICACIÓN.
 

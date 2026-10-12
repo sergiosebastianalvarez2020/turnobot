@@ -139,9 +139,7 @@ def test_incremental_after_existing_baseline_fails_without_metadata(pg_enabled, 
         tables = _public_tables(conninfo)
         assert "mig_widgets" not in tables
         with connect_autocommit(conninfo) as conn:
-            exists = conn.execute(
-                "SELECT to_regclass('public.schema_migrations')"
-            ).fetchone()[0]
+            exists = conn.execute("SELECT to_regclass('public.schema_migrations')").fetchone()[0]
         assert exists is None
 
 
@@ -310,9 +308,7 @@ INSERT INTO mig_d2_marker (migration_version) VALUES (2);
 
         # Confirmar que la tabla ya no existe
         with connect_autocommit(conninfo) as conn:
-            exists = conn.execute(
-                "SELECT to_regclass('public.schema_migrations')"
-            ).fetchone()[0]
+            exists = conn.execute("SELECT to_regclass('public.schema_migrations')").fetchone()[0]
         assert exists is None
 
         # 4. Segunda ejecución: el migrador DEBE detectar la pérdida y fallar
@@ -322,8 +318,12 @@ INSERT INTO mig_d2_marker (migration_version) VALUES (2);
 
         # El error debe ser explicativo sobre la pérdida de metadata / estado inconsistente
         error_msg = str(exc_info.value)
-        assert "metadata" in error_msg.lower() or "schema_migrations" in error_msg.lower() \
-            or "inconsistente" in error_msg.lower() or "parcial" in error_msg.lower()
+        assert (
+            "metadata" in error_msg.lower()
+            or "schema_migrations" in error_msg.lower()
+            or "inconsistente" in error_msg.lower()
+            or "parcial" in error_msg.lower()
+        )
 
         # 5. Verificar que el marcador NO se duplicó (002 no se re-ejecutó)
         with connect_autocommit(conninfo) as conn:
@@ -351,9 +351,7 @@ def test_run_migrations_rejects_external_dir_without_flag(pg_enabled, tmp_path):
         # Verificar que la base no fue modificada
         assert _public_tables(conninfo) == set()
         with connect_autocommit(conninfo) as conn:
-            exists = conn.execute(
-                "SELECT to_regclass('public.schema_migrations')"
-            ).fetchone()[0]
+            exists = conn.execute("SELECT to_regclass('public.schema_migrations')").fetchone()[0]
         assert exists is None
 
 
@@ -450,9 +448,7 @@ CREATE INDEX d4_test_txt_like_idx ON d4_test (txt) WHERE txt LIKE '%pattern%';
 
     with _disposable_db(pg_enabled) as conninfo:
         # Ejecutar migración vía run_migrations (ruta cruda: psycopg.connect directo)
-        result = pgm.run_migrations(
-            conninfo, migrations_dir=tmp_path, allow_external=True
-        )
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
         assert [item.version for item in result.applied] == [1, 2]
         assert result.current_version == 2
 
@@ -465,24 +461,19 @@ CREATE INDEX d4_test_txt_like_idx ON d4_test (txt) WHERE txt LIKE '%pattern%';
             ).fetchone()[0]
             # PostgreSQL almacena el default como 'valor%defecto'::text
             assert default is not None
-            assert "valor%defecto" in default, (
-                f"DEFAULT almacenado incorrecto: {default!r}"
-            )
+            assert "valor%defecto" in default, f"DEFAULT almacenado incorrecto: {default!r}"
 
             # 2. COMMENT
-            comment = conn.execute(
-                "SELECT obj_description('d4_test'::regclass)"
-            ).fetchone()[0]
+            comment = conn.execute("SELECT obj_description('d4_test'::regclass)").fetchone()[0]
             assert comment is not None
             assert "Tabla con 100% cobertura" in comment, (
                 f"COMMENT almacenado incorrecto: {comment!r}"
             )
 
-# 3. Índice parcial con LIKE '%pattern%'
+            # 3. Índice parcial con LIKE '%pattern%'
             # PostgreSQL almacena LIKE como operador ~~ en pg_indexes.indexdef
             idx_def = conn.execute(
-                "SELECT indexdef FROM pg_indexes "
-                "WHERE indexname = 'd4_test_txt_like_idx'"
+                "SELECT indexdef FROM pg_indexes WHERE indexname = 'd4_test_txt_like_idx'"
             ).fetchone()[0]
             assert idx_def is not None
             # PostgreSQL normaliza LIKE a operador ~~ en la definición del índice
@@ -568,8 +559,7 @@ CREATE INDEX d4_test_txt_like_idx ON d4_test (txt) WHERE txt LIKE '%pattern%';
                     # 3. Índice parcial con LIKE '%pattern%'
                     # PostgreSQL almacena LIKE como operador ~~ en pg_indexes.indexdef
                     idx_def = conn.execute(
-                        "SELECT indexdef FROM pg_indexes "
-                        "WHERE indexname = 'd4_test_txt_like_idx'"
+                        "SELECT indexdef FROM pg_indexes WHERE indexname = 'd4_test_txt_like_idx'"
                     ).fetchone()[0]
                     assert idx_def is not None
                     # FIXED: proxy path now preserves % literal correctly
@@ -626,28 +616,23 @@ def test_d4_percent_literal_in_parametrized_query(pg_enabled, tmp_path):
                 # El patrón '%test%' contiene % literales que SÍ deben duplicarse
                 # porque la consulta tiene parámetros (psycopg3 los interpretaría como placeholders)
                 cur = proxy.execute(
-                    "INSERT INTO d4_param_test (txt) VALUES (%s)",
-                    ("prefijo%test%sufijo",)
+                    "INSERT INTO d4_param_test (txt) VALUES (%s)", ("prefijo%test%sufijo",)
                 )
                 proxy._conn.commit()
 
                 # 4. Consultar con LIKE parametrizado
-                cur = proxy.execute(
-                    "SELECT txt FROM d4_param_test WHERE txt LIKE %s",
-                    ("%test%",)
-                )
+                cur = proxy.execute("SELECT txt FROM d4_param_test WHERE txt LIKE %s", ("%test%",))
                 proxy._conn.commit()
                 row = cur.fetchone()
                 assert row is not None
                 # El valor almacenado debe tener % literal, no %%
                 assert row["txt"] == "prefijo%test%sufijo"
 
-# 5. Verificar que el patrón LIKE '%test%' en la consulta
+                # 5. Verificar que el patrón LIKE '%test%' en la consulta
                 # se ejecutó correctamente (el % en el parámetro no se duplica en el valor almacenado)
                 with connect_autocommit(conninfo) as conn:
                     rows = conn.execute(
-                        "SELECT txt FROM d4_param_test WHERE txt LIKE %s",
-                        ("%test%",)
+                        "SELECT txt FROM d4_param_test WHERE txt LIKE %s", ("%test%",)
                     ).fetchall()
                     assert len(rows) == 1
                     # connect_autocommit devuelve tuplas (txt,)

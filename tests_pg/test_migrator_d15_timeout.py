@@ -41,7 +41,9 @@ def _migration_rows(conninfo: str) -> list[tuple]:
         ).fetchall()
 
 
-def test_d15_statement_timeout_triggers_rollback_and_reexecution(pg_enabled: str, monkeypatch, tmp_path):
+def test_d15_statement_timeout_triggers_rollback_and_reexecution(
+    pg_enabled: str, monkeypatch, tmp_path
+):
     """
     D15: statement_timeout en el runner debe abortar migraciones largas,
     hacer rollback completo y permitir reejecución exitosa.
@@ -57,7 +59,9 @@ def test_d15_statement_timeout_triggers_rollback_and_reexecution(pg_enabled: str
 
     monkeypatch.setattr(pg_pool, "PG_STATEMENT_TIMEOUT", "1s")
 
-    pg_enabled = os.getenv("TURNOBOT_PG_URL", "postgresql://turnobot_test:turnobot_test_pass@127.0.0.1:5433/postgres")
+    pg_enabled = os.getenv(
+        "TURNOBOT_PG_URL", "postgresql://turnobot_test:turnobot_test_pass@127.0.0.1:5433/postgres"
+    )
 
     dbname = new_db_name()
     create_test_database(pg_enabled, dbname)
@@ -74,14 +78,10 @@ def test_d15_statement_timeout_triggers_rollback_and_reexecution(pg_enabled: str
         assert [item.version for item in result1.applied] == [1]
 
         # PASO 2: Añadir migración lenta y ejecutar -> debe fallar por timeout
-        (tmp_migrations / "002_slow.sql").write_text(
-            "SELECT pg_sleep(5);", encoding="utf-8"
-        )
+        (tmp_migrations / "002_slow.sql").write_text("SELECT pg_sleep(5);", encoding="utf-8")
 
         try:
-            pgm.run_migrations(
-                conninfo, migrations_dir=tmp_migrations, allow_external=True
-            )
+            pgm.run_migrations(conninfo, migrations_dir=tmp_migrations, allow_external=True)
             pytest.fail("Expected QueryCanceled due to statement timeout")
         except psycopg.errors.QueryCanceled as e:
             if "statement timeout" not in str(e) and "canceling statement" not in str(e):
@@ -100,9 +100,7 @@ def test_d15_statement_timeout_triggers_rollback_and_reexecution(pg_enabled: str
         monkeypatch.setattr(pg_pool, "PG_STATEMENT_TIMEOUT", "30s")
 
         (tmp_migrations / "002_slow.sql").write_text(
-            "CREATE TABLE d15_test_table (id int);\n"
-            "SELECT pg_sleep(0.1);",
-            encoding="utf-8"
+            "CREATE TABLE d15_test_table (id int);\nSELECT pg_sleep(0.1);", encoding="utf-8"
         )
 
         result2 = pgm.run_migrations(conninfo, migrations_dir=tmp_migrations, allow_external=True)

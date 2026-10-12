@@ -319,8 +319,7 @@ class TestPublicApiServiceIsolation(unittest.TestCase, PostgreSQLTestCase):
         app_a = self._insert_confirmed_appointment("Cliente A", "111111111", 1)
 
         response = self.client.get(
-            "/api/turnos?nombre=Cliente+A&telefono=111111111"
-            f"&management_token={self._token(app_a)}"
+            f"/api/turnos?nombre=Cliente+A&telefono=111111111&management_token={self._token(app_a)}"
         )
 
         self.assertEqual(response.status_code, 200)

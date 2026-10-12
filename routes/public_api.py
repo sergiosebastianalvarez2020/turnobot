@@ -442,11 +442,7 @@ _TURNOS_VERIFICATION_ERROR = (
 def _verification_required_response():
     return (
         jsonify(
-            {
-                "success": False,
-                "code": "verification_required",
-                "error": _TURNOS_VERIFICATION_ERROR,
-            }
+            {"success": False, "code": "verification_required", "error": _TURNOS_VERIFICATION_ERROR}
         ),
         401,
     )
@@ -489,9 +485,7 @@ def _get_public_appointments_response(business_id):
         return _verification_required_response()
 
     try:
-        turnos = get_customer_appointments(
-            nombre, telefono, business_id, management_token
-        )
+        turnos = get_customer_appointments(nombre, telefono, business_id, management_token)
 
         if turnos is None:
             return _verification_required_response()
