@@ -12,6 +12,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
+import psycopg
+import psycopg.pq
 import pytest
 
 import database.pg_migrator as pgm
@@ -242,6 +244,51 @@ def test_lock_wait_times_out_when_lock_is_held_then_recovers(pg_enabled):
 
         result = pgm.run_migrations(conninfo)
         assert [item.version for item in result.applied] == [1]
+
+
+def test_release_lock_after_aborted_transaction_releases_session_lock(pg_enabled):
+    """D5: ``_release_lock`` con transacción abortada debe liberar el lock de sesión.
+
+    Reproduce el defecto D5: si la transacción está abortada, el
+    ``pg_advisory_unlock`` inicial no llega a ejecutarse y sólo se hace
+    ``rollback``; el advisory lock de SESIÓN (``pg_try_advisory_lock``) queda
+    retenido hasta cerrar la conexión. Con una conexión de pool eso bloquea a
+    todos los runners posteriores (``MigrationLockTimeout`` a los 60 s).
+
+    La verificación es objetiva: una SEGUNDA conexión intenta adquirir el mismo
+    lock del migrador después de ``_release_lock``; sólo puede hacerlo si el
+    lock se liberó de verdad.
+    """
+    with _disposable_db(pg_enabled) as conninfo:
+        holder = psycopg.connect(conninfo)
+        try:
+            pgm._acquire_lock(holder)
+            assert holder.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+
+            # Abortar la transacción sin rollback explícito.
+            with pytest.raises(psycopg.errors.DivisionByZero):
+                holder.execute("SELECT 1/0")
+            assert holder.info.transaction_status == psycopg.pq.TransactionStatus.INERROR
+
+            # No debe lanzar: la rama de excepción absorbe el error y hace rollback.
+            pgm._release_lock(holder)
+
+            # Verificación objetiva con una segunda conexión.
+            probe = psycopg.connect(conninfo, autocommit=True)
+            try:
+                acquired = probe.execute(
+                    "SELECT pg_try_advisory_lock(%s)", (pgm._PG_SCHEMA_LOCK,)
+                ).fetchone()[0]
+                if acquired:
+                    probe.execute("SELECT pg_advisory_unlock(%s)", (pgm._PG_SCHEMA_LOCK,))
+                assert acquired is True, (
+                    "D5: _release_lock no liberó el advisory lock de sesión tras una "
+                    "transacción abortada; el lock quedó retenido hasta cerrar la conexión."
+                )
+            finally:
+                probe.close()
+        finally:
+            holder.close()
 
 
 def test_cli_dry_run_and_invalid_url(pg_enabled, capsys):
