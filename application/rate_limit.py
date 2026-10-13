@@ -2,6 +2,15 @@
 
 Guards por ip/teléfono/usuario y ventana (estado) extraídos de app.py,
 junto con la constante RATE_LIMIT_MAX_KEYS (re-exportada desde extensions).
+
+Fase 1 (anti-abuso de reservas): la defensa por CONTACTO (teléfono/email) no
+vive acá sino en `services.appointments.get_contact_booking_limit`, que cuenta
+los turnos confirmados a futuro contra la propia base. Ese dato es atómico,
+compartido entre workers/instancias y sobrevive reinicios, mientras que el
+contador en memoria de este módulo es por proceso (ver `extensions`): ante un
+límite por teléfono/email contado en memoria, cada worker tendría su propia
+cuenta y el límite real se multiplicaría (o desaparecería al reiniciar). Ver
+el informe de Fase 1 para las opciones de backend compartido.
 """
 
 from application.requests import _rate_limit_key

@@ -21,6 +21,13 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request
 
+from application.requests import (
+    check_form_timing,
+    contact_limit_response,
+    is_honeypot_triggered,
+    register_form_render,
+)
+
 
 def index():
     """Landing page principal (fallback sin tenant)."""
@@ -192,6 +199,14 @@ def business_reservar_wizard_datos(slug):
             public_frontend_config=application.build_public_frontend_config(settings),
         )
 
+    # Honeypot: nombre de campo aleatorio por render para evitar detección fácil.
+    # El nombre viaja al cliente; el servidor solo mira que venga vacío.
+    honeypot_field = f"hp_{secrets.token_urlsafe(8)}"
+    # Timestamp de render registrado EN LA SESIÓN del servidor. El valor que
+    # reenvía el cliente se valida contra este registro (nunca se confía en el
+    # timestamp del cuerpo sin esta comprobación).
+    form_rendered_at = register_form_render()
+
     return render_template(
         "reservar_wizard.html",
         business=business,
@@ -207,6 +222,8 @@ def business_reservar_wizard_datos(slug):
         # lugar de 'occupied'. Mismo patron que el canje de fidelizacion
         # (routes/public_api.py genera la suya al renderizar gestionar_turno).
         idempotency_key=secrets.token_urlsafe(24),
+        honeypot_field=honeypot_field,
+        form_rendered_at=form_rendered_at,
         public_frontend_config=application.build_public_frontend_config(settings),
     )
 
@@ -266,7 +283,11 @@ def business_reservar_wizard_confirmar(slug):
 
         # Reutilizar la lógica de reserva existente
         from database.database import get_active_services_scoped
-        from services.appointments import create_appointment, validate_email
+        from services.appointments import (
+            create_appointment,
+            get_contact_booking_limit,
+            validate_email,
+        )
         from services.notifications import (
             notifications_enabled,
             send_business_confirmation_email,
@@ -297,6 +318,48 @@ def business_reservar_wizard_confirmar(slug):
             ), 400
         if email and not validate_email(email):
             return jsonify({"success": False, "error": "El email no es válido."}), 400
+
+        # ----------------------------------------------------
+        # PROTECCIÓN ANTI-ABUSO (Fase 1)
+        #
+        # Se evalúa ANTES de tocar la base y de crear la reserva: una solicitud
+        # bloqueada nunca llega a insertar un turno.
+        # ----------------------------------------------------
+
+        # 1) Honeypot: campo oculto de nombre aleatorio completado por un bot.
+        if is_honeypot_triggered(data):
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "HONEYPOT_TRIGGERED",
+                    "error": "No se pudo procesar la solicitud.",
+                }
+            ), 400
+
+        # 2) Tiempo mínimo de llenado (timestamp renderizado por el servidor).
+        form_ok, _form_reason = check_form_timing(data)
+        if not form_ok:
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "FORM_TOO_FAST",
+                    "error": "Revisá los datos con calma y volvé a enviar el formulario.",
+                }
+            ), 400
+
+        # 3) Cupo de turnos activos por contacto (teléfono/email), medido sobre
+        #    la propia base: coherente entre workers y sin estado en memoria.
+        contact_limit = get_contact_booking_limit(telefono, email, business_id)
+        if contact_limit is not None:
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "CONTACT_LIMIT",
+                    "reason": contact_limit,
+                    "error": "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
+                    "Cancelá o consultá tus turnos para poder reservar de nuevo.",
+                }
+            ), 429
 
         # Validar servicio
         allowed_services = (
@@ -349,6 +412,12 @@ def business_reservar_wizard_confirmar(slug):
 
         if not resultado.get("success"):
             reason = resultado.get("reason")
+
+            # El enforcement dentro de create_appointment es la garantía real:
+            # responde 429 con el mismo cuerpo que el chequeo anticipado.
+            if reason == "contact_limit":
+                return contact_limit_response(resultado.get("contact_limit_kind"))
+
             code_map = {
                 "past_date": ("past_date", "No podés reservar una fecha que ya pasó."),
                 "closed_day": ("closed_day", "Ese día estamos cerrados."),
@@ -440,6 +509,9 @@ def business_reservar_wizard_confirmar(slug):
     services = application.get_active_services_scoped(business_id) if business_id else []
     selected_service = next((s for s in services if s["name"] == servicio), None)
 
+    # El paso 4 también contiene el formulario (queda oculto en el DOM), así que
+    # se emiten honeypot + timestamp nuevos: una carga directa o un refresh de
+    # esta pantalla no deja al usuario con un formulario incompleto.
     return render_template(
         "reservar_wizard.html",
         business=business,
@@ -449,5 +521,7 @@ def business_reservar_wizard_confirmar(slug):
         selected_hora=hora,
         selected_resource_id=resource_id or None,
         step=4,
+        honeypot_field=f"hp_{secrets.token_urlsafe(8)}",
+        form_rendered_at=register_form_render(),
         public_frontend_config=application.build_public_frontend_config(settings),
     )

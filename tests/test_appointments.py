@@ -606,16 +606,35 @@ class _BaseLockDeReschedule(PostgreSQLTestCase):
             c.close()
 
     def _locks_esperados(self, origen_iso, destino_iso):
+        """Locks de CALENDARIO esperados: origen y destino, en orden ascendente.
+
+        Es el contrato que comparten la reprogramación pública y la admin: ambas
+        toman los locks de día. La diferencia entre caminos es el lock por
+        CONTACTO, que solo toma la pública (ver `_locks_publicos_esperados`),
+        porque el cupo anti-abuso no aplica a la operatoria administrativa.
+        """
         origen = appointments._appointment_day_ordinal(origen_iso)
         destino = appointments._appointment_day_ordinal(destino_iso)
         return [(1, min(origen, destino)), (1, max(origen, destino))]
+
+    def _locks_publicos_esperados(self, origen_iso, destino_iso):
+        """Locks de la reprogramación PÚBLICA: contacto primero, luego calendario.
+
+        El orden global contacto -> calendario es el que evita deadlocks: el cupo
+        de reservas solo es confiable si todas las escrituras del mismo contacto
+        serializan antes de tocar los días, incluso cuando son días distintos.
+        """
+        contacto = database.contact_lock_ordinal("3838439222")
+        return [(1, contacto), *self._locks_esperados(origen_iso, destino_iso)]
 
 
 class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
     """`reschedule_appointment` libera un día y ocupa otro: necesita AMBOS locks.
 
     La serialización real con PostgreSQL se verifica en tests_pg/test_advisory_lock_live.py.
-    Aquí se comprueba la CONTRATACIÓN: se piden locks de origen y destino en orden ascendente.
+    Aquí se comprueba la CONTRATACIÓN: primero el lock por CONTACTO (para que el
+    cupo de reservas sea atómico aunque los días sean distintos) y después los
+    locks de origen y destino del calendario en orden ascendente.
     """
 
     def test_toma_locks_de_origen_y_destino_en_orden_ascendente(self):
@@ -633,7 +652,9 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
         )
 
         assert reprogramado["success"], reprogramado
-        assert self.lock_calls == self._locks_esperados(self.valid_date, self.otro_dia)
+        assert self.lock_calls == self._locks_publicos_esperados(self.valid_date, self.otro_dia), (
+            "la reprogramación pública debe tomar el lock por contacto y luego los de día"
+        )
 
     def test_deduplica_el_lock_si_el_dia_no_cambia(self):
         resultado = self._turno(hora="09:00")
@@ -650,8 +671,11 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
         )
 
         assert reprogramado["success"], reprogramado
-        assert self.lock_calls == [(1, appointments._appointment_day_ordinal(self.valid_date))], (
-            "mismo día de origen y destino: un solo lock, no dos"
+        contacto = database.contact_lock_ordinal("3838439222")
+        dia = appointments._appointment_day_ordinal(self.valid_date)
+        assert self.lock_calls == [(1, contacto), (1, dia)], (
+            "mismo día de origen y destino: un solo lock de día, no dos "
+            "(el lock por contacto se toma siempre, una vez)"
         )
 
     def test_no_toma_locks_si_el_turno_no_existe(self):
@@ -682,6 +706,11 @@ class TestRescheduleTomaLosLocksDeOrigenYDestino(_BaseLockDeReschedule):
 
         assert reprogramado["success"], reprogramado
         assert self.lock_calls == self._locks_esperados(self.valid_date, self.otro_dia)
+
+        # La vía admin NO toma el lock por contacto: el cupo anti-abuso es una
+        # defensa del flujo público y no debe frenar la operatoria del operador.
+        contacto = database.contact_lock_ordinal("3838439222")
+        assert (1, contacto) not in self.lock_calls
 
     def test_admin_deduplica_el_lock_si_el_dia_no_cambia(self):
         resultado = self._turno(hora="09:00")

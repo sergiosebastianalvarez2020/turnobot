@@ -15,6 +15,7 @@ else:  # pragma: no cover
 from database.database import (
     acquire_business_write_lock,
     appointment_day_ordinal,
+    contact_lock_ordinal,
     get_active_services_scoped,
     get_business_settings_scoped,
     get_connection,
@@ -183,6 +184,228 @@ def validate_email(email):
     if not cleaned:
         return True
     return bool(_EMAIL_RE.match(cleaned))
+
+
+# ============================================================
+# CUPO DE RESERVAS ACTIVAS POR CONTACTO (Fase 1 anti-abuso)
+# ============================================================
+
+# Máximo de turnos confirmados A FUTURO que un mismo contacto (teléfono o
+# email) puede retener en un negocio.
+#
+# Justificación: un turno confirmado ocupa una franja de la agenda que nadie
+# más puede usar (índice único por slot), así que el daño de un bot es
+# proporcional a la cantidad de franjas que logra retener. Acotar por contacto
+# limita el daño a `MAX_ACTIVE_BOOKINGS_PER_CONTACT` franjas por teléfono/email
+# sin exigir backend de contadores externo: la propia base es la fuente de
+# verdad (atómica, compartida entre workers, sobrevive reinicios).
+#
+# El valor cubre el caso legítimo de reservas de grupo (una persona reserva
+# para su familia/amigos, típicamente <= 5) y deja fuera el relleno masivo.
+# Empieza en 5 y se cuenta solo turnos `confirmed` futuros: cancelar libera
+# cupo, y el historial pasado no penaliza a nadie.
+MAX_ACTIVE_BOOKINGS_PER_CONTACT = 5
+
+
+def _to_date_value(value):
+    """Convierte la fecha devuelta por el backend en `datetime.date`.
+
+    SQLite guarda `appointment_date` como TEXT ('YYYY-MM-DD'); PostgreSQL como
+    DATE y entrega `datetime.date`. Devuelve None si el valor es ilegible.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, dt_date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _upcoming_confirmed_count(
+    connection, business_id, phone=None, email=None, exclude_appointment_id=None, limit=0
+):
+    """Cuenta turnos `confirmed` A FUTURO de un contacto dentro de una transacción.
+
+    Es la ÚNICA query de conteo del cupo: la usan tanto el chequeo anticipado de
+    las rutas como el enforcement transaccional, para que no puedan divergir.
+
+    Debe correr bajo serialización por contacto (advisory lock en PostgreSQL,
+    `BEGIN IMMEDIATE` en SQLite) cuando se usa para decidir un INSERT: recién ahí
+    el check-then-act es atómico.
+
+    - `phone`: teléfono YA normalizado (solo dígitos).
+    - `email`: email YA normalizado (minúsculas).
+    - `exclude_appointment_id`: turno a no contar (la reserva que se está
+      reprogramando, que sigue `confirmed` durante la transacción).
+    - `limit`: cota del conteo devuelto (limit + 1 alcanza para decidir).
+
+    El "hoy" se resuelve en la zona horaria del negocio y la comparación de
+    fechas se hace en Python, porque SQLite entrega TEXT y PostgreSQL DATE.
+    """
+    clauses = []
+    params = []
+    if phone:
+        clauses.append("phone = ?")
+        params.append(phone)
+    if email:
+        clauses.append("LOWER(customer_email) = ?")
+        params.append(email)
+    if not clauses:
+        return 0
+    if exclude_appointment_id is not None:
+        clauses.append("id != ?")
+        params.append(exclude_appointment_id)
+
+    today = datetime.now(ZoneInfo(get_business_timezone(business_id, connection=connection))).date()
+    rows = connection.execute(
+        f"""
+        SELECT appointment_date
+        FROM appointments
+        WHERE business_id = ?
+        AND status = 'confirmed'
+        AND {" AND ".join(clauses)}
+        ORDER BY appointment_date DESC
+        LIMIT ?
+        """,
+        (business_id, *params, limit + 1),
+    ).fetchall()
+
+    upcoming = 0
+    for row in rows:
+        date_value = _to_date_value(row["appointment_date"])
+        if date_value is not None and date_value >= today:
+            upcoming += 1
+    return upcoming
+
+
+def get_contact_booking_limit(
+    phone, email, business_id, limit=None, connection=None, exclude_appointment_id=None
+):
+    """Indica si un contacto ya alcanzó el cupo de turnos confirmados futuros.
+
+    Chequeo ANTICIPADO (fail fast) para los dos puntos de entrada públicos: una
+    solicitud bloqueada no paga el costo de las validaciones. NO es la garantía
+    definitiva: corre fuera de la transacción que crea el turno. El enforcement
+    atómico vive en `enforce_contact_booking_limit`, dentro de
+    `create_appointment`/`reschedule_appointment`.
+
+    El conteo usa SIEMPRE el `business_id` resuelto por el servidor (nunca uno
+    recibido del cliente), de modo que un tenant no puede afectar el cupo de
+    otro, y se hace sobre teléfono normalizado y email normalizado (minúsculas)
+    para que las variantes de formato compartan cupo.
+
+    Args:
+        phone: teléfono declarado por el cliente.
+        email: email declarado por el cliente.
+        business_id: negocio resuelto por el servidor.
+        limit: máximo permitido (por defecto MAX_ACTIVE_BOOKINGS_PER_CONTACT).
+        connection: conexión reutilizable (opcional).
+        exclude_appointment_id: turno a excluir del conteo (reprogramación).
+
+    Returns:
+        None si el contacto puede reservar; "phone" o "email" si alcanzó el
+        cupo (sin detallar datos personales en el mensaje al cliente).
+    """
+    if business_id is None:
+        return None
+
+    limit = MAX_ACTIVE_BOOKINGS_PER_CONTACT if limit is None else limit
+    if limit <= 0:
+        return None
+
+    normalized_phone = normalize_phone(phone)
+    normalized_email = (email or "").strip().lower()
+    if not normalized_phone and not normalized_email:
+        return None
+
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
+    try:
+        for kind, value in (("phone", normalized_phone), ("email", normalized_email)):
+            if not value:
+                continue
+            upcoming = _upcoming_confirmed_count(
+                connection,
+                business_id,
+                phone=value if kind == "phone" else None,
+                email=value if kind == "email" else None,
+                exclude_appointment_id=exclude_appointment_id,
+                limit=limit,
+            )
+            if upcoming >= limit:
+                return kind
+    finally:
+        if owns_connection:
+            connection.close()
+
+    return None
+
+
+def acquire_contact_locks(connection, business_id, phone=None, email=None):
+    """Toma los advisory locks por contacto, ANTES que los de calendario.
+
+    Serializa, dentro del negocio, todas las operaciones del MISMO contacto:
+    recién con eso el recontaje del cupo dentro de la transacción es confiable,
+    incluidos dos requests que reservan días DISTINTOS (el lock de calendario por
+    sí solo no las cruza).
+
+    Sin `hash()` ni datos personales persistentes: la clave se deriva con
+    `database.contact_lock_ordinal` (BLAKE2b, estable entre procesos) y el valor
+    crudo nunca se guarda ni se registra.
+
+    Orden FIJO teléfono -> email, y siempre antes de `_acquire_day_locks`, que es
+    el orden global que evita deadlocks: ninguna transacción toma un lock de
+    calendario y después uno de contacto.
+
+    En SQLite es no-op: `BEGIN IMMEDIATE` ya serializa a los escritores.
+    """
+    ordinals = []
+    for contact in (phone, email):
+        ordinal = contact_lock_ordinal(contact)
+        if ordinal:
+            ordinals.append(ordinal)
+    for ordinal in sorted(set(ordinals)):
+        acquire_business_write_lock(connection, business_id, ordinal)
+
+
+def enforce_contact_booking_limit(
+    connection, business_id, phone, email, limit=None, exclude_appointment_id=None
+):
+    """Revisa el cupo DENTRO de la transacción que va a escribir el turno.
+
+    Es el enforcement real: se ejecuta después de `BEGIN IMMEDIATE` y de tomar
+    los locks por contacto, y antes del INSERT/UPDATE, de modo que dos requests
+    simultáneas del mismo contacto no puedan ambas leer el mismo cupo libre.
+
+    Debe invocarse con los valores YA normalizados (teléfono en dígitos, email
+    en minúsculas).
+
+    Returns:
+        None si hay cupo; "phone" o "email" si se alcanzó el límite.
+    """
+    limit = MAX_ACTIVE_BOOKINGS_PER_CONTACT if limit is None else limit
+    if limit <= 0 or business_id is None:
+        return None
+
+    for kind, value in (("phone", phone), ("email", email)):
+        if not value:
+            continue
+        upcoming = _upcoming_confirmed_count(
+            connection,
+            business_id,
+            phone=value if kind == "phone" else None,
+            email=value if kind == "email" else None,
+            exclude_appointment_id=exclude_appointment_id,
+            limit=limit,
+        )
+        if upcoming >= limit:
+            return kind
+    return None
 
 
 # ============================================================
@@ -503,9 +726,25 @@ def create_appointment(
     email=None,
     resource_id=None,
     idempotency_key=None,
+    enforce_contact_limit=True,
 ):
     """
     Crea un turno.
+
+    Args:
+        enforce_contact_limit: aplica el cupo de reservas activas por contacto
+            (anti-abuso). Las rutas públicas lo dejan en True. La creación
+            manual administrativa pasa False: es un operador humano ya
+            autorizado por membresía + CSRF y reserva EN NOMBRE de un cliente,
+            de modo que el cupo anti-bot no debe frenar esa operatoria.
+
+    Returns:
+        Diccionario. Además de los motivos históricos, puede devolver
+        {"success": False, "reason": "contact_limit",
+         "contact_limit_kind": "phone"|"email"} cuando el contacto alcanzó el
+        cupo. Se devuelve DESPUÉS del chequeo de reintento (una replay no debe
+        fallar por cupo) y con la transacción ya revertida, de modo que no queda
+        ninguna reserva.
 
     Valida:
 
@@ -581,6 +820,12 @@ def create_appointment(
         return {"success": False, "appointment_id": None, "reason": "invalid_email"}
     customer_email = (email or "").strip()
 
+    # Contacto normalizado UNA sola vez: alimenta el chequeo de cupo, los
+    # advisory locks por contacto y el INSERT, de modo que no puede haber
+    # divergencia entre los tres.
+    contact_phone = normalize_phone(phone)
+    contact_email = customer_email.lower() or None
+
     connection = get_connection()
 
     try:
@@ -639,6 +884,10 @@ def create_appointment(
 
         # Iniciar transacción atómica
         connection.execute("BEGIN IMMEDIATE")
+        # ORDEN GLOBAL DE LOCKS: contacto -> calendario. Todas las escrituras de
+        # turnos los toman en este orden, así que no puede formarse un ciclo.
+        if enforce_contact_limit:
+            acquire_contact_locks(connection, business_id, contact_phone, contact_email)
         acquire_business_write_lock(
             connection, business_id, _appointment_day_ordinal(appointment_date)
         )
@@ -671,6 +920,41 @@ def create_appointment(
                 if replay is not None:
                     connection.execute("ROLLBACK")
                     return _idempotent_replay_response(replay, business_id)
+
+            # ------------------------------------------------
+            # CUPO DE RESERVAS ACTIVAS POR CONTACTO (ENFORCEMENT)
+            #
+            # Recontaje DENTRO de la transacción y bajo los locks por contacto:
+            # es lo que hace atómico el check-then-act. El chequeo anticipado de
+            # las rutas (`get_contact_booking_limit`, fuera de la transacción)
+            # solo ahorra trabajo: si dos requests leyeron el mismo cupo libre,
+            # acá la segunda ve la fila que la primera insertó y se rechaza.
+            #
+            # Va DESPUÉS del chequeo de reintento: una replay con la misma
+            # `idempotency_key` devuelve el turno que ya existe, incluso si el
+            # contacto está ahora al máximo.
+            #
+            # En SQLite la serialización la da `BEGIN IMMEDIATE`; en PostgreSQL
+            # la da `pg_advisory_xact_lock` por contacto, que sí cruza días
+            # distintos.
+            # ------------------------------------------------
+
+            if enforce_contact_limit:
+                contact_limit = enforce_contact_booking_limit(
+                    connection,
+                    business_id,
+                    contact_phone,
+                    contact_email,
+                    exclude_appointment_id=None,
+                )
+                if contact_limit is not None:
+                    connection.execute("ROLLBACK")
+                    return {
+                        "success": False,
+                        "appointment_id": None,
+                        "reason": "contact_limit",
+                        "contact_limit_kind": contact_limit,
+                    }
 
             # ------------------------------------------------
             # VALIDAR HORARIO DE CIERRE
@@ -1265,7 +1549,7 @@ def reschedule_appointment(
 
             origen = connection.execute(
                 """
-                SELECT appointment_date, appointment_time
+                SELECT appointment_date, appointment_time, phone, customer_email
                 FROM appointments
                 WHERE id = ?
                 AND business_id = ?
@@ -1285,8 +1569,20 @@ def reschedule_appointment(
             original_date = origen["appointment_date"]
             original_time = origen["appointment_time"]
 
+            # Contacto del turno que se mueve (mismos valores normalizados que
+            # usa `create_appointment`), para los locks y para el cupo.
+            reschedule_phone = normalize_phone(origen["phone"])
+            reschedule_email = (
+                origen["customer_email"].strip().lower() if origen["customer_email"] else None
+            )
+
             # ------------------------------------------------
-            # SERIALIZAR DÍA DE ORIGEN + DÍA DE DESTINO (orden ascendente)
+            # SERIALIZAR CONTACTO + DÍA DE ORIGEN Y DE DESTINO
+            #
+            # El contacto se bloquea PRIMERO (orden global contacto ->
+            # calendario, igual que en `create_appointment`): dos reprogramaciones
+            # del mismo contacto, o una reprogramación y una reserva nueva, no
+            # pueden leer el mismo cupo libre.
             #
             # Sin el lock del día de origen, una reserva concurrente sobre la
             # franja que esta operación está liberando puede observar el turno
@@ -1294,6 +1590,7 @@ def reschedule_appointment(
             # ------------------------------------------------
 
             try:
+                acquire_contact_locks(connection, business_id, reschedule_phone, reschedule_email)
                 _acquire_day_locks(connection, business_id, origen["appointment_date"], new_date)
             except sqlite3.OperationalError:
                 # `lock_timeout` agotado: el turno queda como estaba.
@@ -1449,6 +1746,34 @@ def reschedule_appointment(
             if existing:
                 connection.execute("ROLLBACK")
                 return {"success": False, "reason": "occupied"}
+
+            # ------------------------------------------------
+            # CUPO DE RESERVAS ACTIVAS POR CONTACTO
+            #
+            # Mover un turno desde una fecha pasada a una futura AUMENTA la
+            # cantidad de turnos que ocupan la agenda, así que sin este control
+            # se podría pasar de 5 activos a 6 reprogramando. Se excluye el
+            # propio turno (`exclude_appointment_id`): el caso normal —reordenar
+            # uno de los turnos que ya se tienen— debe seguir permitido.
+            #
+            # Mismo enforcement transaccional (y los mismos locks por contacto)
+            # que en `create_appointment`, así que también es atómico.
+            # ------------------------------------------------
+
+            contact_limit = enforce_contact_booking_limit(
+                connection,
+                business_id,
+                reschedule_phone,
+                reschedule_email,
+                exclude_appointment_id=appointment_id_int,
+            )
+            if contact_limit is not None:
+                connection.execute("ROLLBACK")
+                return {
+                    "success": False,
+                    "reason": "contact_limit",
+                    "contact_limit_kind": contact_limit,
+                }
 
             # ------------------------------------------------
             # ACTUALIZAR TURNO

@@ -33,6 +33,7 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request, session
 
+from application.requests import check_form_timing, contact_limit_response, is_honeypot_triggered
 from database.database import (
     ensure_loyalty_settings_scoped,
     get_active_services_scoped,
@@ -45,6 +46,7 @@ from services.appointments import (
     create_appointment,
     get_appointment_by_token,
     get_available_times,
+    get_contact_booking_limit,
     get_customer_appointments,
     normalize_phone,
     reschedule_appointment,
@@ -589,6 +591,49 @@ def _create_public_appointment_response(business_id):
                 }
             ), 400
 
+        # ----------------------------------------------------
+        # PROTECCIÓN ANTI-ABUSO (Fase 1)
+        #
+        # Se evalúa ANTES de cualquier consulta a la base y de crear la
+        # reserva: una solicitud bloqueada nunca inserta un turno.
+        # ----------------------------------------------------
+
+        # 1) Honeypot: campo oculto de nombre aleatorio completado por un bot.
+        if is_honeypot_triggered(data):
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "HONEYPOT_TRIGGERED",
+                    "error": "No se pudo procesar la solicitud.",
+                }
+            ), 400
+
+        # 2) Tiempo mínimo de llenado (timestamp renderizado por el servidor y
+        #    guardado en la sesión; el valor del cuerpo se valida contra él).
+        form_ok, _form_reason = check_form_timing(data)
+        if not form_ok:
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "FORM_TOO_FAST",
+                    "error": "Revisá los datos con calma y volvé a enviar el formulario.",
+                }
+            ), 400
+
+        # 3) Cupo de turnos activos por contacto (teléfono/email), medido sobre
+        #    la propia base: coherente entre workers y sin estado en memoria.
+        contact_limit = get_contact_booking_limit(telefono, email, business_id)
+        if contact_limit is not None:
+            return jsonify(
+                {
+                    "success": False,
+                    "code": "CONTACT_LIMIT",
+                    "reason": contact_limit,
+                    "error": "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
+                    "Cancelá o consultá tus turnos para poder reservar de nuevo.",
+                }
+            ), 429
+
         services = get_active_services_scoped(business_id) if business_id is not None else []
         allowed_services = {row["name"] for row in services}
 
@@ -640,6 +685,17 @@ def _create_public_appointment_response(business_id):
             resource_id=resource_id,
             idempotency_key=idempotency_key,
         )
+
+        # ----------------------------------------------------
+        # CUPO DE RESERVAS ACTIVAS POR CONTACTO (ENFORCEMENT)
+        #
+        # El chequeo de arriba es fail-fast: corre fuera de la transacción. Este
+        # es el resultado del recontaje atómico dentro de `create_appointment`,
+        # que es el que no puede eludirse con solicitudes simultáneas.
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "contact_limit":
+            return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
         # FECHA PASADA
@@ -1191,6 +1247,19 @@ def _get_public_reschedule_response(business_id):
             management_token,
             customer_name if customer_name else None,
         )
+
+        # ----------------------------------------------------
+        # CUPO DE RESERVAS ACTIVAS POR CONTACTO
+        #
+        # Mismo enforcement atómico que en la creación: el turno que se mueve se
+        # excluye del recontaje, así que reprogramar uno de los turnos que ya se
+        # tienen sigue permitido. Solo se rechaza cuando la jugada dejaría al
+        # contacto por encima del máximo (típicamente: mover una reserva vieja a
+        # una fecha futura estando ya al límite).
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "contact_limit":
+            return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
         # HORARIO OCUPADO

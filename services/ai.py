@@ -908,9 +908,20 @@ def _execute_reservar_turno(arguments, business_id, session_id=None):
         )
 
         if not resultado.get("success"):
+            reason = resultado.get("reason")
+            if reason == "contact_limit":
+                return {
+                    "success": False,
+                    "reason": "contact_limit",
+                    "message": (
+                        "Alcanzaste el máximo de reservas activas con estos datos de "
+                        "contacto. Cancelá una reserva existente o contactá al negocio "
+                        "para seguir reservando."
+                    ),
+                }
             return {
                 "success": False,
-                "reason": resultado.get("reason"),
+                "reason": reason,
                 "message": "No se pudo reservar el turno solicitado.",
             }
 
@@ -1093,6 +1104,16 @@ def _execute_reprogramar_turno(arguments, business_id, session_id=None):
                 "message": (
                     "No pudimos encontrar ese turno con los datos indicados. "
                     "Verificá tu nombre y teléfono e intentá nuevamente."
+                ),
+            }
+
+        if reason == "contact_limit":
+            return {
+                "success": False,
+                "reason": "contact_limit",
+                "message": (
+                    "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
+                    "Cancelá una reserva existente o contactá al negocio para seguir reservando."
                 ),
             }
 
