@@ -282,6 +282,33 @@ def _upcoming_confirmed_count(
     return upcoming
 
 
+def _check_contact_limit_exceeded(
+    connection, business_id, phone, email, exclude_appointment_id, limit
+):
+    """Comprueba si un contacto (teléfono/email) supera el cupo de reservas futuras.
+
+    Debe invocarse con phone/email YA normalizados (teléfono en dígitos, email en minúsculas).
+    El llamador es responsable de la normalización y de la gestión de la conexión.
+
+    Returns:
+        "phone" | "email" si el contacto supera el cupo, None en caso contrario.
+    """
+    for kind, value in (("phone", phone), ("email", email)):
+        if not value:
+            continue
+        upcoming = _upcoming_confirmed_count(
+            connection,
+            business_id,
+            phone=value if kind == "phone" else None,
+            email=value if kind == "email" else None,
+            exclude_appointment_id=exclude_appointment_id,
+            limit=limit,
+        )
+        if upcoming >= limit:
+            return kind
+    return None
+
+
 def get_contact_booking_limit(
     phone, email, business_id, limit=None, connection=None, exclude_appointment_id=None
 ):
@@ -326,19 +353,16 @@ def get_contact_booking_limit(
     if owns_connection:
         connection = get_connection()
     try:
-        for kind, value in (("phone", normalized_phone), ("email", normalized_email)):
-            if not value:
-                continue
-            upcoming = _upcoming_confirmed_count(
-                connection,
-                business_id,
-                phone=value if kind == "phone" else None,
-                email=value if kind == "email" else None,
-                exclude_appointment_id=exclude_appointment_id,
-                limit=limit,
-            )
-            if upcoming >= limit:
-                return kind
+        exceeded = _check_contact_limit_exceeded(
+            connection,
+            business_id,
+            normalized_phone,
+            normalized_email,
+            exclude_appointment_id,
+            limit,
+        )
+        if exceeded:
+            return exceeded
     finally:
         if owns_connection:
             connection.close()
@@ -392,20 +416,9 @@ def enforce_contact_booking_limit(
     if limit <= 0 or business_id is None:
         return None
 
-    for kind, value in (("phone", phone), ("email", email)):
-        if not value:
-            continue
-        upcoming = _upcoming_confirmed_count(
-            connection,
-            business_id,
-            phone=value if kind == "phone" else None,
-            email=value if kind == "email" else None,
-            exclude_appointment_id=exclude_appointment_id,
-            limit=limit,
-        )
-        if upcoming >= limit:
-            return kind
-    return None
+    return _check_contact_limit_exceeded(
+        connection, business_id, phone, email, exclude_appointment_id, limit
+    )
 
 
 # ============================================================

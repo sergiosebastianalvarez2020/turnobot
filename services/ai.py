@@ -43,6 +43,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 logger = logging.getLogger("el_corte")
 
+# Mensaje unificado para el error contact_limit (usado por reservar y reprogramar).
+_CONTACT_LIMIT_MESSAGE = (
+    "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
+    "Cancelá una reserva existente o contactá al negocio para seguir reservando."
+)
+
 
 # ============================================================
 # CONFIGURACIÓN
@@ -913,11 +919,7 @@ def _execute_reservar_turno(arguments, business_id, session_id=None):
                 return {
                     "success": False,
                     "reason": "contact_limit",
-                    "message": (
-                        "Alcanzaste el máximo de reservas activas con estos datos de "
-                        "contacto. Cancelá una reserva existente o contactá al negocio "
-                        "para seguir reservando."
-                    ),
+                    "message": _CONTACT_LIMIT_MESSAGE,
                 }
             return {
                 "success": False,
@@ -1108,14 +1110,7 @@ def _execute_reprogramar_turno(arguments, business_id, session_id=None):
             }
 
         if reason == "contact_limit":
-            return {
-                "success": False,
-                "reason": "contact_limit",
-                "message": (
-                    "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
-                    "Cancelá una reserva existente o contactá al negocio para seguir reservando."
-                ),
-            }
+            return {"success": False, "reason": "contact_limit", "message": _CONTACT_LIMIT_MESSAGE}
 
         return {"success": False, "message": ("No se pudo reprogramar el turno.")}
 

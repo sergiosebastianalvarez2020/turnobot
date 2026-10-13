@@ -21,12 +21,8 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request
 
-from application.requests import (
-    check_form_timing,
-    contact_limit_response,
-    is_honeypot_triggered,
-    register_form_render,
-)
+from application.requests import contact_limit_response, register_form_render
+from routes.booking_abuse import enforce_public_booking_abuse_checks
 
 
 def index():
@@ -283,11 +279,7 @@ def business_reservar_wizard_confirmar(slug):
 
         # Reutilizar la lógica de reserva existente
         from database.database import get_active_services_scoped
-        from services.appointments import (
-            create_appointment,
-            get_contact_booking_limit,
-            validate_email,
-        )
+        from services.appointments import create_appointment, validate_email
         from services.notifications import (
             notifications_enabled,
             send_business_confirmation_email,
@@ -325,41 +317,9 @@ def business_reservar_wizard_confirmar(slug):
         # Se evalúa ANTES de tocar la base y de crear la reserva: una solicitud
         # bloqueada nunca llega a insertar un turno.
         # ----------------------------------------------------
-
-        # 1) Honeypot: campo oculto de nombre aleatorio completado por un bot.
-        if is_honeypot_triggered(data):
-            return jsonify(
-                {
-                    "success": False,
-                    "code": "HONEYPOT_TRIGGERED",
-                    "error": "No se pudo procesar la solicitud.",
-                }
-            ), 400
-
-        # 2) Tiempo mínimo de llenado (timestamp renderizado por el servidor).
-        form_ok, _form_reason = check_form_timing(data)
-        if not form_ok:
-            return jsonify(
-                {
-                    "success": False,
-                    "code": "FORM_TOO_FAST",
-                    "error": "Revisá los datos con calma y volvé a enviar el formulario.",
-                }
-            ), 400
-
-        # 3) Cupo de turnos activos por contacto (teléfono/email), medido sobre
-        #    la propia base: coherente entre workers y sin estado en memoria.
-        contact_limit = get_contact_booking_limit(telefono, email, business_id)
-        if contact_limit is not None:
-            return jsonify(
-                {
-                    "success": False,
-                    "code": "CONTACT_LIMIT",
-                    "reason": contact_limit,
-                    "error": "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
-                    "Cancelá o consultá tus turnos para poder reservar de nuevo.",
-                }
-            ), 429
+        abuse_check = enforce_public_booking_abuse_checks(data, telefono, email, business_id)
+        if abuse_check is not None:
+            return abuse_check
 
         # Validar servicio
         allowed_services = (
