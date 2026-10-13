@@ -835,7 +835,8 @@ class TestFalloDeBackendNoDesactivaLaProteccion(_CasoFuncional):
         fecha, slots = self._primer_dia_abierto()
 
         with unittest.mock.patch(
-            "routes.public_api.get_contact_booking_limit", side_effect=RuntimeError("backend caído")
+            "routes.booking_abuse.get_contact_booking_limit",
+            side_effect=RuntimeError("backend caído"),
         ):
             with self.client as client:
                 response = self._reservar_api(
@@ -858,7 +859,7 @@ class TestFalloDeBackendNoDesactivaLaProteccion(_CasoFuncional):
             csrf, honeypot_field, _rendered_at = self._abrir_paso3(client, fecha, slots[0])
             rendered_at = self._envejecer_formulario(client, segundos=30)
             with unittest.mock.patch(
-                "services.appointments.get_contact_booking_limit",
+                "routes.booking_abuse.get_contact_booking_limit",
                 side_effect=RuntimeError("backend caído"),
             ):
                 response = client.post(
@@ -1313,7 +1314,7 @@ class TestCupoConcurrenciaAPI(_CasoFuncional):
             )
 
         with unittest.mock.patch(
-            "routes.public_api.get_contact_booking_limit", side_effect=precheck_sincronizado
+            "routes.booking_abuse.get_contact_booking_limit", side_effect=precheck_sincronizado
         ):
             with ThreadPoolExecutor(max_workers=total) as pool:
                 futuros = [pool.submit(worker, fecha, hora) for fecha, hora in plan]
