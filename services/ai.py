@@ -875,6 +875,17 @@ def _execute_consultar_disponibilidad(arguments, business_id, session_id=None):
         return {"success": False, "error": "No se pudo consultar la disponibilidad."}
 
 
+def _reserva_error_response(resultado):
+    reason = resultado.get("reason")
+    if reason == "contact_limit":
+        return {"success": False, "reason": "contact_limit", "message": _CONTACT_LIMIT_MESSAGE}
+    return {
+        "success": False,
+        "reason": reason,
+        "message": "No se pudo reservar el turno solicitado.",
+    }
+
+
 def _execute_reservar_turno(arguments, business_id, session_id=None):
     try:
         active_services_a = get_active_services_scoped(business_id)
@@ -914,18 +925,7 @@ def _execute_reservar_turno(arguments, business_id, session_id=None):
         )
 
         if not resultado.get("success"):
-            reason = resultado.get("reason")
-            if reason == "contact_limit":
-                return {
-                    "success": False,
-                    "reason": "contact_limit",
-                    "message": _CONTACT_LIMIT_MESSAGE,
-                }
-            return {
-                "success": False,
-                "reason": reason,
-                "message": "No se pudo reservar el turno solicitado.",
-            }
+            return _reserva_error_response(resultado)
 
         try:
             dispatch_booking_emails(

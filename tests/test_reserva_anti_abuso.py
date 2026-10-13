@@ -270,9 +270,14 @@ class TestHoneypot(_CasoFuncional):
             r'<input type="hidden" name="' + re.escape(nombres[0]) + r'"[^>]*>', primera.text
         )
         self.assertIsNotNone(honeypot_input)
-        self.assertIn('autocomplete="off"', honeypot_input.group(0))
-        self.assertIn('value=""', honeypot_input.group(0))
-        self.assertNotIn("required", honeypot_input.group(0))
+        campo = honeypot_input.group(0)
+        self.assertIn('type="hidden"', campo)
+        self.assertIn(f'name="{nombres[0]}"', campo)
+        self.assertIn('value=""', campo)
+        self.assertIn('tabindex="-1"', campo)
+        self.assertIn('aria-hidden="true"', campo)
+        self.assertNotIn("autocomplete", campo)
+        self.assertNotIn("required", campo)
 
     def test_api_sin_campo_honeypot_sigue_reservando(self):
         """Clientes programáticos que no renderizan el formulario no se afectan."""

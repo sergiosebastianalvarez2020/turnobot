@@ -324,19 +324,19 @@
         }
 
         const idempotencyInput = document.querySelector('input[name="idempotency_key"]');
-        if (idempotencyInput && idempotencyInput.value) {
+        if (idempotencyInput?.value) {
             payload.idempotency_key = idempotencyInput.value;
         }
 
         const renderedAtInput = document.querySelector('input[name="form_rendered_at"]');
-        if (renderedAtInput && renderedAtInput.value) {
+        if (renderedAtInput?.value) {
             payload.form_rendered_at = renderedAtInput.value;
         }
 
         // Honeypot anti-bots: se reenvía el campo con su nombre aleatorio.
         // Un humano nunca lo completa, por lo que debe viajar vacío.
         document.querySelectorAll('#bookingForm input[type="hidden"]').forEach(function(input) {
-            if (/^hp_/.test(input.name)) {
+            if (input.name.startsWith('hp_')) {
                 payload[input.name] = input.value || '';
             }
         });
