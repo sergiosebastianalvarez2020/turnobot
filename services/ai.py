@@ -43,6 +43,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 logger = logging.getLogger("el_corte")
 
+# Mensaje unificado para el error contact_limit (usado por reservar y reprogramar).
+_CONTACT_LIMIT_MESSAGE = (
+    "Alcanzaste el máximo de reservas activas con estos datos de contacto. "
+    "Cancelá una reserva existente o contactá al negocio para seguir reservando."
+)
+
 
 # ============================================================
 # CONFIGURACIÓN
@@ -869,6 +875,17 @@ def _execute_consultar_disponibilidad(arguments, business_id, session_id=None):
         return {"success": False, "error": "No se pudo consultar la disponibilidad."}
 
 
+def _reserva_error_response(resultado):
+    reason = resultado.get("reason")
+    if reason == "contact_limit":
+        return {"success": False, "reason": "contact_limit", "message": _CONTACT_LIMIT_MESSAGE}
+    return {
+        "success": False,
+        "reason": reason,
+        "message": "No se pudo reservar el turno solicitado.",
+    }
+
+
 def _execute_reservar_turno(arguments, business_id, session_id=None):
     try:
         active_services_a = get_active_services_scoped(business_id)
@@ -908,11 +925,7 @@ def _execute_reservar_turno(arguments, business_id, session_id=None):
         )
 
         if not resultado.get("success"):
-            return {
-                "success": False,
-                "reason": resultado.get("reason"),
-                "message": "No se pudo reservar el turno solicitado.",
-            }
+            return _reserva_error_response(resultado)
 
         try:
             dispatch_booking_emails(
@@ -1095,6 +1108,9 @@ def _execute_reprogramar_turno(arguments, business_id, session_id=None):
                     "Verificá tu nombre y teléfono e intentá nuevamente."
                 ),
             }
+
+        if reason == "contact_limit":
+            return {"success": False, "reason": "contact_limit", "message": _CONTACT_LIMIT_MESSAGE}
 
         return {"success": False, "message": ("No se pudo reprogramar el turno.")}
 

@@ -21,6 +21,9 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request
 
+from application.requests import contact_limit_response, register_form_render
+from routes.booking_abuse import enforce_public_booking_abuse_checks
+
 
 def index():
     """Landing page principal (fallback sin tenant)."""
@@ -192,6 +195,14 @@ def business_reservar_wizard_datos(slug):
             public_frontend_config=application.build_public_frontend_config(settings),
         )
 
+    # Honeypot: nombre de campo aleatorio por render para evitar detección fácil.
+    # El nombre viaja al cliente; el servidor solo mira que venga vacío.
+    honeypot_field = f"hp_{secrets.token_urlsafe(8)}"
+    # Timestamp de render registrado EN LA SESIÓN del servidor. El valor que
+    # reenvía el cliente se valida contra este registro (nunca se confía en el
+    # timestamp del cuerpo sin esta comprobación).
+    form_rendered_at = register_form_render()
+
     return render_template(
         "reservar_wizard.html",
         business=business,
@@ -207,6 +218,8 @@ def business_reservar_wizard_datos(slug):
         # lugar de 'occupied'. Mismo patron que el canje de fidelizacion
         # (routes/public_api.py genera la suya al renderizar gestionar_turno).
         idempotency_key=secrets.token_urlsafe(24),
+        honeypot_field=honeypot_field,
+        form_rendered_at=form_rendered_at,
         public_frontend_config=application.build_public_frontend_config(settings),
     )
 
@@ -298,6 +311,16 @@ def business_reservar_wizard_confirmar(slug):
         if email and not validate_email(email):
             return jsonify({"success": False, "error": "El email no es válido."}), 400
 
+        # ----------------------------------------------------
+        # PROTECCIÓN ANTI-ABUSO (Fase 1)
+        #
+        # Se evalúa ANTES de tocar la base y de crear la reserva: una solicitud
+        # bloqueada nunca llega a insertar un turno.
+        # ----------------------------------------------------
+        abuse_check = enforce_public_booking_abuse_checks(data, telefono, email, business_id)
+        if abuse_check is not None:
+            return abuse_check
+
         # Validar servicio
         allowed_services = (
             {row["name"] for row in get_active_services_scoped(business_id)}
@@ -349,6 +372,12 @@ def business_reservar_wizard_confirmar(slug):
 
         if not resultado.get("success"):
             reason = resultado.get("reason")
+
+            # El enforcement dentro de create_appointment es la garantía real:
+            # responde 429 con el mismo cuerpo que el chequeo anticipado.
+            if reason == "contact_limit":
+                return contact_limit_response(resultado.get("contact_limit_kind"))
+
             code_map = {
                 "past_date": ("past_date", "No podés reservar una fecha que ya pasó."),
                 "closed_day": ("closed_day", "Ese día estamos cerrados."),
@@ -440,6 +469,9 @@ def business_reservar_wizard_confirmar(slug):
     services = application.get_active_services_scoped(business_id) if business_id else []
     selected_service = next((s for s in services if s["name"] == servicio), None)
 
+    # El paso 4 también contiene el formulario (queda oculto en el DOM), así que
+    # se emiten honeypot + timestamp nuevos: una carga directa o un refresh de
+    # esta pantalla no deja al usuario con un formulario incompleto.
     return render_template(
         "reservar_wizard.html",
         business=business,
@@ -449,5 +481,7 @@ def business_reservar_wizard_confirmar(slug):
         selected_hora=hora,
         selected_resource_id=resource_id or None,
         step=4,
+        honeypot_field=f"hp_{secrets.token_urlsafe(8)}",
+        form_rendered_at=register_form_render(),
         public_frontend_config=application.build_public_frontend_config(settings),
     )

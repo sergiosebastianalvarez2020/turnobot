@@ -712,6 +712,11 @@ def admin_create_appointment_manual(slug=None):
         if not resource["active"]:
             return _error("No podés reservar un recurso inactivo.")
 
+    # El cupo de reservas por contacto es una defensa ANTI-ABUSO del flujo
+    # público. Acá no aplica: el operador ya está autorizado por membresía + CSRF
+    # y reserva EN NOMBRE de un cliente (incluida la reprogramación de series),
+    # de modo que frenarlo por un umbral anti-bot sería una regresión de la
+    # operatoria. El cupo sigue aplicándose en el wizard y en /api/reservar.
     res = create_appointment(
         customer_name=customer_name,
         phone=phone,
@@ -720,6 +725,7 @@ def admin_create_appointment_manual(slug=None):
         appointment_time=appointment_time,
         business_id=business_id,
         resource_id=resource_id,
+        enforce_contact_limit=False,
     )
     if not res.get("success"):
         reason = res.get("reason") or "No se pudo crear la reserva."

@@ -33,12 +33,14 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request, session
 
+from application.requests import contact_limit_response
 from database.database import (
     ensure_loyalty_settings_scoped,
     get_active_services_scoped,
     get_resource_scoped,
     get_resources_scoped,
 )
+from routes.booking_abuse import enforce_public_booking_abuse_checks
 from services import loyalty
 from services.appointments import (
     cancel_appointment,
@@ -589,6 +591,16 @@ def _create_public_appointment_response(business_id):
                 }
             ), 400
 
+        # ----------------------------------------------------
+        # PROTECCIÓN ANTI-ABUSO (Fase 1)
+        #
+        # Se evalúa ANTES de cualquier consulta a la base y de crear la
+        # reserva: una solicitud bloqueada nunca inserta un turno.
+        # ----------------------------------------------------
+        abuse_check = enforce_public_booking_abuse_checks(data, telefono, email, business_id)
+        if abuse_check is not None:
+            return abuse_check
+
         services = get_active_services_scoped(business_id) if business_id is not None else []
         allowed_services = {row["name"] for row in services}
 
@@ -640,6 +652,17 @@ def _create_public_appointment_response(business_id):
             resource_id=resource_id,
             idempotency_key=idempotency_key,
         )
+
+        # ----------------------------------------------------
+        # CUPO DE RESERVAS ACTIVAS POR CONTACTO (ENFORCEMENT)
+        #
+        # El chequeo de arriba es fail-fast: corre fuera de la transacción. Este
+        # es el resultado del recontaje atómico dentro de `create_appointment`,
+        # que es el que no puede eludirse con solicitudes simultáneas.
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "contact_limit":
+            return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
         # FECHA PASADA
@@ -1191,6 +1214,19 @@ def _get_public_reschedule_response(business_id):
             management_token,
             customer_name if customer_name else None,
         )
+
+        # ----------------------------------------------------
+        # CUPO DE RESERVAS ACTIVAS POR CONTACTO
+        #
+        # Mismo enforcement atómico que en la creación: el turno que se mueve se
+        # excluye del recontaje, así que reprogramar uno de los turnos que ya se
+        # tienen sigue permitido. Solo se rechaza cuando la jugada dejaría al
+        # contacto por encima del máximo (típicamente: mover una reserva vieja a
+        # una fecha futura estando ya al límite).
+        # ----------------------------------------------------
+
+        if resultado.get("reason") == "contact_limit":
+            return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
         # HORARIO OCUPADO

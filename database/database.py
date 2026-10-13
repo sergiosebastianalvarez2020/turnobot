@@ -88,6 +88,46 @@ def appointment_day_ordinal(appointment_date):
         return 0
 
 
+# Espacio de claves para los advisory locks POR CONTACTO (teléfono/email).
+#
+# Debe respetar DOS límites:
+#   1. Las funciones de advisory lock de 2 argumentos de PostgreSQL son
+#      `pg_advisory_xact_lock(int4, int4)`: psycopg3 infiere int4 cuando el valor
+#      entra en 31 bits con signo y bigint cuando no, y bigint no tiene promoción
+#      implícita a int4. Pasarse de 2^31-1 rompe el lock ("function ... does not
+#      exist").
+#   2. No debe solaparse con los ordinales de día (`appointment_day_ordinal`),
+#      que rondan los 10^6.
+# Por eso las claves viven en [2^30, 2^31): separadas de los días y dentro del
+# rango int4.
+_CONTACT_LOCK_NAMESPACE = 1 << 30
+_CONTACT_LOCK_MASK = (1 << 30) - 1
+
+
+def contact_lock_ordinal(contact_value):
+    """Clave determinística del advisory lock por (negocio, contacto).
+
+    Debe ser ESTABLE entre procesos y workers: por eso se deriva con BLAKE2b del
+    contacto ya normalizado y no con `hash()` de Python, que para `str` es
+    aleatorio por proceso (PYTHONHASHSEED) y haría que cada worker serializara
+    sobre claves distintas.
+
+    Devuelve 0 si el contacto está vacío (el llamador no debe tomar el lock), y
+    nunca registra ni guarda el valor recibido.
+
+    El espacio efectivo son 30 bits: una colisión entre dos contactos solo
+    agrega serialización de más (nunca permite pasarse del cupo), así que a la
+    escala de contactos de un negocio es irrelevante.
+    """
+    if contact_value is None:
+        return 0
+    text = str(contact_value).strip()
+    if not text:
+        return 0
+    digest = hashlib.blake2b(text.encode("utf-8"), digest_size=4).digest()
+    return _CONTACT_LOCK_NAMESPACE | (int.from_bytes(digest, "big") & _CONTACT_LOCK_MASK)
+
+
 def acquire_business_write_lock(connection, business_id, lock_key=0):
     """Serializa escrituras por negocio+clave cuando el backend es PostgreSQL.
 
