@@ -1191,14 +1191,25 @@ class TestCupoConcurrenciaSqlite(unittest.TestCase):
         maximo = appointments.MAX_ACTIVE_BOOKINGS_PER_CONTACT
         total = maximo + 3
 
-        fecha = (datetime.now(ZoneInfo(appointments.DEFAULT_TIMEZONE)) + timedelta(days=3)).date()
-
-        # Franjas REALES de la grilla: evita que algún hilo falle por franja
-        # inválida en lugar de por cupo (que era un falso negativo del test).
-        todos = appointments.get_available_slots(fecha.isoformat(), negocio, service="Corte")
-        self.assertGreaterEqual(
-            len(todos), total, "El día de prueba necesita más franjas que la ráfaga."
-        )
+        # Fecha determinista: el primer día futuro (no domingo, que está
+        # cerrado en la grilla sembrada) cuya grilla REAL tenga al menos
+        # `total` franjas. Fijar `hoy + 3` asumía un día con 8+ franjas y
+        # fallaba los miércoles (cae en sábado, solo turno mañana).
+        hoy = datetime.now(ZoneInfo(appointments.DEFAULT_TIMEZONE)).date()
+        fecha = None
+        todos = []
+        for offset in range(1, 22):
+            candidato = hoy + timedelta(days=offset)
+            if candidato.weekday() == 6:
+                continue
+            franjas = appointments.get_available_slots(
+                candidato.isoformat(), negocio, service="Corte"
+            )
+            if len(franjas) >= total:
+                fecha = candidato
+                todos = franjas
+                break
+        self.assertIsNotNone(fecha, "No se encontró un día futuro con franjas suficientes.")
         horarios = todos[:total]
 
         barrera = threading.Barrier(total, timeout=30)
