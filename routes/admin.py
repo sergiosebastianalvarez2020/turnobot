@@ -43,11 +43,12 @@ from database.database import (
 )
 from extensions import valid_csrf_token
 from routes.auth import _is_authenticated, _login_url, get_current_business_id
-from services import loyalty, memberships, product
+from services import loyalty, memberships, metrics, product
 from services.appointments import (
     create_appointment,
     get_appointment_counts,
     get_appointments,
+    get_business_timezone,
     reschedule_appointment_admin,
 )
 from services.conversations import (
@@ -198,6 +199,14 @@ def _conversaciones_url(**kwargs):
     if business is not None and business.get("id") != 1:
         return url_for("admin_conversaciones_slug", slug=business["slug"], **kwargs)
     return url_for("admin_conversaciones", **kwargs)
+
+
+def _metricas_url(**kwargs):
+    """URL del panel de métricas, con/sin prefijo de slug."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for("admin_metricas", slug=business["slug"], **kwargs)
+    return url_for("admin_metricas", **kwargs)
 
 
 def _human_appointment_error(reason):
@@ -1270,6 +1279,62 @@ def admin_conversaciones_estado(session_id, slug=None):
         )
 
     return redirect(_conversaciones_url(conversaciones_message="Estado actualizado correctamente."))
+
+
+# ============================================================
+# MÉTRICAS
+# ============================================================
+
+
+def _render_metricas():
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    business_name, business_initials = _business_identity(business_id)
+    tz_name = get_business_timezone(business_id)
+
+    period = request.args.get("period", "last7")
+    start_raw = request.args.get("start_date", "")
+    end_raw = request.args.get("end_date", "")
+    resolved = metrics.resolve_period(period, start_raw, end_raw, tz_name=tz_name)
+    filter_error = resolved.get("error")
+    if filter_error:
+        resolved = metrics.resolve_period("last7", tz_name=tz_name)
+
+    data = metrics.get_metrics(
+        business_id,
+        resolved["start"],
+        resolved["end"],
+        resolved["prev_start"],
+        resolved["prev_end"],
+    )
+    return render_template(
+        "admin_metricas.html",
+        business_name=business_name,
+        business_initials=business_initials,
+        metrics=data,
+        period=resolved["period"],
+        start_date=resolved["start"].isoformat(),
+        end_date=resolved["end"].isoformat(),
+        prev_start=resolved["prev_start"].isoformat(),
+        prev_end=resolved["prev_end"].isoformat(),
+        days=resolved["days"],
+        filter_error=filter_error or "",
+        filter_start_raw=start_raw,
+        filter_end_raw=end_raw,
+    )
+
+
+def admin_metricas(slug=None):
+    if slug is not None:
+        business = g.current_business
+        if business is None or business.get("slug") != slug:
+            abort(404)
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    return _render_metricas()
 
 
 # ============================================================

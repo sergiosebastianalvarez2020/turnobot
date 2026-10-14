@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{{ business_name }} - Métricas</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='admin.css') }}">
+
+</head>
+
+
+<body>
+
+    <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+    <div class="admin-container">
+
+
+        <!-- =====================================================
+             SIDEBAR
+             ===================================================== -->
+
+        <aside class="sidebar" id="sidebar">
+
+            <div class="brand">
+
+                <div class="brand-logo">
+                    {{ business_initials }}
+                </div>
+
+                <div>
+                    <h1>{{ business_name }}</h1>
+                    <span>Administración</span>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <a href="{{ admin_prefix or '' }}/admin" class="nav-item">
+                    <span aria-hidden="true">📅</span>
+                    Turnos
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/metricas" class="nav-item active">
+                    <span aria-hidden="true">📈</span>
+                    Métricas
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/recursos" class="nav-item">
+                    <span aria-hidden="true">🏟️</span>
+                    Recursos
+                </a>
+
+                {% if can_manage_memberships %}
+                <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
+                    <span aria-hidden="true">👥</span>
+                    Usuarios
+                </a>
+                {% endif %}
+
+                <a href="{{ admin_prefix or '' }}/admin/fidelizacion" class="nav-item">
+                    <span aria-hidden="true">⭐</span>
+                    Fidelización
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conocimiento" class="nav-item">
+                    <span aria-hidden="true">📚</span>
+                    Conocimiento
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/conversaciones" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Conversaciones
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/admin/inteligencia" class="nav-item">
+                    <span aria-hidden="true">📊</span>
+                    Inteligencia
+                </a>
+
+                <a href="{{ admin_prefix or '' }}/" class="nav-item">
+                    <span aria-hidden="true">💬</span>
+                    Recepcionista
+                </a>
+
+                <form method="POST" action="{{ admin_prefix or '' }}/logout" class="nav-item-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="nav-item">
+                    <span aria-hidden="true">🚪</span>
+                    Cerrar sesión
+                    </button>
+                </form>
+
+            </nav>
+
+
+            <div class="sidebar-footer">
+
+                <div class="status-dot"></div>
+
+                Sistema online
+
+            </div>
+
+        </aside>
+
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+
+        <!-- =====================================================
+             CONTENIDO PRINCIPAL
+             ===================================================== -->
+
+        <main class="main-content" id="main-content">
+
+
+            <!-- HEADER -->
+
+            <header class="topbar">
+
+                <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+                    <span class="hamburger" aria-hidden="true"></span>
+                </button>
+
+                <div>
+
+                    <h2>Métricas</h2>
+
+                    <p>
+                        Demanda, clientes, chat y fidelización del
+                        {{ start_date }} al {{ end_date }} ({{ days }}
+                        {% if days == 1 %}día{% else %}días{% endif %}).
+                        Comparado con {{ prev_start }} al {{ prev_end }}.
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            {% if filter_error %}
+            <div class="settings-feedback settings-error" role="alert">{{ filter_error }}</div>
+            {% endif %}
+
+
+            {% if metrics.summary.total == 0 and metrics.chat.messages_total == 0 %}
+            <div class="settings-card" role="status">
+                <p class="empty-services">Todavía no hay turnos ni actividad de chat en este período. Probá con un rango más amplio.</p>
+            </div>
+            {% endif %}
+
+
+            <!-- =====================================================
+                 FILTROS
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Filtros de fecha">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Período</h3>
+                    </div>
+                </div>
+
+                <form method="GET" action="{{ admin_prefix or '' }}/admin/metricas" class="metrics-filters">
+                    <label>
+                        Período
+                        <select name="period">
+                            <option value="today" {% if period == 'today' %}selected{% endif %}>Hoy</option>
+                            <option value="last7" {% if period == 'last7' %}selected{% endif %}>Últimos 7 días</option>
+                            <option value="last30" {% if period == 'last30' %}selected{% endif %}>Últimos 30 días</option>
+                            <option value="month" {% if period == 'month' %}selected{% endif %}>Mes actual</option>
+                            <option value="custom" {% if period == 'custom' %}selected{% endif %}>Personalizado</option>
+                        </select>
+                    </label>
+                    <label>
+                        Desde
+                        <input type="date" name="start_date" value="{% if period == 'custom' %}{{ filter_start_raw }}{% else %}{{ start_date }}{% endif %}">
+                    </label>
+                    <label>
+                        Hasta
+                        <input type="date" name="end_date" value="{% if period == 'custom' %}{{ filter_end_raw }}{% else %}{{ end_date }}{% endif %}">
+                    </label>
+                    <button type="submit" class="conv-btn conv-btn-primary">Aplicar</button>
+                </form>
+
+            </section>
+
+
+            <!-- =====================================================
+                 RESUMEN OPERATIVO
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Resumen operativo">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Resumen operativo</h3>
+                    </div>
+                </div>
+
+                <div class="stats metrics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.total }}</div>
+                        <div class="stat-label">Turnos totales</div>
+                        <div class="stat-delta">{{ '+' if metrics.variations.total.diff > 0 else '' }}{{ metrics.variations.total.diff }} vs. período anterior{% if metrics.variations.total.pct is not none %} ({{ metrics.variations.total.pct }}&nbsp;%){% else %} (sin base de comparación){% endif %}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.by_status.confirmed }}</div>
+                        <div class="stat-label">Confirmados</div>
+                        <div class="stat-delta">{{ '+' if metrics.variations.confirmed.diff > 0 else '' }}{{ metrics.variations.confirmed.diff }} vs. anterior{% if metrics.variations.confirmed.pct is not none %} ({{ metrics.variations.confirmed.pct }}&nbsp;%){% else %} (sin base){% endif %}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.by_status.completed }}</div>
+                        <div class="stat-label">Completados</div>
+                        <div class="stat-delta">{{ '+' if metrics.variations.completed.diff > 0 else '' }}{{ metrics.variations.completed.diff }} vs. anterior{% if metrics.variations.completed.pct is not none %} ({{ metrics.variations.completed.pct }}&nbsp;%){% else %} (sin base){% endif %}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.by_status.cancelled }}</div>
+                        <div class="stat-label">Cancelados</div>
+                        <div class="stat-delta">{{ '+' if metrics.variations.cancelled.diff > 0 else '' }}{{ metrics.variations.cancelled.diff }} vs. anterior{% if metrics.variations.cancelled.pct is not none %} ({{ metrics.variations.cancelled.pct }}&nbsp;%){% else %} (sin base){% endif %}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.by_status.no_show }}</div>
+                        <div class="stat-label">Ausencias</div>
+                        <div class="stat-delta">{{ '+' if metrics.variations.no_show.diff > 0 else '' }}{{ metrics.variations.no_show.diff }} vs. anterior{% if metrics.variations.no_show.pct is not none %} ({{ metrics.variations.no_show.pct }}&nbsp;%){% else %} (sin base){% endif %}</div>
+                    </div>
+                    {% if metrics.summary.unknown %}
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.summary.unknown }}</div>
+                        <div class="stat-label">Otros estados históricos</div>
+                        <div class="stat-delta">Se cuentan en el total sin clasificar</div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <ul class="metrics-rates">
+                    <li>
+                        Tasa de cancelación:
+                        {% if metrics.summary.cancel_rate is not none %}
+                        <strong>{{ metrics.summary.cancel_rate }}&nbsp;%</strong>
+                        <span class="text-muted">(cancelados / total)</span>
+                        {% else %}
+                        <span class="text-muted">sin turnos en el período</span>
+                        {% endif %}
+                    </li>
+                    <li>
+                        Tasa de ausencia:
+                        {% if metrics.summary.absence_rate is not none %}
+                        <strong>{{ metrics.summary.absence_rate }}&nbsp;%</strong>
+                        <span class="text-muted">(ausencias / completados + ausencias)</span>
+                        {% else %}
+                        <span class="text-muted">sin turnos completados ni ausencias</span>
+                        {% endif %}
+                    </li>
+                </ul>
+
+            </section>
+
+
+            <!-- =====================================================
+                 SERVICIOS MÁS RESERVADOS
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Servicios más reservados">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Servicios más reservados</h3>
+                        <p class="text-muted">Turnos confirmados y completados del período.</p>
+                    </div>
+                </div>
+
+                {% if metrics.services %}
+                {% set smax = metrics.services | map(attribute='count') | max %}
+                <ol class="metrics-bars">
+                    {% for item in metrics.services %}
+                    <li>
+                        <span class="metrics-bar-label">{{ item.service }} ({{ item.count }})</span>
+                        <span class="metrics-bar" role="img" aria-label="{{ item.service }}: {{ item.count }} turnos"><span class="metrics-bar-fill w{{ ((item.count * 100 // smax) // 10) * 10 }}"></span></span>
+                    </li>
+                    {% endfor %}
+                </ol>
+                {% else %}
+                <p class="empty-services">Sin turnos confirmados ni completados en el período.</p>
+                {% endif %}
+
+            </section>
+
+
+            <!-- =====================================================
+                 DEMANDA POR DÍA Y HORARIO
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Demanda por día y horario">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Demanda por día y horario</h3>
+                        <p class="text-muted">Demanda efectiva (turnos confirmados y completados). No es ocupación.</p>
+                    </div>
+                </div>
+
+                {% if metrics.demand.by_hour %}
+                {% if metrics.demand.peak %}
+                <p>Pico de demanda: <strong>{{ metrics.demand.peak.weekday_name }} {{ metrics.demand.peak.hour }}</strong> con {{ metrics.demand.peak.count }} turnos.</p>
+                {% endif %}
+
+                {% set dmax = metrics.demand.by_weekday | map(attribute='count') | max %}
+                <h4>Por día de semana</h4>
+                <ol class="metrics-bars">
+                    {% for item in metrics.demand.by_weekday %}
+                    <li>
+                        <span class="metrics-bar-label">{{ item.name }} ({{ item.count }})</span>
+                        <span class="metrics-bar" role="img" aria-label="{{ item.name }}: {{ item.count }} turnos"><span class="metrics-bar-fill w{{ ((item.count * 100 // dmax) // 10) * 10 if dmax else 0 }}"></span></span>
+                    </li>
+                    {% endfor %}
+                </ol>
+
+                {% set hmax = metrics.demand.by_hour | map(attribute='count') | max %}
+                <h4>Por hora de inicio</h4>
+                <ol class="metrics-bars">
+                    {% for item in metrics.demand.by_hour %}
+                    <li>
+                        <span class="metrics-bar-label">{{ item.hour }} ({{ item.count }})</span>
+                        <span class="metrics-bar" role="img" aria-label="{{ item.hour }}: {{ item.count }} turnos"><span class="metrics-bar-fill w{{ ((item.count * 100 // hmax) // 10) * 10 if hmax else 0 }}"></span></span>
+                    </li>
+                    {% endfor %}
+                </ol>
+
+                <h4>Mapa de calor día × hora</h4>
+                <div class="table-container">
+                    <table class="metrics-heatmap">
+                        <thead>
+                            <tr>
+                                <th scope="col">Día</th>
+                                {% for item in metrics.demand.by_hour %}
+                                <th scope="col">{{ item.hour }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for day in metrics.demand.by_weekday %}
+                            <tr>
+                                <th scope="row">{{ day.name }}</th>
+                                {% for item in metrics.demand.by_hour %}
+                                {% set cell = metrics.demand.cells | selectattr('weekday', 'equalto', day.weekday) | selectattr('hour', 'equalto', item.hour) | list %}
+                                {% set n = cell[0].count if cell else 0 %}
+                                {% set level = (n * 4 // metrics.demand.peak.count) if metrics.demand.peak else 0 %}
+                                <td class="heat-{{ level }}">{{ n }}</td>
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="empty-services">Sin demanda registrada en el período.</p>
+                {% endif %}
+
+            </section>
+
+
+            <!-- =====================================================
+                 CLIENTES Y RECURRENCIA
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Clientes y recurrencia">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Clientes y recurrencia</h3>
+                        <p class="text-muted">Sobre turnos completados con teléfono identificable. Los turnos sin teléfono no se cuentan.</p>
+                    </div>
+                </div>
+
+                <div class="stats metrics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.clients.unique_completed }}</div>
+                        <div class="stat-label">Clientes únicos</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.clients.new }}</div>
+                        <div class="stat-label">Nuevos</div>
+                        <div class="stat-delta">Primer turno completado en el período</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.clients.recurrent }}</div>
+                        <div class="stat-label">Recurrentes</div>
+                        <div class="stat-delta">Con completados anteriores al período</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.clients.inactive_count }}</div>
+                        <div class="stat-label">Inactivos</div>
+                        <div class="stat-delta">2+ completados y 60+ días sin volver</div>
+                    </div>
+                </div>
+
+                {% if metrics.clients.inactive_sample %}
+                <h4>Clientes inactivos recientes</h4>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Cliente</th>
+                                <th scope="col">Teléfono</th>
+                                <th scope="col">Último turno</th>
+                                <th scope="col">Completados</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in metrics.clients.inactive_sample %}
+                            <tr>
+                                <td>{{ item.name or '—' }}</td>
+                                <td>{{ item.phone }}</td>
+                                <td>{{ item.last_date }}</td>
+                                <td>{{ item.completed }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+
+            </section>
+
+
+            <!-- =====================================================
+                 CHAT E INTELIGENCIA ARTIFICIAL
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Chat e inteligencia artificial">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Chat e inteligencia artificial</h3>
+                        <p class="text-muted">Actividad real del período. Una sesión sin derivación no se considera resuelta.</p>
+                    </div>
+                </div>
+
+                <div class="stats metrics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.chat.active_sessions }}</div>
+                        <div class="stat-label">Sesiones activas</div>
+                        <div class="stat-delta">Con mensajes en el período</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.chat.new_sessions }}</div>
+                        <div class="stat-label">Sesiones nuevas</div>
+                        <div class="stat-delta">Creadas en el período</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.chat.messages_total }}</div>
+                        <div class="stat-label">Mensajes</div>
+                        <div class="stat-delta">
+                            {% if metrics.chat.messages_by_role %}
+                            {% for role, count in metrics.chat.messages_by_role.items() %}{{ role }}: {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}
+                            {% else %}
+                            Sin mensajes
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.chat.handoffs }}</div>
+                        <div class="stat-label">Derivaciones a humano</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.chat.human_resolved }}</div>
+                        <div class="stat-label">Resueltas por humano</div>
+                        <div class="stat-delta">
+                            {% if metrics.chat.avg_resolution_seconds is not none %}
+                            Tiempo medio: {{ (metrics.chat.avg_resolution_seconds // 60) | int }} min
+                            {% else %}
+                            Sin datos de resolución
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+
+            <!-- =====================================================
+                 FIDELIZACIÓN
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Fidelización">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Fidelización</h3>
+                        <p class="text-muted">Puntos otorgados y canjes del período. El saldo actual no representa lo ganado en el período.</p>
+                    </div>
+                </div>
+
+                <div class="stats metrics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.loyalty.points_earned }}</div>
+                        <div class="stat-label">Puntos otorgados</div>
+                        <div class="stat-delta">{{ metrics.loyalty.earn_events }} acreditaciones</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.loyalty.redemptions }}</div>
+                        <div class="stat-label">Canjes</div>
+                        <div class="stat-delta">{{ metrics.loyalty.points_redeemed }} puntos canjeados</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.loyalty.accounts }}</div>
+                        <div class="stat-label">Cuentas de fidelización</div>
+                    </div>
+                    {% if metrics.loyalty.retention_actions %}
+                    <div class="stat-card">
+                        <div class="stat-value">{{ metrics.loyalty.retention_actions.values() | sum }}</div>
+                        <div class="stat-label">Acciones de retención</div>
+                        <div class="stat-delta">
+                            {% for kind, count in metrics.loyalty.retention_actions.items() %}{{ kind }}: {{ count }}{% if not loop.last %} · {% endif %}{% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+            </section>
+
+
+            <!-- =====================================================
+                 NOTA METODOLÓGICA
+                 ===================================================== -->
+
+            <section class="settings-card" aria-label="Nota metodológica">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Cómo se calculan</h3>
+                    </div>
+                </div>
+
+                <ul class="metrics-notes">
+                    <li>Los turnos se agrupan por fecha local de la cita en la zona horaria del negocio.</li>
+                    <li>La comparación es contra los {{ days }} días inmediatos anteriores, sin solapamiento.</li>
+                    <li>No se muestran importes ni ocupación: el modelo no permite calcularlos con rigor.</li>
+                    {% for note in metrics.omitted %}
+                    <li>{{ note }}</li>
+                    {% endfor %}
+                </ul>
+
+            </section>
+
+
+        </main>
+
+    </div>
+
+
+    <script>
+        // Sidebar toggle
+        (function() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('sidebar-toggle');
+            var overlay = document.getElementById('sidebar-overlay');
+
+            if (!sidebar || !toggleBtn || !overlay) return;
+
+            function openSidebar() {
+                sidebar.classList.add('sidebar-open');
+                overlay.classList.add('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Cerrar menú');
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeSidebar() {
+                sidebar.classList.remove('sidebar-open');
+                overlay.classList.remove('overlay-visible');
+                toggleBtn.setAttribute('aria-label', 'Abrir menú');
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.body.style.overflow = '';
+            }
+
+            function toggleSidebar() {
+                if (sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                } else {
+                    openSidebar();
+                }
+            }
+
+            toggleBtn.addEventListener('click', toggleSidebar);
+            overlay.addEventListener('click', closeSidebar);
+
+            var navItems = sidebar.querySelectorAll('.nav-item');
+            navItems.forEach(function(item) {
+                item.addEventListener('click', function() {
+                    if (window.innerWidth <= 850) {
+                        closeSidebar();
+                    }
+                });
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && sidebar.classList.contains('sidebar-open')) {
+                    closeSidebar();
+                }
+            });
+        })();
+
+    </script>
+</body>
+
+</html>

@@ -2,7 +2,8 @@
 
 Cubren los contratos arquitectónicos introducidos por create_app():
     C1 - instancia funcional, reutilizable y bien conectada a root_path/templates/static
-    C2 - registro central de rutas: 114 rules / 82 endpoints + endpoints canónicos
+    C2 - registro central de rutas: 116 rules / 83 endpoints + endpoints
+                                       canónicos
     C3 - hooks (before_request / after_request), context processors y CSRF
     C4 - security headers inyectados por add_security_headers
     C5 - configuración por defecto/desarrollo
@@ -99,8 +100,8 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         rules = list(new_app.url_map.iter_rules())
         endpoints = {rule.endpoint for rule in rules}
 
-        self.assertEqual(len(rules), 114)
-        self.assertEqual(len(endpoints), 82)
+        self.assertEqual(len(rules), 116)
+        self.assertEqual(len(endpoints), 83)
 
         for endpoint in (
             "health",
@@ -114,6 +115,7 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
             "registro",
             "admin",
             "admin_slug",
+            "admin_metricas",
             "superadmin_panel",
             "api_reservar",
             "public_manage_turno",

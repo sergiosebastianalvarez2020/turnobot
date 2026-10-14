@@ -22,6 +22,7 @@ from routes.admin import (
     admin_fidelizacion_recalcular,
     admin_inteligencia,
     admin_inteligencia_oportunidades,
+    admin_metricas,
     admin_recompensa_estado,
     admin_recompensas,
     admin_recursos,
@@ -409,6 +410,17 @@ def register(app):
         endpoint="admin_conversaciones_estado",
         view_func=admin_conversaciones_estado,
         methods=["POST"],
+    )
+
+    # Admin metricas
+    app.add_url_rule(
+        "/admin/metricas", endpoint="admin_metricas", view_func=admin_metricas, methods=["GET"]
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/metricas",
+        endpoint="admin_metricas",
+        view_func=admin_metricas,
+        methods=["GET"],
     )
 
     # Admin inteligencia
