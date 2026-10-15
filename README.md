@@ -4,6 +4,8 @@ Multi-tenant appointment booking application with AI-powered chat, built on Flas
 
 [![CI](https://github.com/sergiosebastianalvarez2020/turnobot/actions/workflows/tests.yml/badge.svg)](https://github.com/sergiosebastianalvarez2020/turnobot/actions/workflows/tests.yml)
 
+> **Estado:** este README describe `main`. Producción OCI puede correr un commit anterior; ver [Despliegue](#despliegue).
+
 ---
 
 ## Overview
@@ -15,25 +17,28 @@ TurnoGo is a Flask-based, multi-tenant appointment booking platform. Each busine
 - **Multi-tenant architecture** — Slug-based business isolation; all queries are scoped by `business_id`
 - **Landing page** — Branded public-facing page with services, hours, and booking CTA
 - **Reservation wizard** — 4-step visual booking flow (service → date → details → confirm)
+- **Anti-abuse contact limit** — Per-contact cap on active bookings, enforced inside the booking transaction
 - **AI chatbot** — Google Gemini integration (`/chat`) with 7 tools: availability lookup, resource info, booking, turn search, cancellation, rescheduling, and human escalation
 - **Conversation management** — Chat history, analytics, and human handoff escalation
 - **Admin panel** — Full business management: services, schedules, appointments, users/roles, loyalty, resources, knowledge base, conversation moderation, and AI analytics
-- **Loyalty & rewards** — Points earned per completed appointment, configurable rules, rewards catalog
+- **Metrics dashboard** — (`/admin/metricas`) Operational summary vs. previous period, top services, weekday/hour demand heatmap, new/recurrent/inactive clients, chat activity, and loyalty (no revenue or occupancy estimates)
+- **Loyalty & rewards** — Points earned per completed appointment, configurable rules, rewards catalog and redemptions
 - **Resource scheduling** — Bookable resources (e.g., individual barber chairs) with capacity management
 - **Knowledge base** — FAQ, instructions, and policies with full-text search (PostgreSQL `tsvector`/GIN in production; SQLite FTS5 fallback)
 - **Email notifications** — SMTP-based confirmation and reminder emails
-- **Security** — CSRF tokens, scrypt password hashing, SHA-256 session management, security headers, in-memory rate limiting
+- **Password recovery** — Token-based reset (`/forgot`, `/reset/<token>`)
+- **Security** — CSRF tokens, scrypt password hashing, SHA-256 session tokens, security headers (incl. CSP), in-memory rate limiting
 - **Health monitoring** — `/health` endpoint with database connectivity check
 
 ## Technology Stack
 
 | Layer | Technology |
 |---|---|
-| Language | Python 3.12 |
+| Language | Python 3.12 (CI matrix) |
 | Framework | Flask 3.1.3 |
 | AI | Google Gemini (`google-genai` 2.18.1) |
 | WSGI Server | Waitress 3.0.2 |
-| Database | PostgreSQL in OCI production; SQLite fallback remains for development/tests |
+| Database | PostgreSQL in OCI production (`psycopg` 3.2.5 + `psycopg-pool` 3.2.4); SQLite fallback remains for development/tests |
 | Templates | Jinja2 |
 | Rate Limiting | In-memory sliding window (shared `extensions.py` state) |
 | Authentication | scrypt password hashing, SHA-256 session tokens |
@@ -41,20 +46,9 @@ TurnoGo is a Flask-based, multi-tenant appointment booking platform. Each busine
 
 ### Dependencies
 
-**Runtime** (`requirements.txt`):
-```
-Flask==3.1.3
-python-dotenv==1.2.2
-google-genai==2.18.1
-waitress==3.0.2
-tzdata==2025.2
-```
+**Runtime** (`requirements.txt`): `Flask==3.1.3`, `python-dotenv==1.2.2`, `google-genai==2.18.1`, `waitress==3.0.2`, `tzdata==2025.2`, `psycopg[binary]==3.2.5`, `psycopg-pool==3.2.4`.
 
-**Development** (`requirements-dev.txt`):
-```
-pytest==9.1.1
-pytest-cov==7.1.0
-```
+**Development** (`requirements-dev.txt`): `pytest==9.1.1`, `pytest-cov==7.1.0`, `ruff==0.16.8`, `mypy==2.3.1`.
 
 ## Project Structure
 
@@ -63,38 +57,15 @@ turnobot/
 ├── app.py                          # Facade: creates Flask app instance
 ├── wsgi.py                         # WSGI entry point for Waitress
 ├── extensions.py                   # Rate limiting, CSRF, shared globals
-├── application/                    # Core (10 modules + __init__)
-│   ├── __init__.py                 # create_app() factory
-│   ├── config.py                   # Configuration + env validation
-│   ├── tenant.py                   # Multi-tenant context, business resolution
-│   ├── security.py                 # Error handlers, security headers
-│   ├── rate_limit.py               # Rate limiting wrappers
-│   ├── logging_config.py           # Structured JSON logging
-│   ├── platform.py                 # Platform/superadmin helpers
-│   ├── frontend.py                 # Frontend config contract
-│   ├── requests.py                 # Request parsing helpers
-│   ├── notifications.py           # App-level notification helpers
-│   └── session_crypto.py           # SHA-256 session token hashing
-├── routes/                         # 17 files: 8 route modules + 8 register
-│   ├── public.py                   # Landing, wizard
-│   ├── public_api.py               # Public REST API
-│   ├── auth.py                     # Login/logout
-│   ├── auth_public.py              # Public auth (forgot, register)
-│   ├── admin.py                    # Admin panel CRUD
-│   ├── superadmin.py               # Superadmin panel
-│   ├── invitation.py               # Invitation acceptance
-│   ├── health.py                   # Healthcheck
-│   └── register_*.py               # URL registration (blueprint-style)
-├── services/                       # 9 domain service modules
-│   ├── ai.py                       # Gemini chat with 7 tools
-│   ├── appointments.py             # Booking, cancellation, rescheduling
-│   ├── conversations.py            # Chat history, sessions, handoff
-│   ├── knowledge.py                # FAQ/knowledge base (RAG + FTS5)
-│   ├── notifications.py            # Email dispatch + reminders
-│   ├── loyalty.py                  # Points & rewards
-│   ├── memberships.py              # Member tiers
-│   ├── platform.py                 # Platform identity
-│   └── product.py                  # Onboarding state
+├── application/                    # Core (config, tenant, security, rate_limit,
+│   │                               # logging, platform, frontend, requests,
+│   │                               # notifications, session_crypto, json_provider,
+│   │                               # public_urls, + __init__ with create_app factory)
+├── routes/                         # Route modules (incl. admin, booking_abuse) +
+│                                   # register_*.py URL registration via add_url_rule
+├── services/                       # Domain services: ai, appointments, conversations,
+│                                   # knowledge, notifications, loyalty, memberships
+│                                   # (users/roles policy), metrics, platform, product
 ├── database/
 │   ├── database.py                 # PostgreSQL connection/init + SQLite fallback
 │   ├── pg_pool.py                  # PostgreSQL connection pool and compatibility layer
@@ -104,60 +75,52 @@ turnobot/
 ├── migrations/                     # Legacy SQLite schema migrations (001–023)
 ├── migrations_pg/                  # Versioned PostgreSQL schema migrations
 │   └── 001_initial_schema.sql      # Baseline (applied once, never edited retroactively)
-├── templates/                      # 22 Jinja2 templates
-├── static/                         # CSS & JavaScript assets
-├── scripts/                        # Operational scripts
-│   ├── run_production.ps1          # Production startup
-│   ├── check_health.py             # HTTP healthcheck
-│   ├── backup_postgresql.py        # PostgreSQL production backup
-│   ├── verify_backup_postgresql.py # PostgreSQL dump readability check
-│   ├── restore_postgresql.py       # Restore PostgreSQL dump to a target database
-│   ├── backup_database.py          # Legacy SQLite backup (online, WAL-safe)
-│   ├── verify_backup.py            # Legacy SQLite backup verification
-│   ├── restore_database.py         # Legacy SQLite restore
-│   ├── prune_backups.py            # Legacy SQLite backup rotation
-│   ├── send_reminders.py           # 24h appointment reminders
-│   ├── retry_failed_notifications.py
-│   ├── create_superadmin.py        # Superadmin bootstrap
-│   ├── provision_business.py       # Business provisioning
-│   ├── migrate_pg.py               # Apply pending PostgreSQL schema migrations
-│   └── notify_failure.py           # Failure alerting
-├── tests/                          # tests/ suite only: 82 test files, 1226 tests (global inventory in docs/TEST_SUITE_INVENTORY.md)
-├── .github/workflows/tests.yml     # CI: pytest on push/PR
+├── templates/                      # Jinja2 templates (incl. admin_metricas.html)
+├── static/                         # CSS & local JS served same-origin (no CDNs)
+├── scripts/                        # Operational scripts (see list below)
+├── tests/                          # General suite + tests_pg/ (PostgreSQL live)
+├── .github/workflows/tests.yml     # CI: pytest on push/PR to main (Python 3.12, PostgreSQL 16)
 ├── pyproject.toml                  # pytest + coverage config
-└── DEPLOYMENT.md                   # Deployment & ops guide
+├── AGENTS.md                       # Repo conventions (lint, typecheck, tests, baselines)
+├── DEPLOYMENT.md                   # Deployment & ops guide
+└── CUTOVER_PROCEDURE.md            # SQLite → PostgreSQL cutover record
 ```
 
 ## Environment Variables
 
-### Required (production)
+### Required to boot (production — startup raises `RuntimeError` if missing/invalid)
 
 | Variable | Description |
 |---|---|
 | `FLASK_ENV` | `production` or `development` |
-| `SECRET_KEY` | Flask session secret (required in production) |
-| `ADMIN_PASSWORD_HASH` | scrypt hash for admin access (required in production) |
-| `COOKIE_SECURE` | Set to `1` for HTTPS-only cookies (required in production) |
-| `GEMINI_API_KEY` | Google AI API key for the chatbot |
+| `SECRET_KEY` | Flask session secret |
+| `ADMIN_PASSWORD_HASH` | scrypt hash for admin access |
+| `COOKIE_SECURE` | `1` for HTTPS-only cookies |
+| `DATABASE_URL` | Valid PostgreSQL URL (no silent SQLite fallback in production) |
+| `PUBLIC_BASE_URL` | Canonical HTTPS origin (e.g. `https://turnogo.example`) |
 
-### Optional
+### Needed for specific features
 
-| Variable | Default | Description |
+| Variable | Default | Enables |
 |---|---|---|
-| `TRUSTED_PROXY_COUNT` | `0` | Number of reverse proxies (0 = disabled) |
-| `SESSION_LIFETIME_SECONDS` | `86400` | Session expiration (24h) |
+| `GEMINI_API_KEY` | — | AI chatbot (`/chat`) |
 | `AI_MODEL` | `gemini-2.5-flash` | Gemini model identifier |
 | `GEMINI_TIMEOUT_MS` | `15000` | Gemini API timeout |
 | `GEMINI_MAX_TOTAL_CHARS` | `8000` | Max conversation history chars |
 | `GEMINI_MAX_OUTPUT_TOKENS` | `1024` | Max tokens per response |
-| `SMTP_HOST` | — | SMTP server for email notifications |
-| `SMTP_USER` | — | SMTP username |
-| `SMTP_PASSWORD` | — | SMTP password |
-| `SMTP_FROM` | — | "From" email address |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | — | Email notifications |
+| `EMAIL_FROM` | `SMTP_USER` | "From" email address |
+| `EMAIL_FROM_NAME` | `TurnoBot` | "From" display name |
 | `INVITATION_LIFETIME_HOURS` | `72` | Invitation token expiration |
-| `TRUSTED_PROXY_COUNT` | `0` | Reverse proxy hops to trust |
 
-> **Security note:** `ADMIN_PASSWORD` (plaintext) is no longer supported — use `ADMIN_PASSWORD_HASH` only. The management token hash (SHA-256) is never returned in API responses.
+### Tuning
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRUSTED_PROXY_COUNT` | `0` | Reverse proxy hops to trust (0 = ignore forwarding headers) |
+| `SESSION_LIFETIME_SECONDS` | `86400` | Admin session expiration (24h) |
+
+> **Security note:** `ADMIN_PASSWORD` (plaintext) is no longer supported — use `ADMIN_PASSWORD_HASH` only. The management token hash (SHA-256) is never returned in API responses. Never publish `.env` or `/etc/turnobot.env`.
 
 ## Setup & Development
 
@@ -165,6 +128,7 @@ turnobot/
 
 - Python 3.12+
 - Dependencies from `requirements.txt` and `requirements-dev.txt`
+- For `tests_pg/` and persistence-backed `tests/`: `TURNOBOT_PG_URL` pointing to PostgreSQL 16
 
 ### Installation
 
@@ -182,8 +146,7 @@ source venv/bin/activate       # Linux/macOS
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
-# 4. Configure environment
-cp .env.example .env   # Edit with your values
+# 4. Configure environment (create a .env file with the variables above)
 
 # 5. Run (development)
 python -c "from app import app; app.run(debug=True, host='127.0.0.1', port=5000)"
@@ -196,9 +159,10 @@ python -c "from app import app; app.run(debug=True, host='127.0.0.1', port=5000)
 python -m pytest                        # full suite with coverage
 python -m pytest tests/test_observability.py -v  # specific file
 
-# Lint
-python -m ruff check .                  # if ruff installed
-python -m mypy app.py                    # if mypy installed
+# Lint & typecheck
+python -m ruff check .
+python -m ruff format --check .
+python -m mypy app.py
 
 # Health check
 python scripts/check_health.py
@@ -209,46 +173,18 @@ python scripts/backup_postgresql.py
 
 ## Testing
 
-The test suite has two groups, both run against PostgreSQL in CI:
+- `tests/` is the general application suite. With `TURNOBOT_PG_URL` configured, its shared fixtures create isolated temporary PostgreSQL databases for tests that exercise persistence. Tests that explicitly cover SQLite compatibility may select the SQLite backend themselves.
+- `tests_pg/` contains PostgreSQL integration tests (marked `pg_live`). CI runs both groups against its PostgreSQL 16 service; without `TURNOBOT_PG_URL` they skip cleanly.
 
-- `tests/` is the general application suite. With `TURNOBOT_PG_URL` configured,
-  its shared fixtures create isolated temporary PostgreSQL databases for tests
-  that exercise persistence. Tests that explicitly cover SQLite compatibility
-  may select the SQLite backend themselves.
-- `tests_pg/` contains PostgreSQL integration tests. CI runs both groups against
-  its PostgreSQL service; locally, configure `TURNOBOT_PG_URL` to run them.
-
-The suites cover:
-
-- Multi-tenant isolation (each business's data is isolated)
-- Appointment booking/cancellation/rescheduling with management tokens
-- Rate limiting (API, chat, login)
-- Security (CSRF, password hashing, security headers, token validation)
-- AI chatbot tooling and error handling
-- Email notifications
-- Knowledge base (PostgreSQL full-text search and SQLite fallback)
-- Loyalty points and membership tiers
-- Conversation management and human handoff
-- PostgreSQL backup tooling and legacy SQLite backup/restore integrity
-- Onboarding and provisioning
+Coverage includes multi-tenant isolation, booking/cancellation/rescheduling with management tokens and contact limits, rate limiting, security, AI tooling, email, knowledge base FTS, loyalty/redemptions/retention, metrics, conversations/handoff, and PostgreSQL backup tooling.
 
 ```bash
-# Run with coverage (default via pyproject.toml)
-python -m pytest
-
-# Run specific tests
+python -m pytest              # full suite with coverage (default via pyproject.toml)
 python -m pytest tests/test_observability.py tests/test_conversations.py -v
-
-# Run without coverage for speed
-python -m pytest --no-cov
+python -m pytest --no-cov     # faster, no coverage
 ```
 
-**Known pre-existing failures (Windows only):**
-
-| Test | Cause |
-|---|---|
-| `tests/test_admin_panel.py::TestAdminAJAX::test_admin_reschedule_returns_json` | Windows symlink limitation |
-| `tests/test_prune_backups.py::TestPrunePlan::test_symlink_is_preserved_not_deleted` | Windows symlink limitation |
+**Known pre-existing failures (Windows only):** two symlink tests (`test_admin_panel.py::TestAdminAJAX::test_admin_reschedule_returns_json`, `test_prune_backups.py::...symlink_is_preserved_not_deleted`) — see `AGENTS.md`.
 
 ## Routes & API
 
@@ -258,22 +194,23 @@ python -m pytest --no-cov
 |---|---|---|
 | `GET` | `/` | Landing page (default business) |
 | `GET` | `/b/<slug>` | Business landing page |
-| `GET` | `/b/<slug>/reservar` | Reservation wizard — service selection |
-| `GET` | `/b/<slug>/reservar/fecha` | Reservation wizard — date selection |
-| `GET` | `POST` | `/b/<slug>/reservar/datos` | Reservation wizard — customer details |
-| `GET` | `POST` | `/b/<slug>/reservar/confirmar` | Reservation wizard — confirmation |
+| `GET` | `/b/<slug>/reservar` | Wizard — service selection |
+| `GET` | `/b/<slug>/reservar/fecha` | Wizard — date selection |
+| `GET` | `/b/<slug>/reservar/datos` | Wizard — customer details |
+| `GET`/`POST` | `/b/<slug>/reservar/confirmar` | Wizard — confirmation |
 | `GET` | `/health` | Health check (DB connectivity) |
 | `POST` | `/chat` | AI chat endpoint |
-| `GET` | `/api/conversations/<token>/messages` | Conversation history |
+| `GET` | `/api/conversations/current/messages` | Current visitor conversation |
+| `GET` | `/api/conversations/<token>/messages` | Conversation history by token |
 | `GET` | `/api/servicios` | List services |
 | `GET` | `/api/recursos` | List resources |
-| `GET` | `/api/puntos` | List business locations |
+| `GET` | `/api/puntos` | Loyalty points info (per-completed points, balance) |
 | `GET` | `/api/disponibilidad/<fecha>` | Availability for date |
 | `GET` | `/api/turnos` | List customer appointments |
 | `POST` | `/api/reservar` | Book appointment |
 | `POST` | `/api/cancelar` | Cancel appointment (management_token) |
 | `POST` | `/api/reprogramar` | Reschedule appointment (management_token) |
-| `GET` | `POST` | `/b/<slug>/turno/<token>?id=<id>` | Public turn management |
+| `GET`/`POST` | `/b/<slug>/turno/<token>?id=<id>` | Public turn management |
 
 All `/api/*` and `/b/<slug>/api/*` routes support both generic and business-scoped variants.
 
@@ -281,17 +218,18 @@ All `/api/*` and `/b/<slug>/api/*` routes support both generic and business-scop
 
 | Method | Path | Description |
 |---|---|---|
-| `GET`/`POST` | `/login` | Admin login |
-| `GET`/`POST` | `/b/<slug>/login` | Slug-scoped admin login |
-| `POST` | `/logout` | Admin logout |
-| `POST` | `/b/<slug>/logout` | Slug-scoped admin logout |
+| `GET`/`POST` | `/login`, `/b/<slug>/login` | Admin login |
+| `POST` | `/logout`, `/b/<slug>/logout` | Admin logout |
+| `GET`/`POST` | `/forgot`, `/reset/<token>` | Password recovery |
+| `GET`/`POST` | `/registro` | Public registration |
+| `GET` | `/b/<slug>/invitacion/<token>` | Invitation acceptance |
 
-### Administrative Endpoints
+### Administrative Endpoints (all with `/b/<slug>` variant; owner/admin only)
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/admin` | Admin dashboard |
-| `GET` | `/b/<slug>/admin` | Business admin dashboard |
+| `GET` | `/admin/metricas` | Metrics dashboard |
 | `POST` | `/admin/servicios/guardar` | Save service (CRUD) |
 | `POST` | `/admin/servicios/<id>/estado` | Toggle service active |
 | `POST` | `/admin/configuracion` | Update business settings |
@@ -299,47 +237,39 @@ All `/api/*` and `/b/<slug>/api/*` routes support both generic and business-scop
 | `POST` | `/admin/turnos/<id>/cancelar` | Cancel appointment |
 | `POST` | `/admin/turnos/<id>/estado` | Update appointment status |
 | `POST` | `/admin/turnos/<id>/reprogramar` | Reschedule appointment |
+| `POST` | `/admin/turnos/<id>/reprogramar/con-recurso` | Reschedule with resource |
 | `POST` | `/admin/turnos/crear` | Create appointment (manual) |
 | `GET` | `/admin/usuarios` | User management |
 | `POST` | `/admin/usuarios/invitar` | Invite user |
 | `POST` | `/admin/usuarios/<id>/rol` | Change user role |
 | `POST` | `/admin/usuarios/<id>/revocar` | Revoke user |
+| `GET` | `/admin/recursos` | Resources dashboard |
+| `POST` | `/admin/recursos/crear` | Create resource |
+| `POST` | `/admin/recursos/<id>/estado` | Toggle resource active |
 | `GET`/`POST` | `/admin/fidelizacion` | Loyalty dashboard |
 | `POST` | `/admin/fidelizacion/configuracion` | Loyalty rules |
 | `POST` | `/admin/fidelizacion/<id>/ajustar` | Adjust loyalty points |
+| `POST` | `/admin/fidelizacion/recalcular` | Rebuild balances from ledger |
 | `GET`/`POST` | `/admin/fidelizacion/recompensas` | Rewards catalog |
-| `POST` | `/admin/recursos/crear` | Create resource |
-| `GET` | `/admin/conocimiento` | Knowledge base |
+| `POST` | `/admin/fidelizacion/recompensas/<id>/estado` | Toggle reward active |
+| `GET` | `/admin/conocimiento` | Knowledge base list |
+| `POST` | `/admin/conocimiento/crear` | Create knowledge entry |
+| `POST` | `/admin/conocimiento/<id>/editar` | Edit knowledge entry |
+| `POST` | `/admin/conocimiento/<id>/eliminar` | Delete knowledge entry |
 | `GET` | `/admin/conversaciones` | Conversation list |
 | `GET` | `/admin/conversaciones/<id>` | Conversation detail |
 | `POST` | `/admin/conversaciones/<id>/resolver` | Resolve human handoff |
+| `POST` | `/admin/conversaciones/<id>/estado` | Update conversation status |
 | `GET` | `/admin/inteligencia` | AI analytics dashboard |
 | `GET` | `/admin/inteligencia/oportunidades` | Opportunity analytics |
 
 ### Superadmin Endpoints
 
-`/superadmin` — Manage businesses (create, approve, deactivate), audit logs, invitation management. Requires separate superadmin credentials.
+`/superadmin` — Manage businesses (create, approve, deactivate), audit logs, invitation management. Requires separate superadmin credentials (bootstrap with `python scripts/create_superadmin.py`).
 
 ## AI Chatbot
 
-The chatbot at `POST /chat` integrates with Google Gemini and provides 7 tools:
-
-| Tool | Description |
-|---|---|
-| `consultar_disponibilidad` | Query available time slots by date/service/resource |
-| `consultar_recursos` | List bookable resources |
-| `reservar_turno` | Book a new appointment (requires phone verification) |
-| `buscar_turnos` | Search existing appointments by phone |
-| `cancelar_turno` | Cancel an appointment (requires management_token) |
-| `reprogramar_turno` | Reschedule an appointment (requires management_token) |
-| `solicitar_atencion_humana` | Escalate to human — marks session as `needs_human` |
-
-**Safety guards:**
-- Mutating tools (`reservar_turno`, `cancelar_turno`, `reprogramar_turno`) require confirmation — plain-text claims are neutralized
-- Max 5 tool iterations per chat turn
-- Conversation history capped at 12 messages / 2,000 chars per message
-- Transient Gemini errors (timeout, quota, UNAVAILABLE) retried with backoff
-- Automatic human escalation detection (keyword-based) and response-based detection
+`POST /chat` with 7 tools: `consultar_disponibilidad`, `consultar_recursos`, `reservar_turno`, `buscar_turnos_cliente`, `cancelar_turno`, `reprogramar_turno`, `solicitar_atencion_humana`. Guards: confirmation for mutating tools, max 5 iterations/turn, history capped at 12 messages / 2.000 chars per message / 8.000 total chars, retries with backoff, keyword- and response-based human escalation.
 
 ## Multi-Tenancy
 
@@ -369,7 +299,7 @@ falls back silently to SQLite. In development and tests, select SQLite
 explicitly with `DB_BACKEND=sqlite`. The SQLite implementation (WAL mode) and
 legacy migrations under `migrations/` remain available for that opt-in path.
 
-#### Schema migrations (PostgreSQL)
+### Schema migrations (PostgreSQL)
 
 Startup applies `migrations_pg/001_initial_schema.sql` only to an empty
 database. Incremental schema changes are versioned (`migrations_pg/00N_*.sql`)
@@ -387,78 +317,19 @@ transaction (rollback on failure), refuses to re-apply or to apply out of order
 (checksum mismatch, gaps and a registry newer than the code all fail), adopts an
 existing bootstrap baseline without re-running it **only when the 001 migration
 is the only one available**, and serializes concurrent runners with the same
-PostgreSQL advisory lock used by startup.
+PostgreSQL advisory lock used by startup. Full rules (naming convention,
+`CONCURRENTLY` restriction, directory security) in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 **Metadata loss protection (D2):** If the database has the 001 schema complete
 but `schema_migrations` is missing **and** migrations beyond 001 are discovered,
 the runner fails with a clear `MigrationError` instead of silently re-running
-later migrations. This prevents undetectable `ALTER TABLE` / `DROP COLUMN`
-changes from being re-applied. Recovery requires restoring a backup or
+later migrations. Recovery requires restoring a backup or
 manually reconstructing `schema_migrations`; never run the migrator against
 production to diagnose state.
 
-**Migrations directory security (D13):** By default, the runner only accepts
-migration directories inside the repository (`BASE_DIR`). The official
-`migrations_pg/` directory works without additional flags. To use an external
-directory (e.g., in tests or development), explicitly authorize it with
-`--allow-external-migrations-dir` on the CLI or `allow_external=True` in the
-Python API. An unauthorized external directory raises `MigrationError`
-**before** connecting to PostgreSQL, acquiring locks, or executing SQL. The
-authorization only permits changing the SQL location; it does **not** disable
-validations of names, gaps, checksums, versions, or downgrades.
-
-### Migration naming convention (D1/D10)
-
-Migration files in `migrations_pg/` **must** follow the pattern:
-
-```
-<version>_<name>.sql
-```
-
-- **Version**: integer with **at least 3 digits** (e.g., `001`, `002`, `010`, `1000`). No arbitrary upper limit.
-- **Name**: must start with an **ASCII letter** (`A-Z`, `a-z`), followed by letters, digits, or underscores (`_`).
-- **Extension**: mandatory `.sql`.
-
-**Valid examples:**
-- `001_initial_schema.sql`
-- `002_add_widgets.sql`
-- `010_fix_user_bug.sql`
-- `1000_add_big_feature.sql`
-
-**Invalid (raise MigrationError):**
-- `schema.sql` — missing version prefix
-- `002_2badname.sql` — name starts with digit
-- `2024_01_01_fix.sql` — date-like prefix, name starts with digit
-- `1_initial.sql` — version has fewer than 3 digits
-- `001_.sql` — empty name
-
-Non-`.sql` files are silently ignored.
-
-Files are applied in **numeric version order** (natural integer order). Versions must be **contiguous from 1** with no gaps or duplicates.
-
-Backups live in
-`scripts/backup_postgresql.py`; the SQLite runner under `migrations/` is
-unrelated and kept only for the opt-in SQLite path.
-
 ### Key Tables
 
-| Table | Description |
-|---|---|
-| `businesses` | Business (id, name, slug, active) |
-| `business_settings` | Configuration (name, type, timezone, branding, etc.) |
-| `services` | Service catalog (name, price, duration) |
-| `weekly_schedules` | Weekly open hours |
-| `resources` | Bookable resources (chair, machine, etc.) |
-| `appointments` | Customer appointments (with `management_token_hash`) |
-| `users` | Admin/staff users (scrypt-hashed passwords) |
-| `invitations` | User invitations (token hash, expiry) |
-| `conversation_sessions` | Chat sessions (status, needs_human flag) |
-| `conversation_messages` | Chat message history |
-| `conversation_analytics` | Aggregate question analytics |
-| `business_knowledge` | FAQ/instructions/policies |
-| `loyalty_accounts` | Customer loyalty points |
-| `loyalty_rules` | Point earning rules |
-| `loyalty_rewards` | Reward catalog items |
+`businesses`, `business_settings`, `services`, `weekly_schedules`, `resources`, `appointments`, `users`, `business_users`, `invitations`, `conversation_sessions`, `conversation_messages`, `conversation_analytics`, `business_knowledge`, `loyalty_settings`, `loyalty_accounts`, `points_ledger`, `rewards`, `redemptions`, `retention_actions`.
 
 ## Deployment
 
@@ -467,20 +338,17 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full details.
 ### Production Startup
 
 ```bash
-# Activate venv
-source venv312/bin/activate
-
 # Serve via Waitress (behind reverse proxy)
 python wsgi.py
 ```
 
-Waitress binds to `127.0.0.1:5000`. Expose publicly via Caddy, Nginx, or IIS with TLS. The reverse proxy must forward to `http://127.0.0.1:5000`.
+Waitress binds to `127.0.0.1:5000`. Expose publicly via Caddy, Nginx, or IIS with TLS. The reverse proxy must forward to `http://127.0.0.1:5000`. Production requires the boot variables above — notably a canonical HTTPS `PUBLIC_BASE_URL`, without which startup aborts.
 
 ### Health Check
 
 ```bash
 python scripts/check_health.py
-# OK: http://127.0.0.1:5000/health responded HTTP 200
+# OK: http://127.0.0.1:5000/health respondio HTTP 200
 ```
 
 ### Backups
@@ -492,19 +360,21 @@ python scripts/verify_backup_postgresql.py
 ```
 
 `verify_backup_postgresql.py` checks that `pg_restore --list` can read the
-dump; it is not a full restore test. `restore_postgresql.py` is separate and
-targets a database explicitly. The SQLite backup, restore, verify, and prune
-scripts are retained as legacy tooling and are not the production PostgreSQL
-backup path.
+dump; it is not a full restore test. `restore_postgresql.py` is separate,
+targets a database explicitly, and refuses the production destination. The
+SQLite backup, restore, verify, and prune scripts are retained as legacy
+tooling and are not the production PostgreSQL backup path.
 
 ### Notifications
 
 Appointment reminders (24h before) run via a scheduled task:
+
 ```bash
 python scripts/send_reminders.py
 ```
 
 Failure alerts:
+
 ```bash
 python scripts/notify_failure.py
 ```
@@ -517,7 +387,7 @@ python scripts/create_superadmin.py
 
 ## CI/CD
 
-GitHub Actions workflow (`.github/workflows/tests.yml`) runs the full test suite on every push and pull request to `main`.
+GitHub Actions workflow (`.github/workflows/tests.yml`) runs lint (`ruff check`), format check, typecheck (`mypy`) and the full test suite (Python 3.12, PostgreSQL 16) on every push and pull request to `main`.
 
 ## License
 
