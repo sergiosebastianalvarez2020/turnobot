@@ -94,6 +94,92 @@ class MembershipHTTPBase(unittest.TestCase):
         finally:
             c.close()
 
+    def _user_count(self, email):
+        c = get_connection()
+        try:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE email = ?", (email,)
+            ).fetchone()
+            return row["n"]
+        finally:
+            c.close()
+
+
+class TestInvitacionSinEfectoColateral(MembershipHTTPBase):
+    """Un actor no owner no debe provocar escrituras al invitar.
+
+    Regresión: el handler creaba la fila `users` antes del chequeo
+    owner-only, dejando usuarios huérfanos cuando un `admin` invitaba
+    un email nuevo.
+    """
+
+    def test_admin_invita_email_nuevo_no_crea_usuario_ni_membresia(self):
+        self._make_user("a@test.com", "secreta", 1, "admin")
+        self._login("", "a@test.com", "secreta")
+        token = self._user_csrf("")
+        new_email = "nuevo-invitado@test.com"
+        self.assertIsNone(database.get_user_by_email_scoped(new_email))
+        resp = self.client.post(
+            "/admin/usuarios/invitar",
+            data={"csrf_token": token, "email": new_email, "role_name": "staff"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("usuarios_error", resp.headers["Location"])
+        self.assertIsNone(database.get_user_by_email_scoped(new_email))
+        self.assertEqual(self._user_count(new_email), 0)
+
+    def test_admin_invita_email_existente_no_crea_membresia_ni_duplica(self):
+        self._make_user("a@test.com", "secreta", 1, "admin")
+        existing_id = self._make_user("e@test.com", "secreta", 1, "staff")
+        database.revoke_membership_scoped(existing_id, 1)
+        self.assertFalse(self._membership_exists(existing_id, 1))
+        self._login("", "a@test.com", "secreta")
+        token = self._user_csrf("")
+        resp = self.client.post(
+            "/admin/usuarios/invitar",
+            data={"csrf_token": token, "email": "e@test.com", "role_name": "staff"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("usuarios_error", resp.headers["Location"])
+        self.assertFalse(self._membership_exists(existing_id, 1))
+        self.assertEqual(self._user_count("e@test.com"), 1)
+        self.assertEqual(
+            database.get_user_by_email_scoped("e@test.com")["id"], existing_id
+        )
+
+    def test_admin_invita_email_nuevo_en_ruta_slug_no_crea_usuario(self):
+        self._make_user("a@test.com", "secreta", 2, "admin")
+        self._login("business-b", "a@test.com", "secreta")
+        token = self._user_csrf("business-b")
+        new_email = "nuevo-slug@test.com"
+        self.assertIsNone(database.get_user_by_email_scoped(new_email))
+        resp = self.client.post(
+            "/b/business-b/admin/usuarios/invitar",
+            data={"csrf_token": token, "email": new_email, "role_name": "staff"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("usuarios_error", resp.headers["Location"])
+        self.assertIsNone(database.get_user_by_email_scoped(new_email))
+        self.assertEqual(self._user_count(new_email), 0)
+
+    def test_owner_invita_email_nuevo_crea_usuario_y_membresia(self):
+        owner = self._make_user("o@test.com", "secreta", 1, "owner")
+        self._login("", "o@test.com", "secreta")
+        token = self._user_csrf("")
+        new_email = "nuevo-owner@test.com"
+        resp = self.client.post(
+            "/admin/usuarios/invitar",
+            data={"csrf_token": token, "email": new_email, "role_name": "staff"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        created = database.get_user_by_email_scoped(new_email)
+        self.assertIsNotNone(created)
+        self.assertTrue(self._membership_exists(created["id"], 1))
+        self.assertEqual(
+            self._role_of(created["id"], 1), database.get_role_id_scoped("staff")
+        )
+        self.assertTrue(self._membership_exists(owner, 1))
+
 
 class TestTenantIsolation(MembershipHTTPBase):
     def test_owner_de_A_gestiona_miembros_de_A(self):

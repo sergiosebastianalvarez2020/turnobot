@@ -795,6 +795,15 @@ def admin_usuarios_invitar(slug=None):
     if not email:
         return redirect(_usuarios_url(usuarios_error="El email es obligatorio."))
 
+    # Pre-chequeo owner-only ANTES de cualquier escritura: evita que un actor
+    # no autorizado (p.ej. admin) provoque la creación de una fila `users`
+    # huérfana cuando la invitación será denegada de todos modos.
+    # Reutiliza la política centralizada de services.memberships.
+    if not memberships.can_manage_memberships(actor_user_id, business_id):
+        return redirect(
+            _usuarios_url(usuarios_error="no tienes permisos para gestionar memberships")
+        )
+
     user = get_user_by_email_scoped(email)
     if user is None:
         placeholder_hash = generate_password_hash(secrets.token_urlsafe(24))
