@@ -301,6 +301,57 @@ class TestSesion(BaseMultiTenantAdminTest):
             self._query("SELECT COUNT(*) n FROM sessions WHERE revoked = 0")[0]["n"], 2
         )
 
+    def test_sesion_negocio_b_no_accede_admin_negocio_1(self):
+        # T4: sesión válida de un miembro SOLO del negocio 2 no accede al
+        # admin del negocio 1 (ruta sin slug). El guard debe redirigir a
+        # login y limpiar la sesión (defensa ante reuso cross-tenant).
+        self._make_user("b@test.com", "secreta", 2, "owner")
+        self._login("business-b", "b@test.com", "secreta")
+        self.assertEqual(self.client.get("/b/business-b/admin").status_code, 200)
+
+        denied = self.client.get("/admin")
+        self.assertEqual(denied.status_code, 302)
+        self.assertIn("/login", denied.headers.get("Location", ""))
+        with self.client.session_transaction() as sess:
+            self.assertIsNone(sess.get("user_id"))
+            self.assertIsNone(sess.get("session_token"))
+
+    def test_usuario_miembro_ambos_negocios_accede_a_ambos_admin(self):
+        # T5: membresía legítima en ambos negocios: el mismo login accede a
+        # los dos paneles. Evita que un endurecimiento rompa el caso válido.
+        uid = self._make_user("multi@test.com", "secreta", 2, "owner")
+        create_membership_scoped(uid, 1, "owner")
+        self._login("business-b", "multi@test.com", "secreta")
+        self.assertEqual(self.client.get("/b/business-b/admin").status_code, 200)
+        self.assertEqual(self.client.get("/admin").status_code, 200)
+
+    def test_post_admin_otro_negocio_rechazado_sin_efecto(self):
+        # T6 (conductual): el guard de membresía es consistente también en
+        # POST. Sesión del negocio 2 contra endpoint del negocio 1: 302 a
+        # login, sesión limpia y ningún servicio creado en el negocio 1.
+        self._make_user("b@test.com", "secreta", 2, "owner")
+        self._login("business-b", "b@test.com", "secreta")
+        page = self.client.get("/b/business-b/admin")
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        denied = self.client.post(
+            "/admin/servicios/guardar",
+            data={
+                "csrf_token": csrf,
+                "name": "Servicio intruso",
+                "price": "100",
+                "duration": "15",
+                "active": "1",
+            },
+        )
+        self.assertEqual(denied.status_code, 302)
+        self.assertIn("/login", denied.headers.get("Location", ""))
+        with self.client.session_transaction() as sess:
+            self.assertIsNone(sess.get("user_id"))
+        nombres_a = {
+            r["name"] for r in self._query("SELECT name FROM services WHERE business_id = 1")
+        }
+        self.assertNotIn("Servicio intruso", nombres_a)
+
 
 class TestModeloDatos(BaseMultiTenantAdminTest):
     def test_tablas_auth_existen(self):

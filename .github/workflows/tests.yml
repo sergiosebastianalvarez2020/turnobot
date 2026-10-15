@@ -175,3 +175,17 @@ jobs:
                   print(f"  SKIP inesperado: {sid}")
               sys.exit(1)
           PY
+      - name: Run TestSesion isolation tests T4-T6 (verbose)
+        # Evidencia individual de los 3 tests de aislamiento entre negocios.
+        # Usa el mismo PostgreSQL 16 y entorno que la suite general.
+        # `if: always()` para que la evidencia quede registrada aun si la
+        # suite general falla; no modifica código bajo prueba.
+        if: always()
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          python -m pytest \
+            "tests/test_multi_tenant_admin.py::TestSesion::test_sesion_negocio_b_no_accede_admin_negocio_1" \
+            "tests/test_multi_tenant_admin.py::TestSesion::test_usuario_miembro_ambos_negocios_accede_a_ambos_admin" \
+            "tests/test_multi_tenant_admin.py::TestSesion::test_post_admin_otro_negocio_rechazado_sin_efecto" \
+            -v --tb=short -p no:cacheprovider --no-cov
