@@ -97,9 +97,7 @@ class MembershipHTTPBase(unittest.TestCase):
     def _user_count(self, email):
         c = get_connection()
         try:
-            row = c.execute(
-                "SELECT COUNT(*) AS n FROM users WHERE email = ?", (email,)
-            ).fetchone()
+            row = c.execute("SELECT COUNT(*) AS n FROM users WHERE email = ?", (email,)).fetchone()
             return row["n"]
         finally:
             c.close()
@@ -143,9 +141,7 @@ class TestInvitacionSinEfectoColateral(MembershipHTTPBase):
         self.assertIn("usuarios_error", resp.headers["Location"])
         self.assertFalse(self._membership_exists(existing_id, 1))
         self.assertEqual(self._user_count("e@test.com"), 1)
-        self.assertEqual(
-            database.get_user_by_email_scoped("e@test.com")["id"], existing_id
-        )
+        self.assertEqual(database.get_user_by_email_scoped("e@test.com")["id"], existing_id)
 
     def test_admin_invita_email_nuevo_en_ruta_slug_no_crea_usuario(self):
         self._make_user("a@test.com", "secreta", 2, "admin")
@@ -175,9 +171,7 @@ class TestInvitacionSinEfectoColateral(MembershipHTTPBase):
         created = database.get_user_by_email_scoped(new_email)
         self.assertIsNotNone(created)
         self.assertTrue(self._membership_exists(created["id"], 1))
-        self.assertEqual(
-            self._role_of(created["id"], 1), database.get_role_id_scoped("staff")
-        )
+        self.assertEqual(self._role_of(created["id"], 1), database.get_role_id_scoped("staff"))
         self.assertTrue(self._membership_exists(owner, 1))
 
 
