@@ -1,20 +1,20 @@
 name: Tests
 
-on:
+'on':
   push:
     branches: [main]
   pull_request:
     branches: [main]
-workflow_dispatch:
-      inputs:
-        parallel:
-          description: 'Ejecutar tests en paralelo'
-          type: choice
-          options:
-            - "false"
-            - "4"
-            - "8"
-          default: "false"
+  workflow_dispatch:
+    inputs:
+      parallel:
+        description: 'Ejecutar tests en paralelo'
+        type: choice
+        options:
+          - "false"
+          - "4"
+          - "8"
+        default: "false"
 
 env:
   POSTGRES_PASSWORD: 4h_ephemeral_pg_password
