@@ -107,7 +107,9 @@ jobs:
         id: tests_pg
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
-        run: python -m pytest tests_pg -v --tb=short -p no:cacheprovider --no-cov 2>&1 | tee /tmp/tests_pg_output.txt
+        run: |
+          set -o pipefail
+          python -m pytest tests_pg -v --tb=short -p no:cacheprovider --no-cov 2>&1 | tee /tmp/tests_pg_output.txt
       - name: Guard - tests_pg must not be skipped/deselected
         if: steps.tests_pg.outcome == 'success'
         run: |
@@ -125,7 +127,7 @@ jobs:
             exit 1
           fi
       - name: Run general tests (secuencial)
-        if: ${{ inputs.parallel == 'false' }}
+        if: ${{ inputs.parallel == '' || inputs.parallel == 'false' }}
         id: tests
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
@@ -133,7 +135,7 @@ jobs:
           set -o pipefail
           python -m pytest tests --cov=. --cov-report=term-missing -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
       - name: Run general tests (paralelo)
-        if: ${{ inputs.parallel != 'false' }}
+        if: ${{ inputs.parallel == '4' || inputs.parallel == '8' }}
         id: tests_parallel
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
@@ -141,7 +143,7 @@ jobs:
           set -o pipefail
           python -m pytest tests -n ${{ inputs.parallel }} --cov=. --cov-append --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
       - name: Upload coverage artifact (paralelo)
-        if: ${{ inputs.parallel != 'false' }}
+        if: ${{ inputs.parallel == '4' || inputs.parallel == '8' }}
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
