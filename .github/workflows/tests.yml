@@ -5,6 +5,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+workflow_dispatch:
+      inputs:
+        parallel:
+          description: 'Ejecutar tests en paralelo'
+          type: choice
+          options:
+            - "false"
+            - "4"
+            - "8"
+          default: "false"
 
 env:
   POSTGRES_PASSWORD: 4h_ephemeral_pg_password
@@ -38,6 +48,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -102,7 +113,7 @@ jobs:
         run: |
           output_file="/tmp/tests_pg_output.txt"
           if grep -qE "no tests ran|0 tests" "$output_file"; then
-            echo "FALLO: tests_pg no registró tests ejecutados"
+            echo "FALLO: tests_pg no registrÃ³ tests ejecutados"
             exit 1
           fi
           if grep -q "skipped" "$output_file"; then
@@ -113,20 +124,36 @@ jobs:
             echo "FALLO: tests_pg quedaron con DESELECTED en CI"
             exit 1
           fi
-      - name: Run general tests
+      - name: Run general tests (secuencial)
+        if: ${{ inputs.parallel == 'false' }}
         id: tests
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
           set -o pipefail
-          python -m pytest tests -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+          python -m pytest tests --cov=. --cov-report=term-missing -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+      - name: Run general tests (paralelo)
+        if: ${{ inputs.parallel != 'false' }}
+        id: tests_parallel
+        env:
+          TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
+        run: |
+          set -o pipefail
+          python -m pytest tests -n ${{ inputs.parallel }} --cov=. --cov-append --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+      - name: Upload coverage artifact (paralelo)
+        if: ${{ inputs.parallel != 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 7
       - name: Guard - tests must not be skipped/deselected
-        if: steps.tests.outcome == 'success'
+        if: steps.tests.outcome == 'success' || steps.tests_parallel.outcome == 'success'
         run: |
           output_file="/tmp/tests_output.txt"
           junit_file="/tmp/tests_junit.xml"
           if grep -qE "no tests ran|0 tests" "$output_file"; then
-            echo "FALLO: tests no registró tests ejecutados"
+            echo "FALLO: tests no registrÃ³ tests ejecutados"
             exit 1
           fi
           if grep -q "deselected" "$output_file"; then
@@ -137,7 +164,7 @@ jobs:
           # Solo permitir el skip arquitectural conocido:
           # tests.test_secure_turnos_contract::test_crear_consultar_cancelar_reprogramar_con_token_propio
           if [ ! -f "$junit_file" ]; then
-            echo "FALLO: no se encontró $junit_file, no se pudo validar skips"
+            echo "FALLO: no se encontrÃ³ $junit_file, no se pudo validar skips"
             exit 1
           fi
           python3 - <<'PY'
@@ -150,7 +177,7 @@ jobs:
           try:
               tree = ET.parse(junit_file)
           except ET.ParseError as e:
-              print(f"FALLO: XML inválido en $junit_file: {e}")
+              print(f"FALLO: XML invÃ¡lido en $junit_file: {e}")
               sys.exit(1)
           except Exception as e:
               print(f"FALLO: error leyendo $junit_file: {e}")
@@ -179,7 +206,7 @@ jobs:
         # Evidencia individual de los 3 tests de aislamiento entre negocios.
         # Usa el mismo PostgreSQL 16 y entorno que la suite general.
         # `if: always()` para que la evidencia quede registrada aun si la
-        # suite general falla; no modifica código bajo prueba.
+        # suite general falla; no modifica cÃ³digo bajo prueba.
         if: always()
         env:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
