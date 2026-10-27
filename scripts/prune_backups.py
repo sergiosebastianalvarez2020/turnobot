@@ -134,9 +134,7 @@ def plan(
             if key not in buckets or (timestamp, name) > buckets[key]:
                 buckets[key] = (timestamp, name)
         for kind in {entry[0] for entry in managed}:
-            kind_keys = sorted(
-                (key for key in buckets if key[0] == kind), reverse=True
-            )[:limit]
+            kind_keys = sorted((key for key in buckets if key[0] == kind), reverse=True)[:limit]
             for key in kind_keys:
                 keep.add(buckets[key][1])
 

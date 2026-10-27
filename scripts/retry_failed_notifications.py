@@ -96,9 +96,7 @@ def _resend(row):
             business_id, appointment, CONFIRMATION, channel="email"
         )
     if row["type"] == REMINDER:
-        return send_appointment_notification(
-            business_id, appointment, REMINDER, channel="email"
-        )
+        return send_appointment_notification(business_id, appointment, REMINDER, channel="email")
     if row["type"] == BUSINESS_CONFIRMATION:
         return send_business_confirmation_email(business_id, appointment)
     return False, "unknown_type"

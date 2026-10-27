@@ -48,9 +48,7 @@ def test_sqlite_migration_adds_retry_state_and_query_runs(tmp_path, monkeypatch)
 
     connection = database.get_connection()
     try:
-        columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(notification_log)")
-        }
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(notification_log)")}
     finally:
         connection.close()
 
@@ -71,9 +69,7 @@ def test_sqlite_migration_adds_retry_state_and_query_runs(tmp_path, monkeypatch)
     connection.commit()
     connection.close()
 
-    assert database.claim_notification_scoped(
-        1, 2, "confirmation", "email", "customer@example.com"
-    )
+    assert database.claim_notification_scoped(1, 2, "confirmation", "email", "customer@example.com")
     future_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat(sep=" ")
     database.upsert_notification_log_scoped(
         1,
@@ -93,17 +89,14 @@ def test_sqlite_migration_adds_retry_state_and_query_runs(tmp_path, monkeypatch)
     due_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat(sep=" ")
     connection = database.get_connection()
     connection.execute(
-        "UPDATE notification_log SET next_retry_at = ? WHERE appointment_id = 1",
-        (due_at,),
+        "UPDATE notification_log SET next_retry_at = ? WHERE appointment_id = 1", (due_at,)
     )
     connection.commit()
     connection.close()
 
     failed = database.list_failed_notifications_scoped(business_id=2)
     assert len(failed) == 1
-    assert database.claim_notification_scoped(
-        1, 2, "confirmation", "email", "customer@example.com"
-    )
+    assert database.claim_notification_scoped(1, 2, "confirmation", "email", "customer@example.com")
     state = database.get_notification_state_scoped(2, 1, "confirmation", "email")
     assert state["retry_count"] == 1
 

@@ -203,7 +203,9 @@ def test_failed_migration_rolls_back_and_is_not_recorded(pg_enabled, tmp_path):
 def test_dry_run_writes_nothing(pg_enabled, tmp_path):
     _baseline_copy(tmp_path)
     with _disposable_db(pg_enabled) as conninfo:
-        result = pgm.run_migrations(conninfo, dry_run=True, migrations_dir=tmp_path, allow_external=True)
+        result = pgm.run_migrations(
+            conninfo, dry_run=True, migrations_dir=tmp_path, allow_external=True
+        )
 
         assert result.dry_run is True
         assert [item.version for item in result.pending] == [1]
@@ -723,6 +725,7 @@ def test_d4_percent_literal_in_parametrized_query(pg_enabled, tmp_path):
         finally:
             pool.close()
 
+
 def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled):
     """Aplica las migraciones reales de migrations_pg/ (001 + 002)."""
     with _disposable_db(pg_enabled) as conninfo:
@@ -730,12 +733,24 @@ def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled):
         assert [item.version for item in result.applied] == [1, 2]
         assert result.current_version == 2
         with connect_autocommit(conninfo) as conn:
-            cols = {r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'notification_log'").fetchall()}
-            assert {'retry_count', 'next_retry_at'} <= cols
-            idxs = {r[0] for r in conn.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'notification_log'").fetchall()}
-            assert 'idx_notification_log_retry' in idxs
-            rows = conn.execute('SELECT version, name FROM schema_migrations ORDER BY version').fetchall()
-            assert rows == [(1, '001_initial_schema.sql'), (2, '002_notification_retry_policy.sql')]
+            cols = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'notification_log'"
+                ).fetchall()
+            }
+            assert {"retry_count", "next_retry_at"} <= cols
+            idxs = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT indexname FROM pg_indexes WHERE tablename = 'notification_log'"
+                ).fetchall()
+            }
+            assert "idx_notification_log_retry" in idxs
+            rows = conn.execute(
+                "SELECT version, name FROM schema_migrations ORDER BY version"
+            ).fetchall()
+            assert rows == [(1, "001_initial_schema.sql"), (2, "002_notification_retry_policy.sql")]
         second = pgm.run_migrations(conninfo)
         assert second.applied == []
         assert second.current_version == 2
