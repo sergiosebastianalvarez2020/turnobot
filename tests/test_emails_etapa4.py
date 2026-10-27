@@ -16,7 +16,7 @@ Cubre, por requisito:
 import os
 import re
 import unittest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
 from unittest import mock
@@ -445,6 +445,16 @@ class EmailReservas(EmailBase):
         self.assertEqual(
             self._notification_row(result["appointment_id"], CONFIRMATION)["status"], "failed"
         )
+        connection = get_connection()
+        connection.execute(
+            "UPDATE notification_log SET next_retry_at = %s WHERE appointment_id = %s",
+            (
+                (datetime.now(UTC) - timedelta(minutes=1)).isoformat(sep=" "),
+                result["appointment_id"],
+            ),
+        )
+        connection.commit()
+        connection.close()
 
         # El runner reintenta y acierta (SMTP bien configurado ahora).
         # `_run_once()` es un runner de CLI: `_init_cli_pool()` resuelve el pool a

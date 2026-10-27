@@ -93,14 +93,14 @@ def _resend(row):
 
     if row["type"] == CONFIRMATION:
         return send_appointment_notification(
-            business_id, appointment, CONFIRMATION, channel="email", force=True
+            business_id, appointment, CONFIRMATION, channel="email"
         )
     if row["type"] == REMINDER:
         return send_appointment_notification(
-            business_id, appointment, REMINDER, channel="email", force=True
+            business_id, appointment, REMINDER, channel="email"
         )
     if row["type"] == BUSINESS_CONFIRMATION:
-        return send_business_confirmation_email(business_id, appointment, force=True)
+        return send_business_confirmation_email(business_id, appointment)
     return False, "unknown_type"
 
 
@@ -122,6 +122,13 @@ def _run_once(business_id=None, limit=100):
             settings = get_business_settings_scoped(business_id)
             if not settings:
                 logger.warning("Negocio %s inexistente; se omite fila %s.", business_id, row["id"])
+                continue
+            if not settings["notifications_enabled"]:
+                logger.info(
+                    "Negocio %s tiene notificaciones deshabilitadas; se omite fila %s.",
+                    business_id,
+                    row["id"],
+                )
                 continue
 
             ok, reason = _resend(row)

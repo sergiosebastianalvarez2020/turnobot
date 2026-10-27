@@ -3,7 +3,7 @@
 Esta suite usa el mismo mecanismo validado de tests_pg/conftest.py:
 - Requiere TURNOBOT_PG_URL (PostgreSQL 16 en 127.0.0.1:5433)
 - Cada test obtiene una base temporal turnobot_test_<uuid>
-- Se aplica migrations_pg/001_initial_schema.sql una sola vez por base
+- Se aplica el baseline y las migraciones PostgreSQL actuales en cada base
 - La base se destruye al finalizar el test (incluso ante fallo)
 
 Tests que necesiten SQLite por razón legítima (migración, legacy explícito)
@@ -20,7 +20,7 @@ import pytest
 
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
-    apply_initial_schema,
+    apply_current_schema,
     build_test_db_conninfo,
     conninfo_to_url,
     create_test_database,
@@ -64,7 +64,7 @@ def _create_default_test_database() -> str:
     try:
         create_test_database(TURNOBOT_PG_URL, dbname)
         test_url = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
-        apply_initial_schema(test_url)
+        apply_current_schema(test_url)
         seed_standard_test_data(test_url)
     except BaseException:
         # No abandonar la base recién creada si falla el schema o el seed.
@@ -147,7 +147,7 @@ def pg_maintenance_url() -> str:
 def pg_test_database(pg_maintenance_url: str):
     """Crea una base descartable por test y la destruye al finalizar.
 
-    La creación va DENTRO del `try`: si `apply_initial_schema` o
+    La creación va DENTRO del `try`: si la aplicación del esquema o
     `seed_standard_test_data` fallan, la base recién creada se destruye igual en
     lugar de quedar huérfana.
     """
@@ -155,7 +155,7 @@ def pg_test_database(pg_maintenance_url: str):
     try:
         create_test_database(pg_maintenance_url, dbname)
         test_url = build_test_db_conninfo(pg_maintenance_url, dbname)
-        apply_initial_schema(test_url)
+        apply_current_schema(test_url)
         seed_standard_test_data(test_url)
         yield test_url
     finally:
@@ -260,7 +260,7 @@ def pg_isolate_module_app(request):
         create_test_database(TURNOBOT_PG_URL, dbname)
         created = True
         test_conninfo = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
-        apply_initial_schema(test_conninfo)
+        apply_current_schema(test_conninfo)
         seed_standard_test_data(test_conninfo)
         test_url = conninfo_to_url(test_conninfo)
 

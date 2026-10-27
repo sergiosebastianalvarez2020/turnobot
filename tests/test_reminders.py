@@ -136,6 +136,17 @@ class TestReminderRunner(BaseReminderTest):
         self.assertEqual(sent, 0)
         self.assertEqual(len(fake.messages), 0)
 
+    def test_no_envia_sin_smtp_configurado(self):
+        self._confirmed("09:00", "ana@example.com")
+        env = {"DATABASE_URL": application.app.config["DATABASE_URL"]}
+        with mock.patch.dict(os.environ, env, clear=False):
+            os.environ.pop("SMTP_HOST", None)
+            # Mismo objeto de mockeo que el resto de la suite (`services.notifications`
+            # es quien realmente usa `smtplib` cuando el runner despacha emails).
+            with mock.patch.object(notifications.smtplib, "SMTP") as smtp:
+                self.assertEqual(reminder_runner._run_once(), 0)
+        smtp.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

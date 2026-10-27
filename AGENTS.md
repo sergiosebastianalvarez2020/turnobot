@@ -49,3 +49,18 @@ The count of passing/failing tests may vary between runs depending on Windows en
 - `routes/public.py` = módulo de rutas (NOT a registered Blueprint)
 - `routes/health.py` = módulo de ruta (Blueprint definido pero NO registrado)
 - Blueprint registration is handled in `routes/__init__.py:register_blueprints(app)`
+
+## Operaciones y Servidores (AWS / OCI)
+
+Instrucciones permanentes para agentes de IA (Kilo Code, OpenCode, Antigravity y otros):
+
+- **Inventario de Servidores**: Consultar obligatoriamente `docs/operations/SERVERS.md` antes de realizar cualquier tarea relacionada con servidores, red o infraestructura.
+- **Documentación Operativa**: Consultar la documentación real de despliegue (`DEPLOYMENT.md`) y backups/cutover (`CUTOVER_PROCEDURE.md`) antes de operar.
+- **Distinción de Entornos**: Distinguir siempre entre **AWS EC2** (servidor actual de producción) y **OCI** (servidor anterior que puede mantener timers auxiliares).
+- **Diagnóstico Previo**: Verificar IP, conectividad TCP (puerto 22), autenticación SSH y estado de servicios antes de intervenir o diagnosticar un servidor.
+- **Confidencialidad de Secretos**: No revelar jamás claves privadas (`.pem` / `.key`), contraseñas, tokens de sesión ni secretos SMTP en respuestas, logs, prompts o commits.
+- **Acciones Críticas**: No detener servicios (`turnobot.service`), no modificar producción, no ejecutar migraciones de base de datos ni eliminar backups sin autorización explícita del usuario.
+- **Notificaciones**: No enviar notificaciones reales (correos vía SMTP o mensajes) durante pruebas o diagnósticos.
+- **Control de Versiones**: No ejecutar `git commit`, `git push`, `git merge` ni despliegues a servidores sin autorización explícita.
+- **Restauración de Base de Datos**: Usar siempre una base de datos aislada y descartable para cualquier prueba de restauración (`restore_postgresql.py`).
+- **Claridad de Informes**: Informar siempre con precisión qué se verificó, el estado observable y qué puntos quedan pendientes de confirmación.

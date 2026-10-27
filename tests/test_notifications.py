@@ -45,6 +45,18 @@ class FakeSMTP:
         self.messages.append((from_addr, to_addrs, msg))
 
 
+class StartTLSFailureSMTP(FakeSMTP):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.login_calls = []
+
+    def starttls(self):
+        raise notifications.smtplib.SMTPNotSupportedError("STARTTLS unavailable")
+
+    def login(self, user, password):
+        self.login_calls.append((user, password))
+
+
 class BaseNotificationTest(unittest.TestCase):
     def setUp(self):
         self.valid_date = self._next_open_day()
@@ -174,6 +186,31 @@ class TestConfirmationEmail(BaseNotificationTest):
         self.assertFalse(sent)
         self.assertEqual(reason, "disabled")
         self.assertEqual(len(fake.messages), 0)
+
+    def test_starttls_fallido_no_autentica_ni_envia(self):
+        _, apt = self._appointment()
+        fake = StartTLSFailureSMTP()
+        env = {
+            "SMTP_HOST": "smtp.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "user",
+            "SMTP_PASSWORD": "secret-test-password",
+            "EMAIL_FROM": "no-reply@test.com",
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
+        ):
+            sent, reason = send_confirmation_email(1, apt, force=True)
+
+        self.assertFalse(sent)
+        self.assertEqual(reason, "send_failed")
+        self.assertEqual(fake.login_calls, [])
+        self.assertEqual(fake.messages, [])
+        state = database.get_notification_state_scoped(
+            1, apt["id"], notifications.CONFIRMATION, "email"
+        )
+        self.assertNotIn("secret-test-password", state["error"])
 
 
 class TestAppointmentByToken(BaseNotificationTest):
