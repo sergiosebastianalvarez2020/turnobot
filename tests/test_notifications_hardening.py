@@ -164,6 +164,17 @@ class NotificationsHardeningBase(unittest.TestCase, PostgreSQLTestCase):
         ):
             sent, reason = send_confirmation_email(1, apt, force=True)
         self.assertFalse(sent)
+        # El envío fallido programa next_retry_at con backoff (15 min). Para que
+        # el reintento sea inmediatamente elegible en los tests, se anula el
+        # backoff dejando la fila due.
+        c = database.get_connection()
+        c.execute(
+            "UPDATE notification_log SET next_retry_at = NULL "
+            "WHERE appointment_id = %s AND status = 'failed'",
+            (apt["id"],),
+        )
+        c.commit()
+        c.close()
         return apt
 
 

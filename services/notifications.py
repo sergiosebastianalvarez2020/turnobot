@@ -27,6 +27,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 
 from database.database import (
+    MAX_NOTIFICATION_RETRIES,
     claim_notification_scoped,
     get_business_settings_scoped,
     get_notification_state_scoped,
@@ -43,6 +44,8 @@ BUSINESS_CONFIRMATION = "business_confirmation"
 
 # Claves de entorno cuyos valores NUNCA deben filtrarse en logs/mensajes de error.
 _SENSITIVE_ENV_KEYS = ("SMTP_PASSWORD",)
+RETRY_BASE_DELAY_SECONDS = 15 * 60
+RETRY_MAX_DELAY_SECONDS = 4 * 60 * 60
 
 
 # ============================================================
@@ -67,6 +70,86 @@ def _smtp_config():
 
 def _now_iso():
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def retry_delay_seconds(retry_count):
+    """Backoff exponencial acotado para reintentos automáticos."""
+    exponent = max(0, int(retry_count))
+    return min(RETRY_BASE_DELAY_SECONDS * (2**exponent), RETRY_MAX_DELAY_SECONDS)
+
+
+def _next_retry_at(retry_count):
+    retry_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        seconds=retry_delay_seconds(retry_count)
+    )
+    return retry_at.isoformat(sep=" ", timespec="seconds")
+
+
+def _claim_failure_reason(state):
+    if state and state.get("status") == "sent":
+        return "already_sent"
+    if state and state.get("status") == "failed":
+        if int(state.get("retry_count") or 0) >= MAX_NOTIFICATION_RETRIES:
+            return "retry_limit_reached"
+        next_retry_at = state.get("next_retry_at")
+        if next_retry_at:
+            if isinstance(next_retry_at, str):
+                next_retry_at = datetime.datetime.fromisoformat(next_retry_at)
+            if next_retry_at.tzinfo is None:
+                next_retry_at = next_retry_at.replace(tzinfo=datetime.UTC)
+            if next_retry_at > datetime.datetime.now(datetime.UTC):
+                return "retry_not_due"
+    return "in_progress"
+
+
+def _send_and_log_notification(
+    appointment_id: int,
+    business_id: int,
+    notif_type: str,
+    channel: str,
+    destination: str,
+    subject: str,
+    html: str,
+    text: str,
+) -> tuple[bool, str | None]:
+    """Envía una notificación y registra el resultado en notification_log.
+
+    Reclama la notificación, envía por email y persiste el estado
+    (sent/failed) con retry_count y next_retry_at.
+    """
+    if not claim_notification_scoped(appointment_id, business_id, notif_type, channel, destination):
+        state = get_notification_state_scoped(business_id, appointment_id, notif_type, channel)
+        return False, _claim_failure_reason(state)
+
+    state = get_notification_state_scoped(business_id, appointment_id, notif_type, channel)
+    retry_count = int(state.get("retry_count") or 0) if state else 0
+    ok, detail = _send_email(destination, subject, html, text)
+    if not ok:
+        upsert_notification_log_scoped(
+            appointment_id,
+            business_id,
+            notif_type,
+            channel,
+            destination,
+            status="failed",
+            error=detail,
+            last_attempt_at=_now_iso(),
+            next_retry_at=_next_retry_at(retry_count),
+        )
+        return False, "send_failed"
+
+    upsert_notification_log_scoped(
+        appointment_id,
+        business_id,
+        notif_type,
+        channel,
+        destination,
+        status="sent",
+        error="",
+        last_attempt_at=_now_iso(),
+        next_retry_at=None,
+    )
+    return True, None
 
 
 def notifications_enabled(business_id):
@@ -135,12 +218,8 @@ def _send_email(to_addr, subject, html, text):
         with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as server:
             server.ehlo()
             if cfg["port"] == 587 or cfg.get("user"):
-                # STARTTLS siempre que haya credenciales o puerto estándar.
-                try:
-                    server.starttls()
-                    server.ehlo()
-                except smtplib.SMTPException:
-                    pass
+                server.starttls()
+                server.ehlo()
             if cfg["user"]:
                 server.login(cfg["user"], cfg["password"])
             server.sendmail(cfg["from_addr"], [to_addr], message.as_string())
@@ -296,37 +375,9 @@ def send_appointment_notification(
     else:
         return False, "unknown_type"
 
-    if not claim_notification_scoped(
-        appointment["id"], business_id, notif_type, channel, destination
-    ):
-        state = get_notification_state_scoped(business_id, appointment["id"], notif_type, channel)
-        return False, "already_sent" if state and state.get("status") == "sent" else "in_progress"
-
-    ok, detail = _send_email(destination, subject, html, text)
-    if not ok:
-        upsert_notification_log_scoped(
-            appointment["id"],
-            business_id,
-            notif_type,
-            channel,
-            destination,
-            status="failed",
-            error=detail,
-            last_attempt_at=_now_iso(),
-        )
-        return False, "send_failed"
-
-    upsert_notification_log_scoped(
-        appointment["id"],
-        business_id,
-        notif_type,
-        channel,
-        destination,
-        status="sent",
-        error="",
-        last_attempt_at=_now_iso(),
+    return _send_and_log_notification(
+        appointment["id"], business_id, notif_type, channel, destination, subject, html, text
     )
-    return True, None
 
 
 def send_confirmation_email(
@@ -415,38 +466,16 @@ def send_business_confirmation_email(business_id, appointment, force=False):
     text, html = _build_business_confirmation(appointment, business)
     subject = f"Nueva reserva - {business.get('business_name') or 'Mi negocio'}"
 
-    if not claim_notification_scoped(
-        appointment["id"], business_id, BUSINESS_CONFIRMATION, "email", destination
-    ):
-        state = get_notification_state_scoped(
-            business_id, appointment["id"], BUSINESS_CONFIRMATION, "email"
-        )
-        return False, "already_sent" if state and state.get("status") == "sent" else "in_progress"
-    ok, detail = _send_email(destination, subject, html, text)
-    if not ok:
-        upsert_notification_log_scoped(
-            appointment["id"],
-            business_id,
-            BUSINESS_CONFIRMATION,
-            "email",
-            destination,
-            status="failed",
-            error=detail,
-            last_attempt_at=_now_iso(),
-        )
-        return False, "send_failed"
-
-    upsert_notification_log_scoped(
+    return _send_and_log_notification(
         appointment["id"],
         business_id,
         BUSINESS_CONFIRMATION,
         "email",
         destination,
-        status="sent",
-        error="",
-        last_attempt_at=_now_iso(),
+        subject,
+        html,
+        text,
     )
-    return True, None
 
 
 def dispatch_booking_emails(

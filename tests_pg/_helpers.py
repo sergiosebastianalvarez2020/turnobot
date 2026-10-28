@@ -23,6 +23,7 @@ TURNOBOT_PG_URL_KEY = "TURNOBOT_PG_URL"
 INITIAL_SCHEMA_PATH = (
     Path(__file__).resolve().parent.parent / "migrations_pg" / "001_initial_schema.sql"
 )
+VERSIONED_MIGRATIONS_DIR = INITIAL_SCHEMA_PATH.parent
 
 # Guardia de seguridad: los nombres de base de datos de prueba de este harness
 # siguen el patrón `turnobot_test_<hex>` (`new_db_name`) o `turnobot_bootstrap_<hex>`
@@ -107,6 +108,20 @@ def apply_initial_schema(test_url: str) -> None:
     with connect_autocommit(test_url) as conn:
         conn.execute(schema)
         sync_identity_sequences(conn)
+
+
+def apply_current_schema(test_url: str) -> None:
+    """Aplica el baseline y las migraciones versionadas a una base descartable."""
+    apply_initial_schema(test_url)
+    migrations = sorted(VERSIONED_MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+    for migration in migrations:
+        if migration == INITIAL_SCHEMA_PATH:
+            continue
+        sql_text = migration.read_text(encoding="utf-8")
+        if not sql_text.strip():
+            raise RuntimeError(f"El archivo de migración está vacío: {migration}")
+        with connect_autocommit(test_url) as conn:
+            conn.execute(sql_text)
 
 
 def new_db_name() -> str:

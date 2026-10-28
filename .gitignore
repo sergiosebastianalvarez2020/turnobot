@@ -12,3 +12,5 @@ credenciales-turnobot.txt
 .coverage
 htmlcov/
 .coverage.*
+docs/operations/SERVERS.local.md
+/null

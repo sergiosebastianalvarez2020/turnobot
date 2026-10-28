@@ -54,17 +54,20 @@ class TestAppointmentIdempotencyKeyMigration(unittest.TestCase):
             os.environ["DATABASE_URL"] = self._original_db_url
         else:
             os.environ.pop("DATABASE_URL", None)
+        self.doCleanups()
         self.temp_dir.cleanup()
 
     def _copiar_hasta(self, incluir_023):
+        limite = 23 if incluir_023 else 22
         for origen in sorted(MIGRATIONS.glob("*.sql")):
-            if origen.name == NUEVA and not incluir_023:
-                continue
-            shutil.copy(origen, self.migrations_dir / origen.name)
+            prefix = origen.name.split("_")[0]
+            if prefix.isdigit() and int(prefix) <= limite:
+                shutil.copy(origen, self.migrations_dir / origen.name)
 
     def connect(self):
         connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
+        self.addCleanup(connection.close)
         return connection
 
     def test_upgrade_de_una_base_pre_023(self):

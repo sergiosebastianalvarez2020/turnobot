@@ -1,14 +1,21 @@
-"""Retención segura de backups automáticos de SQLite.
+"""Retención segura de backups automáticos (SQLite y PostgreSQL).
 
 Aplica una política conservadora SOLO sobre archivos cuyo nombre coincide
-exactamente con el patrón de backup automático
-``appointments-YYYYMMDD-HHMMSS.db``:
+exactamente con uno de los patrones de backup automático:
+
+    * ``appointments-YYYYMMDD-HHMMSS.db``   (SQLite)
+    * ``turnobot-pg-YYYYMMDD-HHMMSS.dump``  (PostgreSQL, pg_dump -Fc)
 
     * 7 backups diarios (el más reciente de cada uno de los últimos 7 días)
     * 4 backups semanales (el más reciente de cada una de las últimas 4 semanas ISO)
     * 6 backups mensuales (el más reciente de cada uno de los últimos 6 meses)
 
-Cualquier archivo que NO coincida con el patrón (backups manuales,
+La retención se calcula POR FORMATO: cada patrón agrupa sus propios cubos
+diario/semanal/mensual, de modo que un volcado PostgreSQL nunca desplaza a un
+backup SQLite del mismo directorio (ni a la inversa). Con un solo formato en
+el directorio el resultado es idéntico al comportamiento histórico SQLite.
+
+Cualquier archivo que NO coincida con los patrones (backups manuales,
 pre-migración, sidecars WAL, etc.) se considera PRESERVED y nunca se borra.
 
 Por defecto corre en modo ``--dry-run`` (no elimina nada). Con ``--apply``
@@ -32,7 +39,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BACKUPS_DIR = PROJECT_ROOT / "database" / "backups"
 
-BACKUP_NAME_RE = re.compile(r"^appointments-(\d{8})-(\d{6})\.db$")
+BACKUP_NAME_RES = (
+    ("sqlite", re.compile(r"^appointments-(\d{8})-(\d{6})\.db$")),
+    ("postgres", re.compile(r"^turnobot-pg-(\d{8})-(\d{6})\.dump$")),
+)
 
 DAILY_KEEP = 7
 WEEKLY_KEEP = 4
@@ -41,22 +51,37 @@ MONTHLY_KEEP = 6
 MAX_DELETIONS = 1000
 
 
+def match_managed(name):
+    """Devuelve ``(formato, timestamp)`` si ``name`` es un backup automático.
+
+    ``formato`` es la clave de agrupación de la retención (``sqlite`` o
+    ``postgres``). Devuelve ``None`` cuando el nombre no coincide con ningún
+    patrón o cuando la fecha codificada no es válida: en ambos casos el
+    archivo queda PRESERVED y jamás se borra.
+    """
+    for kind, pattern in BACKUP_NAME_RES:
+        match = pattern.match(name)
+        if not match:
+            continue
+        try:
+            timestamp = datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+        return kind, timestamp
+    return None
+
+
 def parse_timestamp(name):
     """Devuelve el datetime codificado en el nombre, o None si no matchea."""
-    match = BACKUP_NAME_RE.match(name)
-    if not match:
-        return None
-    try:
-        return datetime.strptime(match.group(1) + match.group(2), "%Y%m%d%H%M%S")
-    except ValueError:
-        return None
+    matched = match_managed(name)
+    return matched[1] if matched else None
 
 
 def list_entries(backups_dir):
     """Clasifica el contenido de ``backups_dir`` sin seguir symlinks.
 
     Devuelve ``(managed, preserved)`` donde ``managed`` es una lista de
-    ``(timestamp, nombre)`` ordenada de más reciente a más antiguo, y
+    ``(formato, timestamp, nombre)`` ordenada de más reciente a más antiguo, y
     ``preserved`` es la lista (ordenada) de nombres no gestionados.
     """
     backups_dir = Path(backups_dir)
@@ -72,12 +97,12 @@ def list_entries(backups_dir):
             if is_symlink or not is_file:
                 preserved.append(entry.name)
                 continue
-            timestamp = parse_timestamp(entry.name)
-            if timestamp is None:
+            matched = match_managed(entry.name)
+            if matched is None:
                 preserved.append(entry.name)
             else:
-                managed.append((timestamp, entry.name))
-    managed.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                managed.append((matched[0], matched[1], entry.name))
+    managed.sort(key=lambda item: (item[1], item[2]), reverse=True)
     preserved.sort()
     return managed, preserved
 
@@ -93,10 +118,10 @@ def plan(
     keep = set()
 
     if managed:
-        keep.add(managed[0][1])
+        keep.add(managed[0][2])
 
     today = now.date()
-    for timestamp, name in managed:
+    for _, timestamp, name in managed:
         if timestamp.date() == today:
             keep.add(name)
 
@@ -104,20 +129,22 @@ def plan(
         if limit <= 0:
             return
         buckets = {}
-        for timestamp, name in managed:
-            key = keyfunc(timestamp)
+        for kind, timestamp, name in managed:
+            key = keyfunc(kind, timestamp)
             if key not in buckets or (timestamp, name) > buckets[key]:
                 buckets[key] = (timestamp, name)
-        for key in sorted(buckets.keys(), reverse=True)[:limit]:
-            keep.add(buckets[key][1])
+        for kind in {entry[0] for entry in managed}:
+            kind_keys = sorted((key for key in buckets if key[0] == kind), reverse=True)[:limit]
+            for key in kind_keys:
+                keep.add(buckets[key][1])
 
-    keep_latest_per_bucket(lambda ts: ts.date(), daily_keep)
-    keep_latest_per_bucket(lambda ts: ts.isocalendar()[:2], weekly_keep)
-    keep_latest_per_bucket(lambda ts: (ts.year, ts.month), monthly_keep)
+    keep_latest_per_bucket(lambda kind, ts: (kind, ts.date()), daily_keep)
+    keep_latest_per_bucket(lambda kind, ts: (kind, ts.isocalendar()[:2]), weekly_keep)
+    keep_latest_per_bucket(lambda kind, ts: (kind, (ts.year, ts.month)), monthly_keep)
 
     return {
-        "keep": [name for _, name in managed if name in keep],
-        "delete": [name for _, name in managed if name not in keep],
+        "keep": [name for _, _, name in managed if name in keep],
+        "delete": [name for _, _, name in managed if name not in keep],
         "preserved": preserved,
     }
 
@@ -127,7 +154,7 @@ def apply_plan(backups_dir, plan_result):
     backups_dir = Path(backups_dir).resolve()
     deleted = []
     for name in plan_result["delete"]:
-        if not BACKUP_NAME_RE.match(name):
+        if match_managed(name) is None:
             raise RuntimeError(f"Guardia: nombre no gestionado en DELETE: {name}")
         target = backups_dir / name
         if target.resolve().parent != backups_dir:

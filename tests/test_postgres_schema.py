@@ -1,8 +1,8 @@
-"""Pruebas de la Fase 4E: esquema PostgreSQL final (migrations_pg).
+"""Pruebas del baseline PostgreSQL y sus migraciones versionadas.
 
-Verifican por conteo e inspeccion estatica que migrations_pg/001_initial_schema.sql
-materializa el mismo esquema final que las 22 migraciones SQLite de migrations/
-(business_knowledge_fts y artefactos del runner SQLite quedan fuera).
+Verifican por conteo e inspección estática el esquema de bootstrap
+``migrations_pg/001_initial_schema.sql``. Los cambios posteriores del esquema
+se mantienen en migraciones PostgreSQL versionadas independientes.
 
 No requieren una instancia PostgreSQL: validan estructura y correspondencia.
 """
@@ -11,6 +11,9 @@ import re
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "migrations_pg" / "001_initial_schema.sql"
+RETRY_MIGRATION_PATH = (
+    Path(__file__).resolve().parent.parent / "migrations_pg" / "002_notification_retry_policy.sql"
+)
 
 EXPECTED_TABLES = {
     "appointments",
@@ -76,6 +79,12 @@ def test_schema_file_exists():
 
 def test_schema_file_not_empty():
     assert len(_read_schema().strip()) > 1000, "el esquema no debe estar vacio"
+
+
+def test_retry_policy_is_a_separate_postgres_migration():
+    migration = RETRY_MIGRATION_PATH.read_text(encoding="utf-8").lower()
+    assert "add column retry_count integer not null default 0" in migration
+    assert "add column next_retry_at timestamptz" in migration
 
 
 def test_core_tables_present():

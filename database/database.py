@@ -18,6 +18,9 @@ MIGRATIONS_DIR = BASE_DIR / "migrations"
 # Shared bigint lock key, separate from the app's two-int tenant locks.
 _PG_SCHEMA_BOOTSTRAP_LOCK = 6076853768564197445
 
+# Maximum number of automatic retries after the initial notification attempt.
+MAX_NOTIFICATION_RETRIES = 5
+
 logger = logging.getLogger("turnobot.db")
 
 
@@ -1148,14 +1151,16 @@ def notification_sent_scoped(business_id, appointment_id, type_, channel):
 def get_notification_state_scoped(business_id, appointment_id, type_, channel):
     """Devuelve el estado actual de una notificación (o None).
 
-    Estado: {"destination", "status", "error", "last_attempt_at"}.
+    Estado: {"destination", "status", "error", "last_attempt_at",
+    "retry_count", "next_retry_at"}.
     `status` puede ser 'pending' | 'sent' | 'failed'. Scoped por negocio.
     """
     connection = get_connection()
     try:
         row = connection.execute(
             """
-            SELECT destination, status, error, last_attempt_at
+            SELECT destination, status, error, last_attempt_at,
+                   retry_count, next_retry_at
             FROM notification_log
             WHERE business_id = ? AND appointment_id = ? AND type = ? AND channel = ?
             """,
@@ -1175,6 +1180,7 @@ def upsert_notification_log_scoped(
     status="sent",
     error="",
     last_attempt_at="",
+    next_retry_at=None,
 ):
     """Registra/actualiza una notificación de forma idempotente.
 
@@ -1188,13 +1194,14 @@ def upsert_notification_log_scoped(
             """
             INSERT INTO notification_log
                 (appointment_id, business_id, type, channel, destination,
-                 status, error, last_attempt_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 status, error, last_attempt_at, next_retry_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (business_id, appointment_id, type, channel) DO UPDATE SET
                 destination = excluded.destination,
                 status = excluded.status,
                 error = excluded.error,
-                last_attempt_at = excluded.last_attempt_at
+                last_attempt_at = excluded.last_attempt_at,
+                next_retry_at = excluded.next_retry_at
             """,
             (
                 appointment_id,
@@ -1205,6 +1212,7 @@ def upsert_notification_log_scoped(
                 status,
                 error[:1000],
                 last_attempt_at,
+                next_retry_at,
             ),
         )
         connection.commit()
@@ -1222,7 +1230,7 @@ def claim_notification_scoped(
     """Claim DB atómico antes de SMTP; recupera claims abandonados."""
     connection = get_connection()
     try:
-        now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.datetime.now(datetime.UTC).isoformat(sep=" ", timespec="seconds")
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             """INSERT INTO notification_log
@@ -1232,12 +1240,35 @@ def claim_notification_scoped(
                ON CONFLICT (business_id, appointment_id, type, channel) DO NOTHING""",
             (appointment_id, business_id, type_, channel, destination, now),
         )
+        connection.execute(
+            """UPDATE notification_log
+               SET status='failed', error='Automatic retry limit reached after stale attempt',
+                   next_retry_at=NULL
+               WHERE business_id=? AND appointment_id=? AND type=? AND channel=?
+                 AND status='processing' AND retry_count >= ?
+                 AND last_attempt_at < datetime('now', ?)""",
+            (
+                business_id,
+                appointment_id,
+                type_,
+                channel,
+                MAX_NOTIFICATION_RETRIES,
+                f"-{int(stale_after_seconds)} seconds",
+            ),
+        )
         cursor = connection.execute(
             """UPDATE notification_log SET status='processing', destination=?,
-                      error='', last_attempt_at=?
+                      error='', last_attempt_at=?, next_retry_at=NULL,
+                      retry_count = retry_count + CASE
+                          WHEN status IN ('failed','processing') THEN 1 ELSE 0 END
                WHERE business_id=? AND appointment_id=? AND type=? AND channel=?
-                 AND (status IN ('pending','failed')
-                      OR (status='processing' AND last_attempt_at < datetime('now', ?)))""",
+                 AND (
+                      status = 'pending'
+                      OR (status = 'failed' AND retry_count < ?
+                          AND (next_retry_at IS NULL OR next_retry_at <= ?))
+                      OR (status = 'processing' AND retry_count < ?
+                          AND last_attempt_at < datetime('now', ?))
+                 )""",
             (
                 destination,
                 now,
@@ -1245,6 +1276,9 @@ def claim_notification_scoped(
                 appointment_id,
                 type_,
                 channel,
+                MAX_NOTIFICATION_RETRIES,
+                now,
+                MAX_NOTIFICATION_RETRIES,
                 f"-{int(stale_after_seconds)} seconds",
             ),
         )
@@ -1257,36 +1291,49 @@ def claim_notification_scoped(
         connection.close()
 
 
-def list_failed_notifications_scoped(business_id=None, limit=100):
-    """Lista notificaciones con estado 'failed' para reintento.
+def list_failed_notifications_scoped(
+    business_id=None, limit=100, now=None, max_retries=MAX_NOTIFICATION_RETRIES
+):
+    """Lista notificaciones fallidas vencidas, en orden de vencimiento.
 
     Scoped por business_id (o todas si no se indica) para que un reintento
-    jamás cruce el límite del tenant.
+    jamás cruce el límite del tenant. El filtro por vencimiento y máximo de
+    reintentos evita que fallos recientes o agotados ocupen el lote limitado.
     """
+    if now is None:
+        now = datetime.datetime.now(datetime.UTC)
+    if isinstance(now, datetime.datetime):
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=datetime.UTC)
+        now = now.astimezone(datetime.UTC).isoformat(sep=" ", timespec="seconds")
+
     connection = get_connection()
     try:
+        filters = """
+            status = 'failed'
+            AND retry_count < ?
+            AND (next_retry_at IS NULL OR next_retry_at <= ?)
+            AND NOT EXISTS (
+                SELECT 1 FROM business_settings
+                WHERE business_settings.business_id = notification_log.business_id
+                  AND business_settings.notifications_enabled IS FALSE
+            )
+        """
+        params = [max_retries, now]
         if business_id is not None:
-            rows = connection.execute(
-                """
+            filters += " AND business_id = ?"
+            params.append(business_id)
+        params.append(limit)
+        rows = connection.execute(
+            f"""
                 SELECT id, appointment_id, business_id, type, channel, destination, error
                 FROM notification_log
-                WHERE business_id = ? AND status = 'failed'
-                ORDER BY id
+                WHERE {filters}
+                ORDER BY next_retry_at NULLS FIRST, last_attempt_at NULLS FIRST, id
                 LIMIT ?
-                """,
-                (business_id, limit),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-                SELECT id, appointment_id, business_id, type, channel, destination, error
-                FROM notification_log
-                WHERE status = 'failed'
-                ORDER BY id
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+            """,
+            params,
+        ).fetchall()
         return [dict(row) for row in rows]
     finally:
         connection.close()

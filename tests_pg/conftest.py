@@ -2,9 +2,8 @@
 
 Sin ``TURNOBOT_PG_URL`` toda la suite hace SKIP limpio y la suite SQLite queda
 intacta. Con la variable seteada, cada test vive en una base PostgreSQL
-descartable (``turnobot_test_<uuid>``) sobre la que se aplica
-``migrations_pg/001_initial_schema.sql`` (que ya contiene su propio
-BEGIN/COMMIT y no es idempotente: se aplica UNA sola vez por base).
+descartable (``turnobot_test_<uuid>``) sobre la que se aplica el baseline y las
+migraciones versionadas posteriores.
 """
 
 import os
@@ -15,7 +14,7 @@ import pytest
 from database.pg_pool import create_pg_pool
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
-    apply_initial_schema,
+    apply_current_schema,
     build_test_db_conninfo,
     create_test_database,
     drop_test_database,
@@ -55,7 +54,7 @@ def pg_test_database(pg_enabled: str):
     dbname = new_db_name()
     create_test_database(pg_enabled, dbname)
     test_url = build_test_db_conninfo(pg_enabled, dbname)
-    apply_initial_schema(test_url)
+    apply_current_schema(test_url)
     try:
         yield test_url
     finally:

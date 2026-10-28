@@ -66,9 +66,10 @@ def _migration_rows(conninfo: str) -> list[tuple]:
         ).fetchall()
 
 
-def test_applies_baseline_on_empty_database_and_is_idempotent(pg_enabled):
+def test_applies_baseline_on_empty_database_and_is_idempotent(pg_enabled, tmp_path):
+    _baseline_copy(tmp_path)
     with _disposable_db(pg_enabled) as conninfo:
-        result = pgm.run_migrations(conninfo)
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         assert [item.version for item in result.applied] == [1]
         assert result.current_version == 1
@@ -81,18 +82,19 @@ def test_applies_baseline_on_empty_database_and_is_idempotent(pg_enabled):
         assert rows[0][1] == "001_initial_schema.sql"
         assert rows[0][2] == _sha256(INITIAL_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-        second = pgm.run_migrations(conninfo)
+        second = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
         assert second.applied == []
         assert second.adopted == []
         assert second.current_version == 1
 
 
-def test_adopts_existing_baseline_without_reexecution(pg_enabled):
+def test_adopts_existing_baseline_without_reexecution(pg_enabled, tmp_path):
     """Base ya bootstrapeada por la app (001 completo, sin metadata): auto-baseline."""
+    _baseline_copy(tmp_path)
     with _disposable_db(pg_enabled) as conninfo:
         apply_initial_schema(conninfo)
 
-        result = pgm.run_migrations(conninfo)
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
 
         assert [item.version for item in result.adopted] == [1]
         assert result.applied == []
@@ -198,9 +200,12 @@ def test_failed_migration_rolls_back_and_is_not_recorded(pg_enabled, tmp_path):
         assert "mig_widgets" not in _public_tables(conninfo)
 
 
-def test_dry_run_writes_nothing(pg_enabled):
+def test_dry_run_writes_nothing(pg_enabled, tmp_path):
+    _baseline_copy(tmp_path)
     with _disposable_db(pg_enabled) as conninfo:
-        result = pgm.run_migrations(conninfo, dry_run=True)
+        result = pgm.run_migrations(
+            conninfo, dry_run=True, migrations_dir=tmp_path, allow_external=True
+        )
 
         assert result.dry_run is True
         assert [item.version for item in result.pending] == [1]
@@ -228,21 +233,24 @@ def test_concurrent_runners_serialize(pg_enabled, tmp_path):
         assert "mig_widgets" in _public_tables(conninfo)
 
 
-def test_lock_wait_times_out_when_lock_is_held_then_recovers(pg_enabled):
+def test_lock_wait_times_out_when_lock_is_held_then_recovers(pg_enabled, tmp_path):
+    _baseline_copy(tmp_path)
     with _disposable_db(pg_enabled) as conninfo:
         blocker = connect_autocommit(conninfo)
         try:
             blocker.execute("SELECT pg_advisory_lock(%s)", (pgm._PG_SCHEMA_LOCK,))
 
             with pytest.raises(pgm.MigrationLockTimeout, match="advisory lock"):
-                pgm.run_migrations(conninfo, lock_timeout=0.5)
+                pgm.run_migrations(
+                    conninfo, lock_timeout=0.5, migrations_dir=tmp_path, allow_external=True
+                )
 
             assert _public_tables(conninfo) == set()
         finally:
             blocker.execute("SELECT pg_advisory_unlock(%s)", (pgm._PG_SCHEMA_LOCK,))
             blocker.close()
 
-        result = pgm.run_migrations(conninfo)
+        result = pgm.run_migrations(conninfo, migrations_dir=tmp_path, allow_external=True)
         assert [item.version for item in result.applied] == [1]
 
 
@@ -716,3 +724,33 @@ def test_d4_percent_literal_in_parametrized_query(pg_enabled, tmp_path):
                 pool.close()
         finally:
             pool.close()
+
+
+def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled):
+    """Aplica las migraciones reales de migrations_pg/ (001 + 002)."""
+    with _disposable_db(pg_enabled) as conninfo:
+        result = pgm.run_migrations(conninfo)
+        assert [item.version for item in result.applied] == [1, 2]
+        assert result.current_version == 2
+        with connect_autocommit(conninfo) as conn:
+            cols = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'notification_log'"
+                ).fetchall()
+            }
+            assert {"retry_count", "next_retry_at"} <= cols
+            idxs = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT indexname FROM pg_indexes WHERE tablename = 'notification_log'"
+                ).fetchall()
+            }
+            assert "idx_notification_log_retry" in idxs
+            rows = conn.execute(
+                "SELECT version, name FROM schema_migrations ORDER BY version"
+            ).fetchall()
+            assert rows == [(1, "001_initial_schema.sql"), (2, "002_notification_retry_policy.sql")]
+        second = pgm.run_migrations(conninfo)
+        assert second.applied == []
+        assert second.current_version == 2
