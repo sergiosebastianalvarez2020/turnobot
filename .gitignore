@@ -14,3 +14,10 @@ htmlcov/
 .coverage.*
 docs/operations/SERVERS.local.md
 /null
+# Artefactos de ejecución de pruebas (salida local, no publicar)
+out/
+test_output*.txt
+# Scripts locales de ejecución de pruebas (contienen credenciales de BD de prueba)
+run_*.ps1
+# Respaldo de limpieza del repositorio (no publicar)
+.cleanup_backup/
