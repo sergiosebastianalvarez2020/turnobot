@@ -102,6 +102,56 @@ def _claim_failure_reason(state):
     return "in_progress"
 
 
+def _send_and_log_notification(
+    appointment_id: int,
+    business_id: int,
+    notif_type: str,
+    channel: str,
+    destination: str,
+    subject: str,
+    html: str,
+    text: str,
+) -> tuple[bool, str | None]:
+    """Envía una notificación y registra el resultado en notification_log.
+
+    Reclama la notificación, envía por email y persiste el estado
+    (sent/failed) con retry_count y next_retry_at.
+    """
+    if not claim_notification_scoped(appointment_id, business_id, notif_type, channel, destination):
+        state = get_notification_state_scoped(business_id, appointment_id, notif_type, channel)
+        return False, _claim_failure_reason(state)
+
+    state = get_notification_state_scoped(business_id, appointment_id, notif_type, channel)
+    retry_count = int(state.get("retry_count") or 0) if state else 0
+    ok, detail = _send_email(destination, subject, html, text)
+    if not ok:
+        upsert_notification_log_scoped(
+            appointment_id,
+            business_id,
+            notif_type,
+            channel,
+            destination,
+            status="failed",
+            error=detail,
+            last_attempt_at=_now_iso(),
+            next_retry_at=_next_retry_at(retry_count),
+        )
+        return False, "send_failed"
+
+    upsert_notification_log_scoped(
+        appointment_id,
+        business_id,
+        notif_type,
+        channel,
+        destination,
+        status="sent",
+        error="",
+        last_attempt_at=_now_iso(),
+        next_retry_at=None,
+    )
+    return True, None
+
+
 def notifications_enabled(business_id):
     """True si el negocio tiene habilitadas las notificaciones."""
     settings = get_business_settings_scoped(business_id)
@@ -325,41 +375,9 @@ def send_appointment_notification(
     else:
         return False, "unknown_type"
 
-    if not claim_notification_scoped(
-        appointment["id"], business_id, notif_type, channel, destination
-    ):
-        state = get_notification_state_scoped(business_id, appointment["id"], notif_type, channel)
-        return False, _claim_failure_reason(state)
-
-    state = get_notification_state_scoped(business_id, appointment["id"], notif_type, channel)
-    retry_count = int(state.get("retry_count") or 0) if state else 0
-    ok, detail = _send_email(destination, subject, html, text)
-    if not ok:
-        upsert_notification_log_scoped(
-            appointment["id"],
-            business_id,
-            notif_type,
-            channel,
-            destination,
-            status="failed",
-            error=detail,
-            last_attempt_at=_now_iso(),
-            next_retry_at=_next_retry_at(retry_count),
-        )
-        return False, "send_failed"
-
-    upsert_notification_log_scoped(
-        appointment["id"],
-        business_id,
-        notif_type,
-        channel,
-        destination,
-        status="sent",
-        error="",
-        last_attempt_at=_now_iso(),
-        next_retry_at=None,
+    return _send_and_log_notification(
+        appointment["id"], business_id, notif_type, channel, destination, subject, html, text
     )
-    return True, None
 
 
 def send_confirmation_email(
@@ -448,44 +466,16 @@ def send_business_confirmation_email(business_id, appointment, force=False):
     text, html = _build_business_confirmation(appointment, business)
     subject = f"Nueva reserva - {business.get('business_name') or 'Mi negocio'}"
 
-    if not claim_notification_scoped(
-        appointment["id"], business_id, BUSINESS_CONFIRMATION, "email", destination
-    ):
-        state = get_notification_state_scoped(
-            business_id, appointment["id"], BUSINESS_CONFIRMATION, "email"
-        )
-        return False, _claim_failure_reason(state)
-    state = get_notification_state_scoped(
-        business_id, appointment["id"], BUSINESS_CONFIRMATION, "email"
-    )
-    retry_count = int(state.get("retry_count") or 0) if state else 0
-    ok, detail = _send_email(destination, subject, html, text)
-    if not ok:
-        upsert_notification_log_scoped(
-            appointment["id"],
-            business_id,
-            BUSINESS_CONFIRMATION,
-            "email",
-            destination,
-            status="failed",
-            error=detail,
-            last_attempt_at=_now_iso(),
-            next_retry_at=_next_retry_at(retry_count),
-        )
-        return False, "send_failed"
-
-    upsert_notification_log_scoped(
+    return _send_and_log_notification(
         appointment["id"],
         business_id,
         BUSINESS_CONFIRMATION,
         "email",
         destination,
-        status="sent",
-        error="",
-        last_attempt_at=_now_iso(),
-        next_retry_at=None,
+        subject,
+        html,
+        text,
     )
-    return True, None
 
 
 def dispatch_booking_emails(
