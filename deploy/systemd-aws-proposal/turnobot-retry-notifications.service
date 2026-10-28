@@ -1,0 +1,16 @@
+[Unit]
+Description=TurnoBot - Reintento de notificaciones fallidas
+After=network.target
+OnFailure=turnobot-failure-notify@%N.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/turnobot
+EnvironmentFile=/etc/turnobot.env
+EnvironmentFile=/etc/turnobot-monitoring.env
+Environment=PYTHONPATH=/home/ubuntu/turnobot
+ExecStart=/home/ubuntu/turnobot/.venv312/bin/python /home/ubuntu/turnobot/scripts/retry_failed_notifications.py --limit 100
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,0 +1,14 @@
+[Unit]
+Description=TurnoBot - Retencion de backups automaticos (PostgreSQL)
+After=network.target turnobot-backup.service
+OnFailure=turnobot-failure-notify@%N.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/turnobot
+Environment=PYTHONPATH=/home/ubuntu/turnobot
+ExecStart=/home/ubuntu/turnobot/.venv312/bin/python /home/ubuntu/turnobot/scripts/prune_backups.py --apply --dir /home/ubuntu/turnobot/backups_pg
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,0 +1,14 @@
+[Unit]
+Description=TurnoBot - Verificacion de restauracion del backup PostgreSQL
+After=network.target turnobot-backup.service
+OnFailure=turnobot-failure-notify@%N.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/turnobot
+Environment=PYTHONPATH=/home/ubuntu/turnobot
+ExecStart=/home/ubuntu/turnobot/.venv312/bin/python /home/ubuntu/turnobot/scripts/verify_backup_postgresql.py
+NoNewPrivileges=true
+PrivateTmp=true
