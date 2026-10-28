@@ -1,0 +1,10 @@
+[Unit]
+Description=TurnoBot - Retencion de backups (diario 04:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+Unit=turnobot-backup-prune.service
+
+[Install]
+WantedBy=timers.target

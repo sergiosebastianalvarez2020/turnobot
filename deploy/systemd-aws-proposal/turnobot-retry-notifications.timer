@@ -1,0 +1,10 @@
+[Unit]
+Description=TurnoBot - Reintento de notificaciones cada 15 minutos
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=turnobot-retry-notifications.service
+
+[Install]
+WantedBy=timers.target
