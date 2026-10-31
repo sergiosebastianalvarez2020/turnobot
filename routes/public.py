@@ -26,18 +26,8 @@ from routes.booking_abuse import enforce_public_booking_abuse_checks
 
 
 def index():
-    """Landing page principal (fallback sin tenant)."""
-    import app as application
-
-    business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
-    return render_template(
-        "index.html", public_frontend_config=application.build_public_frontend_config(settings)
-    )
+    """Landing comercial de TurnoBot, independiente de cualquier tenant."""
+    return render_template("marketing_home.html")
 
 
 def business_index(slug):

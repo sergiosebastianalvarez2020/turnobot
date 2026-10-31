@@ -115,12 +115,18 @@ else:
 
 
 @pytest.fixture(autouse=True)
-def pg_test_env(monkeypatch):
+def pg_test_env(request, monkeypatch):
     """Configura el entorno para que la aplicación use PostgreSQL de tests.
 
     Forza DATABASE_URL y DB_BACKEND a PostgreSQL. El pool del módulo `app`
     se reconfigura a una base temporal por test mediante `pg_per_test_db`.
+
+    Los tests marcados con `no_pg` no requieren base de datos y se ejecutan
+    sin inicializar PostgreSQL ni saltar.
     """
+    if request.node.get_closest_marker("no_pg"):
+        yield
+        return
     if not TURNOBOT_PG_URL:
         pytest.skip("TURNOBOT_PG_URL no está definida; suite funcional PostgreSQL omitida.")
     monkeypatch.setenv("DATABASE_URL", TURNOBOT_PG_URL)

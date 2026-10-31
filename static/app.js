@@ -221,8 +221,7 @@ async function withTyping(
         ) {
 
             addMessage(
-                "La petición tardó demasiado. "
-                "Por favor, intentá nuevamente.",
+                "La petición tardó demasiado. Por favor, intentá nuevamente.",
                 "bot",
                 "error"
             );
@@ -337,8 +336,7 @@ async function fetchJSON(
         ) {
 
             throw new Error(
-                "La petición tardó demasiado. "
-                "Por favor, intentá nuevamente."
+                "La petición tardó demasiado. Por favor, intentá nuevamente."
             );
         }
 

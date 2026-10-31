@@ -1,0 +1,135 @@
+/* Second visual pass: compact section rhythm and preserve device breathing room. */
+.marketing-how,
+.marketing-rubros,
+.marketing-faq,
+.marketing-final-cta {
+    padding-bottom: 76px;
+    padding-top: 76px;
+}
+
+.marketing-how {
+    gap: 56px;
+}
+
+.marketing-faq {
+    gap: 32px;
+}
+
+.marketing-final-cta {
+    padding-top: 8px;
+}
+
+.marketing-hero-cta {
+    box-shadow: 0 10px 24px rgba(0, 180, 255, .2);
+    line-height: 1.3;
+    min-height: 54px;
+}
+
+@media (min-width: 901px) and (max-width: 1120px) {
+    .marketing-hero {
+        min-height: 620px;
+        padding-left: 5vw;
+        padding-right: 5vw;
+    }
+
+    .marketing-hero-copy {
+        max-width: 43%;
+    }
+
+    .marketing-device-scene {
+        right: -2vw;
+        top: 84px;
+        width: 57vw;
+    }
+
+    .marketing-dashboard {
+        width: 51vw;
+    }
+
+    .marketing-phone {
+        height: 365px;
+        left: 8%;
+        top: 79px;
+        width: 182px;
+    }
+}
+
+@media (min-width: 681px) and (max-width: 900px) {
+    .marketing-hero {
+        min-height: 620px;
+        padding-left: 5vw;
+        padding-right: 5vw;
+    }
+
+    .marketing-hero-copy {
+        max-width: 46%;
+    }
+
+    .marketing-device-scene {
+        opacity: .92;
+        right: -5vw;
+        top: 104px;
+        width: 54vw;
+    }
+
+    .marketing-dashboard {
+        width: 49vw;
+    }
+
+    .marketing-phone {
+        height: 340px;
+        left: 4%;
+        top: 95px;
+        width: 170px;
+    }
+}
+
+@media (max-width: 680px) {
+    .marketing-hero {
+        min-height: 0;
+        padding-bottom: 420px;
+    }
+
+    .marketing-hero-cta {
+        justify-content: center;
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .marketing-device-scene {
+        bottom: 12px;
+        width: min(92vw, 360px);
+    }
+
+    .marketing-dashboard {
+        right: -1px;
+        width: min(78vw, 300px);
+    }
+
+    .marketing-phone {
+        height: 282px;
+        left: 1%;
+        top: 74px;
+        width: min(38vw, 145px);
+    }
+
+    .marketing-float-card {
+        right: 0;
+    }
+
+    .marketing-how,
+    .marketing-rubros,
+    .marketing-faq {
+        padding-bottom: 52px;
+        padding-top: 52px;
+    }
+
+    .marketing-faq > div {
+        margin-top: 24px;
+    }
+
+    .marketing-final-cta {
+        padding-bottom: 64px;
+        padding-top: 4px;
+    }
+}
