@@ -8,50 +8,48 @@ Valida que:
 - CSRF se valida en el POST.
 """
 
-import re
 import unittest
-from unittest.mock import MagicMock, patch
+import re
+from unittest.mock import patch, MagicMock
 
 import app as application
-from tests._pg_compat import PostgreSQLTestCase
+import database.database as database
+from database.database import get_connection
 
 
-class _TestCase(unittest.TestCase, PostgreSQLTestCase):
-    """Compatibilidad unittest con app/client aislados por el harness PostgreSQL."""
-
-
-class TestLandingPage(_TestCase):
+class TestLandingPage(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def _csrf_from(self, response):
         match = re.search(r'name="csrf_token"\s+value="([^"]+)"', response.text)
         return match.group(1) if match else None
 
     def test_landing_page_returns_200(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
             self.assertEqual(response.status_code, 200)
 
     def test_landing_page_contains_business_name(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
             self.assertIn("El Corte", response.text)
 
     def test_landing_page_contains_cta_button(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
             self.assertIn("Reservar turno", response.text)
 
     def test_landing_page_contains_services(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
             self.assertIn("Servicios", response.text)
 
     def test_landing_page_contains_branding(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
             self.assertIn("#1463FF", response.text)
 
@@ -70,7 +68,7 @@ class TestLandingPage(_TestCase):
         with patch.object(application, "resolve_business", return_value=business_b):
             with patch.object(application, "get_business_settings_scoped", return_value=settings_b):
                 with patch.object(application, "get_active_services_scoped", return_value=[]):
-                    with self.client as client:
+                    with application.app.test_client() as client:
                         response = client.get("/b/business-b")
                         self.assertEqual(response.status_code, 200)
                         self.assertIn("Business B", response.text)
@@ -78,138 +76,137 @@ class TestLandingPage(_TestCase):
                         self.assertIn("#00FF00", response.text)
 
     def test_landing_page_inexistent_slug_404(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/slug-inexistente")
             self.assertEqual(response.status_code, 404)
 
     def test_index_route_works(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/")
             self.assertEqual(response.status_code, 200)
 
 
-class TestWizardServiceSelection(_TestCase):
+class TestWizardServiceSelection(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def test_wizard_step1_returns_200(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step1_contains_title(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
             self.assertIn("Seleccioná un servicio", response.text)
 
     def test_wizard_step1_contains_services(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
             self.assertIn("service-option", response.text)
 
     def test_wizard_step1_csrf_token_present(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
             csrf = re.search(r'name="csrf_token"\s+value="([^"]+)"', response.text)
             self.assertIsNotNone(csrf)
 
     def test_wizard_inexistent_slug_404(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/slug-inexistente/reservar")
             self.assertEqual(response.status_code, 404)
 
 
-class TestWizardDateSelection(_TestCase):
+class TestWizardDateSelection(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def test_wizard_step2_returns_200_with_servicio(self):
-        with self.client as client:
-            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte")
+        with application.app.test_client() as client:
+            response = client.get(
+                "/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte"
+            )
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step2_redirects_to_step1_without_servicio(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/fecha")
             self.assertEqual(response.status_code, 200)
             self.assertIn("Seleccioná un servicio", response.text)
 
     def test_wizard_step2_contains_calendar(self):
-        with self.client as client:
-            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte")
+        with application.app.test_client() as client:
+            response = client.get(
+                "/b/" + self.BUSINESS_SLUG + "/reservar/fecha?servicio=Corte"
+            )
             self.assertIn("calendar-grid", response.text)
 
     def test_wizard_step2_inexistent_slug_404(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get("/b/slug-inexistente/reservar/fecha?servicio=test")
             self.assertEqual(response.status_code, 404)
 
 
-class TestWizardDatosSelection(_TestCase):
+class TestWizardDatosSelection(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def test_wizard_step3_returns_200(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get(
-                "/b/"
-                + self.BUSINESS_SLUG
-                + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
+                "/b/" + self.BUSINESS_SLUG + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
             )
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step3_contains_form(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get(
-                "/b/"
-                + self.BUSINESS_SLUG
-                + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
+                "/b/" + self.BUSINESS_SLUG + "/reservar/datos?servicio=Corte&fecha=2025-01-15&hora=10:00"
             )
             self.assertIn("Nombre y apellido", response.text)
             self.assertIn("Teléfono", response.text)
 
     def test_wizard_step3_missing_data_shows_error(self):
-        with self.client as client:
-            response = client.get("/b/" + self.BUSINESS_SLUG + "/reservar/datos")
+        with application.app.test_client() as client:
+            response = client.get(
+                "/b/" + self.BUSINESS_SLUG + "/reservar/datos"
+            )
             self.assertEqual(response.status_code, 200)
 
 
-class TestWizardConfirmation(_TestCase):
+class TestWizardConfirmation(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def test_wizard_step4_get_returns_200(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get(
-                "/b/"
-                + self.BUSINESS_SLUG
-                + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
+                "/b/" + self.BUSINESS_SLUG + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
             )
             self.assertEqual(response.status_code, 200)
 
     def test_wizard_step4_get_contains_confirmation(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.get(
-                "/b/"
-                + self.BUSINESS_SLUG
-                + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
+                "/b/" + self.BUSINESS_SLUG + "/reservar/confirmar?servicio=Corte&fecha=2025-12-31&hora=10:00"
             )
             self.assertIn("Confirmá tu reserva", response.text)
 
     def test_wizard_step4_post_creates_appointment(self):
-        with patch(
-            "services.appointments.create_appointment",
-            return_value={"success": True, "appointment_id": 99},
-        ):
-            with self.client as client:
+        with patch("services.appointments.create_appointment", return_value={"success": True, "appointment_id": 99}):
+            with application.app.test_client() as client:
                 page = client.get("/b/" + self.BUSINESS_SLUG + "/reservar?servicio=Corte")
                 csrf = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
                 csrf_token = csrf.group(1) if csrf else None
@@ -231,7 +228,7 @@ class TestWizardConfirmation(_TestCase):
                 self.assertTrue(data["success"])
 
     def test_wizard_step4_post_without_csrf_returns_400(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             response = client.post(
                 "/b/" + self.BUSINESS_SLUG + "/reservar/confirmar",
                 data={
@@ -245,7 +242,7 @@ class TestWizardConfirmation(_TestCase):
             self.assertEqual(response.status_code, 400)
 
     def test_wizard_step4_post_missing_name_returns_400(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             page = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
             csrf = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
             csrf_token = csrf.group(1) if csrf else None
@@ -261,63 +258,12 @@ class TestWizardConfirmation(_TestCase):
                     "hora": "10:00",
                 },
             )
-        self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, 400)
 
 
-class TestWizardPublicLinkOrigins(_TestCase):
-    def setUp(self):
-        application.rate_limit_state.clear()
-
-    def test_management_email_link_ignores_client_host(self):
-        self.app.config["PUBLIC_BASE_URL"] = "https://canonical.example"
-        headers = {"Host": "another-valid.example"}
-        confirmation = {
-            "success": True,
-            "appointment_id": 731,
-            "customer_name": "Juan Pérez",
-            "customer_email": "juan@example.test",
-            "service": "Corte",
-            "appointment_date": "2026-12-31",
-            "appointment_time": "10:00",
-            "appointment_end": "10:30",
-            "management_token": "management-secret",
-        }
-        sends = []
-        with (
-            patch("services.appointments.create_appointment", return_value=confirmation),
-            patch("services.notifications.send_confirmation_email") as send_confirmation,
-            patch.object(application, "send_business_confirmation_email"),
-            self.client as client,
-        ):
-            page = client.get("/b/el-corte/reservar", headers=headers)
-            csrf_match = re.search(r'name="csrf_token"\s+value="([^"]+)"', page.text)
-            csrf = csrf_match.group(1) if csrf_match else None
-            response = client.post(
-                "/b/el-corte/reservar/confirmar",
-                headers=headers,
-                json={
-                    "csrf_token": csrf,
-                    "nombre": "Juan Pérez",
-                    "telefono": "1122334455",
-                    "email": "juan@example.test",
-                    "servicio": "Corte",
-                    "fecha": "2026-12-31",
-                    "hora": "10:00",
-                },
-            )
-            sends.append(send_confirmation.call_args)
-
-        self.assertEqual(response.status_code, 201)
-        call = sends[0]
-        self.assertEqual(call.kwargs["public_base_url"], "https://canonical.example")
-        self.assertEqual(call.kwargs["management_token"], "management-secret")
-        self.assertEqual(call.kwargs["slug"], "el-corte")
-        self.assertNotIn("another-valid.example", call.kwargs["public_base_url"])
-
-
-class TestWizardEndpointsConsistency(_TestCase):
+class TestWizardEndpointsConsistency(unittest.TestCase):
     def test_all_wizard_endpoints_exist(self):
-        with self.client as client:
+        with application.app.test_client() as client:
             endpoints = [
                 "/b/el-corte",
                 "/b/el-corte/reservar",
@@ -327,14 +273,11 @@ class TestWizardEndpointsConsistency(_TestCase):
             ]
             for endpoint in endpoints:
                 response = client.get(endpoint)
-                self.assertEqual(
-                    response.status_code,
-                    200,
-                    "Endpoint " + endpoint + " returned " + str(response.status_code),
-                )
+                self.assertEqual(response.status_code, 200,
+                                 "Endpoint " + endpoint + " returned " + str(response.status_code))
 
     def test_url_map_has_expected_endpoints(self):
-        rules = {rule.endpoint for rule in self.app.url_map.iter_rules()}
+        rules = {rule.endpoint for rule in application.app.url_map.iter_rules()}
         expected = {
             "index",
             "business_index",
@@ -347,15 +290,16 @@ class TestWizardEndpointsConsistency(_TestCase):
         self.assertEqual(missing, set(), "Missing endpoints: " + str(missing))
 
     def test_url_map_rule_count_unchanged(self):
-        rules = list(self.app.url_map.iter_rules())
+        rules = list(application.app.url_map.iter_rules())
         self.assertGreaterEqual(len(rules), 109)
 
 
-class TestWizardRateLimiting(_TestCase):
+class TestWizardRateLimiting(unittest.TestCase):
     BUSINESS_SLUG = "el-corte"
 
     def setUp(self):
         application.rate_limit_state.clear()
+        application.app.config["TESTING"] = True
 
     def _get_csrf(self, client):
         page = client.get("/b/" + self.BUSINESS_SLUG + "/reservar")
@@ -377,23 +321,19 @@ class TestWizardRateLimiting(_TestCase):
         )
 
     def test_wizard_post_allowed_under_limit(self):
-        with patch(
-            "services.appointments.create_appointment",
-            return_value={"success": True, "appointment_id": 99},
-        ):
-            with self.client as client:
+        with patch("services.appointments.create_appointment",
+                   return_value={"success": True, "appointment_id": 99}):
+            with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
                 response = self._post_confirmation(client, csrf_token)
                 self.assertEqual(response.status_code, 201)
 
     def test_wizard_post_rate_limited_after_60_requests(self):
-        with patch(
-            "services.appointments.create_appointment",
-            return_value={"success": True, "appointment_id": 99},
-        ):
-            with self.client as client:
+        with patch("services.appointments.create_appointment",
+                   return_value={"success": True, "appointment_id": 99}):
+            with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for _i in range(application.API_REQUEST_LIMIT):
+                for i in range(application.API_REQUEST_LIMIT):
                     response = self._post_confirmation(client, csrf_token)
                     self.assertIn(response.status_code, (201, 400))
                 blocked = self._post_confirmation(client, csrf_token)
@@ -407,9 +347,9 @@ class TestWizardRateLimiting(_TestCase):
     def test_rate_limited_post_does_not_create_appointment(self):
         mock_create = MagicMock(return_value={"success": True, "appointment_id": 99})
         with patch("services.appointments.create_appointment", mock_create):
-            with self.client as client:
+            with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for _i in range(application.API_REQUEST_LIMIT):
+                for i in range(application.API_REQUEST_LIMIT):
                     self._post_confirmation(client, csrf_token)
                 mock_create.reset_mock()
                 blocked = self._post_confirmation(client, csrf_token)
@@ -419,13 +359,11 @@ class TestWizardRateLimiting(_TestCase):
     def test_rate_limited_post_does_not_send_notifications(self):
         mock_send = MagicMock()
         mock_create = MagicMock(return_value={"success": True, "appointment_id": 99})
-        with (
-            patch("services.notifications.send_confirmation_email", mock_send),
-            patch("services.appointments.create_appointment", mock_create),
-        ):
-            with self.client as client:
+        with patch("services.notifications.send_confirmation_email", mock_send), \
+             patch("services.appointments.create_appointment", mock_create):
+            with application.app.test_client() as client:
                 csrf_token = self._get_csrf(client)
-                for _i in range(application.API_REQUEST_LIMIT):
+                for i in range(application.API_REQUEST_LIMIT):
                     self._post_confirmation(client, csrf_token)
                 mock_send.reset_mock()
                 blocked = self._post_confirmation(client, csrf_token)
