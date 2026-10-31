@@ -310,6 +310,12 @@
         const apiBase = slug ? '/b/' + slug : '';
         const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
 
+        const honeypotInput = document.querySelector('input[name^="hp_"]');
+        const honeypotName = honeypotInput ? honeypotInput.name : '';
+        const honeypotValue = honeypotInput ? honeypotInput.value : '';
+        const formRenderedAtInput = document.querySelector('input[name="form_rendered_at"]');
+        const formRenderedAt = formRenderedAtInput ? formRenderedAtInput.value : '';
+
         const payload = {
             csrf_token: csrfToken,
             nombre: form.nombre,
@@ -319,27 +325,15 @@
             fecha: form.fecha,
             hora: form.hora
         };
+        if (honeypotName) {
+            payload[honeypotName] = honeypotValue;
+        }
+        if (formRenderedAt) {
+            payload.form_rendered_at = formRenderedAt;
+        }
         if (form.resourceId) {
             payload.resource_id = form.resourceId;
         }
-
-        const idempotencyInput = document.querySelector('input[name="idempotency_key"]');
-        if (idempotencyInput?.value) {
-            payload.idempotency_key = idempotencyInput.value;
-        }
-
-        const renderedAtInput = document.querySelector('input[name="form_rendered_at"]');
-        if (renderedAtInput?.value) {
-            payload.form_rendered_at = renderedAtInput.value;
-        }
-
-        // Honeypot anti-bots: se reenvía el campo con su nombre aleatorio.
-        // Un humano nunca lo completa, por lo que debe viajar vacío.
-        document.querySelectorAll('#bookingForm input[type="hidden"]').forEach(function(input) {
-            if (input.name.startsWith('hp_')) {
-                payload[input.name] = input.value || '';
-            }
-        });
 
         fetch(apiBase + '/reservar/confirmar', {
             method: 'POST',

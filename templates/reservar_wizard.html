@@ -444,13 +444,17 @@
 
                 <form id="bookingForm" method="POST" action="/b/{{ business.slug }}/reservar/confirmar">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="idempotency_key" value="{{ idempotency_key or '' }}">
                     <input type="hidden" name="servicio" id="formServicio" value="">
                     <input type="hidden" name="fecha" id="formFecha" value="">
                     <input type="hidden" name="hora" id="formHora" value="">
                     <input type="hidden" name="resource_id" id="formResourceId" value="">
+                    {% if step >= 3 and honeypot_field %}
                     <input type="hidden" name="{{ honeypot_field }}" id="honeypotField" value="" tabindex="-1" aria-hidden="true">
                     <input type="hidden" name="form_rendered_at" id="formRenderedAt" value="{{ form_rendered_at or '' }}">
+                    {% if step == 3 and idempotency_key %}
+                    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+                    {% endif %}
+                    {% endif %}
 
                     <div class="form-row">
                         <label class="form-label">Nombre y apellido *</label>
@@ -508,6 +512,10 @@
                         <span class="summary-value" id="confirmEmail"></span>
                     </div>
                 </div>
+                {% if step == 4 and honeypot_field %}
+                <input type="hidden" name="{{ honeypot_field }}" id="honeypotFieldStep4" value="" tabindex="-1" aria-hidden="true">
+                <input type="hidden" name="form_rendered_at" id="formRenderedAtStep4" value="{{ form_rendered_at or '' }}">
+                {% endif %}
             </div>
             <div class="wizard-actions">
                 <button type="button" class="btn btn-secondary" onclick="prevStep(3)">
