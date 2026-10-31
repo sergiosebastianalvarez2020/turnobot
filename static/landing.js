@@ -310,6 +310,12 @@
         const apiBase = slug ? '/b/' + slug : '';
         const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
 
+        const honeypotInput = document.querySelector('input[name^="hp_"]');
+        const honeypotName = honeypotInput ? honeypotInput.name : '';
+        const honeypotValue = honeypotInput ? honeypotInput.value : '';
+        const formRenderedAtInput = document.querySelector('input[name="form_rendered_at"]');
+        const formRenderedAt = formRenderedAtInput ? formRenderedAtInput.value : '';
+
         const payload = {
             csrf_token: csrfToken,
             nombre: form.nombre,
@@ -319,6 +325,12 @@
             fecha: form.fecha,
             hora: form.hora
         };
+        if (honeypotName) {
+            payload[honeypotName] = honeypotValue;
+        }
+        if (formRenderedAt) {
+            payload.form_rendered_at = formRenderedAt;
+        }
         if (form.resourceId) {
             payload.resource_id = form.resourceId;
         }
