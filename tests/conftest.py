@@ -132,6 +132,7 @@ def pg_test_env(request, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", TURNOBOT_PG_URL)
     monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setenv("FLASK_ENV", "development")
+    yield
 
 
 @pytest.fixture(scope="session", autouse=True)
