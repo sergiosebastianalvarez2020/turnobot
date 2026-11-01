@@ -71,8 +71,8 @@ def _ensure_default_test_database() -> str:
         drop_test_database(TURNOBOT_PG_URL, dbname)
         raise
     _default_test_db_name = dbname
-    _default_test_db_url = test_url
-    return conninfo_to_url(test_url)
+    _default_test_db_url = conninfo_to_url(test_url)
+    return _default_test_db_url
 
 
 if TURNOBOT_PG_URL:
