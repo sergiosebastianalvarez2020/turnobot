@@ -35,14 +35,14 @@ class TestBusinessSettings(unittest.TestCase):
     def test_frontend_recibe_configuracion_del_negocio(self):
         from app import app
 
-        response = app.test_client().get("/")
+        response = app.test_client().get("/b/el-corte")
 
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertIn('data-business-name="El Corte"', html)
-        self.assertIn('data-timezone="America/Argentina/Buenos_Aires"', html)
-        self.assertIn("BARBERÍA", html)
-        self.assertIn(">EC<", html)
+        self.assertIn('<h1 class="landing-title">El Corte</h1>', html)
+        self.assertIn('<span class="info-value">America/Argentina/Buenos_Aires</span>', html)
+        self.assertIn('data-initials="EC"', html)
+        self.assertIn('<span class="landing-badge">BARBERÍA</span>', html)
         self.assertIn("barbería masculina", html.lower())
 
 

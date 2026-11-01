@@ -32,20 +32,14 @@ from tests_pg._helpers import (
 TURNOBOT_PG_URL = os.getenv(TURNOBOT_PG_URL_KEY)
 
 
-# Create a default test database at session start for module-level imports
+# Default test database: created lazily on first use, never at import time.
+# This ensures tests marked `no_pg` can run even when PostgreSQL is unavailable.
 _default_test_db_url: str | None = None
 _default_test_db_name: str | None = None
 
 
 def _drop_default_test_database() -> None:
-    """Elimina la base de sesión. Idempotente.
-
-    `drop_test_database` usa `DROP DATABASE IF EXISTS ... WITH (FORCE)`, así que
-    llamarla más de una vez es seguro. La invocan dos caminos: el fixture de
-    sesión y `atexit`. pytest no ejecuta fixtures cuando la sesión termina sin
-    correr ningún test (`--collect-only`, error de colección, interrupción), y
-    sin `atexit` esa base quedaba huérfana para siempre.
-    """
+    """Elimina la base de datos de sesión por defecto. Idempotente."""
     global _default_test_db_name
     if not _default_test_db_name:
         return
@@ -55,9 +49,16 @@ def _drop_default_test_database() -> None:
         _default_test_db_name = None
 
 
-def _create_default_test_database() -> str:
-    """Create a default test database for module-level imports."""
+def _ensure_default_test_database() -> str:
+    """Crea la base de datos de prueba por defecto bajo demanda.
+
+    Solo se invoca cuando un test realmente necesita PostgreSQL (fixture
+    `pg_test_env` para tests no-`no_pg`, o `pg_isolate_module_app`).
+    Nunca se ejecuta durante la importación del módulo.
+    """
     global _default_test_db_url, _default_test_db_name
+    if _default_test_db_url:
+        return _default_test_db_url
     if not TURNOBOT_PG_URL:
         return ""
     dbname = new_db_name()
@@ -67,7 +68,6 @@ def _create_default_test_database() -> str:
         apply_current_schema(test_url)
         seed_standard_test_data(test_url)
     except BaseException:
-        # No abandonar la base recién creada si falla el schema o el seed.
         drop_test_database(TURNOBOT_PG_URL, dbname)
         raise
     _default_test_db_name = dbname
@@ -76,9 +76,6 @@ def _create_default_test_database() -> str:
 
 
 if TURNOBOT_PG_URL:
-    os.environ.setdefault("DATABASE_URL", _create_default_test_database())
-    os.environ.setdefault("DB_BACKEND", "postgresql")
-    os.environ.setdefault("FLASK_ENV", "development")
     atexit.register(_drop_default_test_database)
 else:
     # Modo SQLite local (sin PostgreSQL de tests).
@@ -129,7 +126,11 @@ def pg_test_env(request, monkeypatch):
         return
     if not TURNOBOT_PG_URL:
         pytest.skip("TURNOBOT_PG_URL no está definida; suite funcional PostgreSQL omitida.")
-    monkeypatch.setenv("DATABASE_URL", TURNOBOT_PG_URL)
+    # Crear la base de datos de prueba por defecto bajo demanda (nunca en importación).
+    test_db_url = _ensure_default_test_database()
+    if not test_db_url:
+        pytest.skip("No se pudo crear la base de datos de prueba por defecto.")
+    monkeypatch.setenv("DATABASE_URL", test_db_url)
     monkeypatch.setenv("DB_BACKEND", "postgresql")
     monkeypatch.setenv("FLASK_ENV", "development")
     yield
@@ -297,9 +298,7 @@ def pg_isolate_module_app(request):
                 close_pg_pool(app=application_mod.app)
 
                 # Restore pool to default test database
-                os.environ["DATABASE_URL"] = (
-                    _default_test_db_url if _default_test_db_url else TURNOBOT_PG_URL
-                )
+                os.environ["DATABASE_URL"] = _ensure_default_test_database() or TURNOBOT_PG_URL
                 if _default_test_db_url:
                     # Parse the URL back to conninfo for init_pg_pool
                     application_mod.app.config["DATABASE_URL"] = os.environ["DATABASE_URL"]
