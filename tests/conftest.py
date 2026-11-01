@@ -76,6 +76,7 @@ def _ensure_default_test_database() -> str:
 
 
 if TURNOBOT_PG_URL:
+    os.environ.setdefault("DATABASE_URL", TURNOBOT_PG_URL)
     atexit.register(_drop_default_test_database)
 else:
     # Modo SQLite local (sin PostgreSQL de tests).
