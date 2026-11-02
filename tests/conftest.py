@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from database import database as _database_module
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
     apply_current_schema,
@@ -75,41 +76,23 @@ def _ensure_default_test_database() -> str:
     return _default_test_db_url
 
 
+# `app.py` creates the application at import time. Keep that import on an
+# isolated SQLite file even when PostgreSQL tests are configured; fixtures
+# switch to per-test PostgreSQL databases only after collection.
+_sqlite_import_dir = tempfile.mkdtemp(prefix="turnobot_import_sqlite_")
+_database_module.DATABASE_PATH = Path(_sqlite_import_dir) / "appointments.db"
+os.environ["DATABASE_URL"] = ""
+os.environ["DB_BACKEND"] = "sqlite"
+os.environ["FLASK_ENV"] = "development"
+
+
+def _cleanup_import_sqlite_dir() -> None:
+    shutil.rmtree(_sqlite_import_dir, ignore_errors=True)
+
+
+atexit.register(_cleanup_import_sqlite_dir)
 if TURNOBOT_PG_URL:
-    os.environ.setdefault("DATABASE_URL", TURNOBOT_PG_URL)
     atexit.register(_drop_default_test_database)
-else:
-    # Modo SQLite local (sin PostgreSQL de tests).
-    #
-    # Algunos módulos de `tests/` hacen `import app` en el top-level, y `app.py`
-    # ejecuta `create_app()` durante la importación, ANTES de que corra cualquier
-    # fixture. En modo SQLite esa inicialización (`create_app` -> `init_database`
-    # -> `apply_migrations` -> `get_connection`) usa el global
-    # `database.database.DATABASE_PATH`, que por defecto apunta a
-    # `database/appointments.db` (la base del repositorio). Redirigimos ese
-    # global a un archivo temporal FUERA de `database/` antes de que se importe
-    # la aplicación, para que la recolección de pytest jamás abra ni migre la
-    # base real.
-    #
-    # Además fijamos el entorno coherente con SQLite: el `.env` del proyecto trae
-    # `FLASK_ENV=production`, que haría que `resolve_database_backend` exija
-    # PostgreSQL y abortara la importación. Es el mismo entorno que ya aplica la
-    # rama PostgreSQL (`FLASK_ENV=development`), de modo que no se altera el
-    # comportamiento de la suite funcional.
-    #
-    # Cuando TURNOBOT_PG_URL está definida, esta rama no se ejecuta y la
-    # infraestructura PostgreSQL permanece intacta.
-    from database import database as _database_module
-
-    _sqlite_import_dir = tempfile.mkdtemp(prefix="turnobot_import_sqlite_")
-    _database_module.DATABASE_PATH = Path(_sqlite_import_dir) / "appointments.db"
-    os.environ.setdefault("DB_BACKEND", "sqlite")
-    os.environ.setdefault("FLASK_ENV", "development")
-
-    def _cleanup_import_sqlite_dir() -> None:
-        shutil.rmtree(_sqlite_import_dir, ignore_errors=True)
-
-    atexit.register(_cleanup_import_sqlite_dir)
 
 
 @pytest.fixture(autouse=True)
@@ -283,6 +266,7 @@ def pg_isolate_module_app(request):
         # Create new pool pointing to per-test database
         os.environ["DATABASE_URL"] = test_url
         application_mod.app.config["DATABASE_URL"] = test_url
+        application_mod.app.config["DB_BACKEND"] = "postgresql"
         new_pool = init_pg_pool(application_mod.app)
         application_mod.app.extensions["pg_pool"] = new_pool
 
@@ -303,6 +287,7 @@ def pg_isolate_module_app(request):
                 if _default_test_db_url:
                     # Parse the URL back to conninfo for init_pg_pool
                     application_mod.app.config["DATABASE_URL"] = os.environ["DATABASE_URL"]
+                    application_mod.app.config["DB_BACKEND"] = "postgresql"
                     restored_pool = init_pg_pool(application_mod.app)
                     application_mod.app.extensions["pg_pool"] = restored_pool
         finally:
