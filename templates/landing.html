@@ -248,10 +248,180 @@
             transform: scale(1.1);
         }
 
+        .chat-toggle:focus-visible,
+        .chat-panel button:focus-visible,
+        .chat-panel input:focus-visible {
+            outline: 3px solid var(--primary-deep);
+            outline-offset: 3px;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .chat-panel[hidden] {
+            display: none;
+        }
+
+        .chat-panel {
+            position: fixed;
+            right: 24px;
+            bottom: 100px;
+            z-index: 101;
+            display: flex;
+            flex-direction: column;
+            width: min(400px, calc(100vw - 32px));
+            height: min(560px, calc(100dvh - 128px));
+            min-height: 320px;
+            overflow: hidden;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--blue-border);
+            border-radius: 20px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .chat-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 18px;
+            color: #FFFFFF;
+            background: var(--primary-deep);
+        }
+
+        .chat-panel-header h2 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .chat-panel-close {
+            width: 36px;
+            height: 36px;
+            color: inherit;
+            background: transparent;
+            border: 0;
+            border-radius: 8px;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .chat-messages {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .chat-message {
+            max-width: 88%;
+            padding: 11px 14px;
+            border-radius: 16px;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .chat-message-assistant {
+            align-self: flex-start;
+            background: var(--blue-50);
+            border-bottom-left-radius: 5px;
+        }
+
+        .chat-message-user {
+            align-self: flex-end;
+            color: #FFFFFF;
+            background: var(--primary);
+            border-bottom-right-radius: 5px;
+        }
+
+        .chat-message-error {
+            align-self: center;
+            color: #8A1C1C;
+            background: #FFF1F1;
+            font-size: 13px;
+        }
+
+        .chat-form {
+            display: flex;
+            gap: 8px;
+            padding: 12px;
+            border-top: 1px solid var(--blue-border);
+        }
+
+        .chat-input {
+            flex: 1;
+            min-width: 0;
+            padding: 11px 12px;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--blue-border);
+            border-radius: 10px;
+            font: inherit;
+        }
+
+        .chat-send {
+            padding: 0 16px;
+            color: #FFFFFF;
+            background: var(--primary);
+            border: 0;
+            border-radius: 10px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .chat-send:disabled {
+            cursor: wait;
+            opacity: 0.65;
+        }
+
         .no-services {
             text-align: center;
             padding: 40px 20px;
             color: var(--text-muted);
+        }
+
+        @media (max-width: 600px) {
+            .landing-container {
+                padding: 16px;
+            }
+
+            .hero {
+                padding: 32px 20px;
+            }
+
+            .hero h1 {
+                font-size: 30px;
+            }
+
+            .chat-toggle {
+                right: 16px;
+                bottom: 16px;
+                width: 56px;
+                height: 56px;
+            }
+
+            .chat-panel {
+                right: 12px;
+                bottom: 12px;
+                width: calc(100vw - 24px);
+                height: min(620px, calc(100dvh - 24px));
+                max-height: calc(100dvh - 24px);
+                min-height: 0;
+                border-radius: 16px;
+            }
         }
     </style>
 </head>
@@ -292,7 +462,8 @@
                 <div class="service-card">
                     <div class="service-name">{{ service.name }}</div>
                     <div class="service-meta">
-                        <span>$${ service.price }}</span>
+                        {% set formatted_price = "{:,.2f}".format(service.price).replace(",", ";").replace(".", ",").replace(";", ".") %}
+                        <span>{{ "$" ~ (formatted_price[:-3] if formatted_price.endswith(",00") else formatted_price) }}</span>
                         <span>{{ service.duration }} min</span>
                     </div>
                     <button class="service-reserve"
@@ -328,16 +499,32 @@
             </div>
         </section>
 
-        <button class="chat-toggle" onclick="openChat()" aria-label="Chat con recepcionista virtual">
+        <button class="chat-toggle" id="chat-toggle" type="button" aria-label="Abrir chat con asistente virtual"
+                aria-controls="business-chat" aria-expanded="false">
             💬
         </button>
+
+        <section class="chat-panel" id="business-chat" role="dialog"
+                 aria-labelledby="chat-title" data-chat-url="{{ url_for('business_chat', slug=business.slug) }}"
+                 data-history-url="{{ url_for('business_public_current_conversation_messages', slug=business.slug) }}"
+                 hidden>
+            <header class="chat-panel-header">
+                <h2 id="chat-title">Asistente virtual</h2>
+                <button class="chat-panel-close" id="chat-close" type="button" aria-label="Cerrar chat">×</button>
+            </header>
+            <div class="chat-messages" id="chat-messages" aria-live="polite" aria-relevant="additions">
+                <div class="chat-message chat-message-assistant">¡Hola! ¿En qué puedo ayudarte?</div>
+            </div>
+            <form class="chat-form" id="chat-form">
+                <label class="sr-only" for="chat-input">Escribí tu consulta</label>
+                <input class="chat-input" id="chat-input" name="message" type="text"
+                       placeholder="Escribí tu consulta..." maxlength="1000" autocomplete="off" required>
+                <button class="chat-send" id="chat-send" type="submit">Enviar</button>
+            </form>
+        </section>
     </main>
 
-    <script>
-        function openChat() {
-            window.location.href = '/b/{{ business.slug }}';
-        }
-    </script>
+    <script src="{{ url_for('static', filename='landing-chat.js') }}" defer></script>
 </body>
 
 </html>
