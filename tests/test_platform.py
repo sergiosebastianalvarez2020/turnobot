@@ -315,6 +315,19 @@ class TestAccesoYPanel(PlatformBase):
         self.assertIn("/login", response.headers.get("Location", ""))
         response2 = self.client.get("/b/el-corte/admin")
         self.assertEqual(response2.status_code, 302)
+        # Rechazar el acceso de negocio no debe revocar la sesión de plataforma.
+        self.assertEqual(self.client.get("/superadmin").status_code, 200)
+
+    def test_usuario_sin_rol_admin_conserva_sesion_superadmin(self):
+        self._create_superadmin()
+        self._make_tenant_user("staff@test.com", "secreta-password", 1, "staff")
+        self._login_superadmin()
+        self._login_tenant("el-corte", "staff@test.com", "secreta-password")
+
+        response = self.client.get("/admin")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/login", response.headers.get("Location", ""))
+        self.assertEqual(self.client.get("/superadmin").status_code, 200)
 
 
 class TestSesionYLogoutSelectivo(PlatformBase):

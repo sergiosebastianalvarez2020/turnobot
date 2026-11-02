@@ -42,7 +42,12 @@ from database.database import (
     update_service_scoped,
 )
 from extensions import valid_csrf_token
-from routes.auth import _is_authenticated, _login_url, get_current_business_id
+from routes.auth import (
+    _clear_business_session,
+    _is_authenticated,
+    _login_url,
+    get_current_business_id,
+)
 from services import loyalty, memberships, metrics, product
 from services.appointments import (
     create_appointment,
@@ -78,13 +83,13 @@ from services.notifications import smtp_configured
 def _require_admin_membership():
     """Valida sesión + membresía administrativa (owner/admin) del negocio actual."""
     if not _is_authenticated():
-        session.clear()
+        _clear_business_session()
         return redirect(_login_url())
     user_id = session.get("user_id")
     business_id = get_current_business_id()
     membership = get_membership_scoped(user_id, business_id) if business_id else None
     if not membership or membership["role_name"] not in {"owner", "admin"}:
-        session.clear()
+        _clear_business_session()
         return redirect(_login_url())
     return None
 
@@ -98,13 +103,13 @@ def membership_required(*role_names):
         @wraps(f)
         def decorated(*args, **kwargs):
             if not _is_authenticated():
-                session.clear()
+                _clear_business_session()
                 return redirect(_login_url())
             user_id = session.get("user_id")
             business_id = get_current_business_id()
             membership = get_membership_scoped(user_id, business_id) if business_id else None
             if not membership or membership["role_name"] not in allowed:
-                session.clear()
+                _clear_business_session()
                 return redirect(_login_url())
             return f(*args, **kwargs)
 
