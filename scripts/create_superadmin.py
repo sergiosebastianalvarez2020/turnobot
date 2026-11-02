@@ -22,10 +22,10 @@ from services import platform  # noqa: E402
 
 
 def _require_postgresql_backend():
-    from database.pg_pool import resolve_database_backend
+    from database.pg_pool import get_database_backend
 
     load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
-    backend, _ = resolve_database_backend()
+    backend = get_database_backend()
     if backend != "postgresql":
         raise RuntimeError("La configuración de base de datos debe ser PostgreSQL")
 

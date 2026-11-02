@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import psycopg
 import pytest
 
 from database import pg_pool
@@ -17,8 +18,8 @@ def test_create_superadmin_uses_initialized_app_pool_and_closes_it(monkeypatch):
     backend_resolved = []
     monkeypatch.setattr(
         pg_pool,
-        "resolve_database_backend",
-        Mock(side_effect=lambda: (backend_resolved.append("postgresql") or "postgresql", None)),
+        "get_database_backend",
+        Mock(side_effect=lambda: backend_resolved.append("postgresql") or "postgresql"),
     )
 
     def import_application(module_name):
@@ -45,6 +46,7 @@ def test_create_superadmin_uses_initialized_app_pool_and_closes_it(monkeypatch):
 @pytest.mark.no_pg
 def test_sqlite_backend_is_rejected_before_app_import_or_migrations(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("FLASK_ENV", "development")
     monkeypatch.setenv("DB_BACKEND", "sqlite")
     load_environment = Mock()
     monkeypatch.setattr(create_superadmin, "load_dotenv", load_environment)
@@ -68,11 +70,32 @@ def test_sqlite_backend_is_rejected_before_app_import_or_migrations(monkeypatch)
 
 
 @pytest.mark.no_pg
+def test_postgresql_environment_backend_validation_does_not_connect(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://db.example.test:5432/turnobot_test")
+    monkeypatch.setenv("FLASK_ENV", "production")
+    load_environment = Mock()
+    monkeypatch.setattr(create_superadmin, "load_dotenv", load_environment)
+    connect = Mock(side_effect=AssertionError("backend validation must not connect"))
+    create_pool = Mock(side_effect=AssertionError("backend validation must not create a pool"))
+    initialize_pool = Mock(
+        side_effect=AssertionError("backend validation must not initialize a pool")
+    )
+    monkeypatch.setattr(psycopg, "connect", connect)
+    monkeypatch.setattr(pg_pool, "create_pg_pool", create_pool)
+    monkeypatch.setattr(pg_pool, "init_pg_pool", initialize_pool)
+
+    create_superadmin._require_postgresql_backend()
+
+    load_environment.assert_called_once_with(dotenv_path=create_superadmin.PROJECT_ROOT / ".env")
+    connect.assert_not_called()
+    create_pool.assert_not_called()
+    initialize_pool.assert_not_called()
+
+
+@pytest.mark.no_pg
 def test_create_app_failure_closes_pool_created_during_partial_initialization(monkeypatch):
     partial_pool = object()
-    monkeypatch.setattr(
-        pg_pool, "resolve_database_backend", Mock(return_value=("postgresql", "postgresql://test"))
-    )
+    monkeypatch.setattr(pg_pool, "get_database_backend", Mock(return_value="postgresql"))
     monkeypatch.setattr(pg_pool, "get_pg_pool", Mock(side_effect=[None, partial_pool]))
     import_application = Mock(side_effect=RuntimeError("database initialization failed"))
     monkeypatch.setattr(create_superadmin.importlib, "import_module", import_application)
@@ -87,9 +110,7 @@ def test_create_app_failure_closes_pool_created_during_partial_initialization(mo
 
 @pytest.mark.no_pg
 def test_create_app_failure_without_pool_does_not_close_uninitialized_resources(monkeypatch):
-    monkeypatch.setattr(
-        pg_pool, "resolve_database_backend", Mock(return_value=("postgresql", None))
-    )
+    monkeypatch.setattr(pg_pool, "get_database_backend", Mock(return_value="postgresql"))
     monkeypatch.setattr(pg_pool, "get_pg_pool", Mock(return_value=None))
     monkeypatch.setattr(
         create_superadmin.importlib,
@@ -110,9 +131,7 @@ def test_create_superadmin_closes_pool_if_service_raises(monkeypatch):
     flask_app = SimpleNamespace(
         config={"DB_BACKEND": "postgresql"}, extensions={"pg_pool": object()}
     )
-    monkeypatch.setattr(
-        pg_pool, "resolve_database_backend", Mock(return_value=("postgresql", None))
-    )
+    monkeypatch.setattr(pg_pool, "get_database_backend", Mock(return_value="postgresql"))
     monkeypatch.setattr(
         create_superadmin.importlib,
         "import_module",
@@ -138,9 +157,7 @@ def test_cleanup_failure_does_not_mask_service_exception(monkeypatch):
     flask_app = SimpleNamespace(
         config={"DB_BACKEND": "postgresql"}, extensions={"pg_pool": object()}
     )
-    monkeypatch.setattr(
-        pg_pool, "resolve_database_backend", Mock(return_value=("postgresql", None))
-    )
+    monkeypatch.setattr(pg_pool, "get_database_backend", Mock(return_value="postgresql"))
     monkeypatch.setattr(
         create_superadmin.importlib,
         "import_module",
@@ -163,9 +180,7 @@ def test_cleanup_failure_does_not_mask_service_exception(monkeypatch):
 @pytest.mark.no_pg
 def test_main_prompts_for_password_and_never_accepts_password_argument(monkeypatch, capsys):
     password = "long-enough-password"
-    monkeypatch.setattr(
-        pg_pool, "resolve_database_backend", Mock(return_value=("postgresql", None))
-    )
+    monkeypatch.setattr(pg_pool, "get_database_backend", Mock(return_value="postgresql"))
     create_user = Mock(return_value={"success": True, "platform_user_id": 42})
     prompt = Mock(return_value=password)
     monkeypatch.setattr(create_superadmin, "getpass", prompt)
