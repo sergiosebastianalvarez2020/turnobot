@@ -176,7 +176,7 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not _is_authenticated():
-            session.clear()
+            _clear_business_session()
             return redirect(_login_url())
         return f(*args, **kwargs)
 
