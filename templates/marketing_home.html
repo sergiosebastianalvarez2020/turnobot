@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="TurnoBot ayuda a organizar reservas y consultas desde un solo lugar.">
+    <title>TurnoBot | Gestión de turnos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='marketing.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='marketing-refinements.css') }}">
+</head>
+<body class="marketing-theme">
+    <a class="marketing-skip-link" href="#contenido">Saltar al contenido</a>
+    <header class="marketing-header">
+        <a class="marketing-logo" href="#inicio" aria-label="TurnoBot, inicio"><span aria-hidden="true">T</span>TurnoBot</a>
+        <button class="marketing-menu-button" type="button" aria-expanded="false" aria-controls="marketing-nav">
+            <span class="sr-only">Abrir menú</span><i></i><i></i><i></i>
+        </button>
+        <nav class="marketing-nav" id="marketing-nav" aria-label="Navegación principal">
+            <a href="#como-funciona">Cómo funciona</a>
+            <a href="#rubros">Rubros</a>
+            <a href="#preguntas">Preguntas frecuentes</a>
+        </nav>
+        <div class="marketing-header-actions">
+            <a class="marketing-login" href="{{ url_for('login') }}">Ingresar</a>
+            <a class="marketing-small-cta" href="https://wa.me/5493835439221?text=Hola%2C%20quiero%20conocer%20TurnoBot%20y%20solicitar%20una%20demostraci%C3%B3n%20para%20mi%20negocio.">WhatsApp <span aria-hidden="true">↗</span></a>
+        </div>
+    </header>
+
+    <main id="contenido">
+        <section class="marketing-hero" id="inicio">
+            <div class="marketing-orbit orbit-one" aria-hidden="true"></div><div class="marketing-orbit orbit-two" aria-hidden="true"></div>
+            <div class="marketing-hero-copy">
+                <p class="marketing-eyebrow"><span></span> TU NEGOCIO, SIEMPRE DISPONIBLE</p>
+                <h1>Más tiempo<br>para lo que<br><em>realmente importa</em></h1>
+                <p class="marketing-lead">TurnoBot te ayuda a gestionar reservas, responder consultas y organizar tu negocio desde un solo lugar. De forma simple, rápida y profesional.</p>
+                <a class="marketing-hero-cta" href="https://wa.me/5493835439221?text=Hola%2C%20quiero%20conocer%20TurnoBot%20y%20solicitar%20una%20demostraci%C3%B3n%20para%20mi%20negocio."><span class="whatsapp-mark" aria-hidden="true">◔</span> Solicitar una demostración por WhatsApp <b aria-hidden="true">→</b></a>
+                <ul class="marketing-points" aria-label="Características de la propuesta"><li>Gestión en un solo lugar</li><li>Información clara para tus clientes</li><li>Adaptable a tu negocio</li></ul>
+            </div>
+            <div class="marketing-device-scene" aria-hidden="true">
+                <div class="marketing-glow"></div>
+                <div class="marketing-dashboard">
+                    <aside><div class="dashboard-brand">T</div><span class="active"></span><span></span><span></span><span></span></aside>
+                    <div class="dashboard-content"><div class="dashboard-top"><strong>Resumen</strong><small>Hoy, 24 de octubre</small><b>＋</b></div><div class="dashboard-stats"><article><small>Turnos de hoy</small><strong>12</strong><i></i></article><article><small>Confirmados</small><strong>08</strong><i></i></article><article><small>Consultas</small><strong>24</strong><i></i></article></div><div class="dashboard-calendar"><div><strong>Agenda de hoy</strong><span>Ver calendario</span></div><p><time>09:00</time><b></b> Consulta inicial <small>Confirmado</small></p><p><time>10:30</time><b></b> Atención programada <small>Confirmado</small></p><p><time>12:00</time><b></b> Próximo turno <small>Pendiente</small></p></div></div>
+                </div>
+                <div class="marketing-phone"><div class="phone-speaker"></div><div class="phone-screen"><div class="phone-head"><span>‹</span><b>TurnoBot</b><i></i></div><p class="phone-date">HOY, 10:24</p><div class="bubble bot">¡Hola! ¿En qué podemos ayudarte?</div><div class="bubble user">Quiero reservar un turno</div><div class="bubble bot">¡Perfecto! Elegí una opción:</div><button>Ver disponibilidad</button><button>Consultar servicios</button><div class="phone-input">Escribí un mensaje <b>↑</b></div></div></div>
+                <div class="marketing-float-card"><span>✦</span><p>Más organización<br><b>Más tiempo para vos</b></p></div>
+            </div>
+        </section>
+
+        <section class="marketing-features" aria-label="Qué podés centralizar"><article><span>◫</span><h2>Reservas organizadas</h2><p>Ordená la información de cada turno.</p></article><article><span>◌</span><h2>Consultas centralizadas</h2><p>Reuní las consultas en un solo lugar.</p></article><article><span>⌁</span><h2>Información accesible</h2><p>Facilitá el acceso a datos relevantes.</p></article><article><span>↗</span><h2>Vista de agenda</h2><p>Consultá los turnos programados.</p></article></section>
+
+        <section class="marketing-how" id="como-funciona"><div><p class="marketing-eyebrow">CÓMO FUNCIONA</p><h2>Una forma clara de organizar tus turnos.</h2></div><ol><li><b>01</b><h3>Configurá tu espacio</h3><p>Definí la información y los servicios de tu negocio.</p></li><li><b>02</b><h3>Compartí tu enlace</h3><p>Tus clientes acceden a una página propia para reservar.</p></li><li><b>03</b><h3>Consultá tu agenda</h3><p>Seguís las reservas y consultas desde un solo lugar.</p></li></ol></section>
+
+        <section class="marketing-rubros" id="rubros"><p class="marketing-eyebrow">HECHO PARA DISTINTOS NEGOCIOS</p><h2>Una solución que se adapta a tu rubro</h2><p class="section-lead">TurnoBot está pensado para negocios que gestionan turnos, atenciones o servicios, con posibilidades de adaptación a distintos rubros.</p><div class="rubros-grid"><article>✚<span>Salud y bienestar</span></article><article>✦<span>Centros de estética</span></article><article>◒<span>Deporte y recreación</span></article><article>⌘<span>Servicios profesionales</span></article><article>▤<span>Educación y clases</span></article><article>⚙<span>Talleres y servicios técnicos</span></article><article>＋<span>Y muchos más</span></article></div></section>
+
+        <section class="marketing-faq" id="preguntas"><p class="marketing-eyebrow">PREGUNTAS FRECUENTES</p><h2>Información para empezar</h2><div><details><summary>¿Cómo puedo conocer TurnoBot?<span>+</span></summary><p>Podés solicitar una demostración por WhatsApp para conversar sobre las necesidades de tu negocio.</p></details><details><summary>¿Puedo usarlo para mi rubro?<span>+</span></summary><p>TurnoBot está pensado para negocios que trabajan con turnos, atenciones o servicios.</p></details><details><summary>¿Cómo ingresan mis clientes?<span>+</span></summary><p>Cada negocio cuenta con una página pública propia para compartir con sus clientes.</p></details></div></section>
+
+        <section class="marketing-final-cta"><div><p class="marketing-eyebrow">EMPECEMOS A CONVERSAR</p><h2>Organizá tu negocio con más claridad.</h2><p>Conocé cómo TurnoBot puede acompañar la gestión de tus turnos.</p><a class="marketing-hero-cta" href="https://wa.me/5493835439221?text=Hola%2C%20quiero%20conocer%20TurnoBot%20y%20solicitar%20una%20demostraci%C3%B3n%20para%20mi%20negocio.">Solicitar una demostración por WhatsApp <b aria-hidden="true">→</b></a></div></section>
+    </main>
+    <footer class="marketing-footer"><a class="marketing-logo" href="#inicio"><span aria-hidden="true">T</span>TurnoBot</a><p>Gestión de turnos y consultas para tu negocio.</p><a href="{{ url_for('login') }}">Ingresar</a></footer>
+    <script src="{{ url_for('static', filename='marketing.js') }}"></script>
+</body>
+</html>

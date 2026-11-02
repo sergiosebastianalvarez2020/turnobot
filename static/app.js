@@ -221,8 +221,7 @@ async function withTyping(
         ) {
 
             addMessage(
-                "La petición tardó demasiado. "
-                "Por favor, intentá nuevamente.",
+                "La petición tardó demasiado. Por favor, intentá nuevamente.",
                 "bot",
                 "error"
             );
@@ -260,11 +259,27 @@ async function withTyping(
 async function fetchJSON(
     url,
     options = {},
-    timeout = 30000
+    timeout = 30000,
+    signal
 ) {
 
     const controller =
         new AbortController();
+
+    let externalHandler = null;
+
+    if (signal) {
+
+        externalHandler = () =>
+            controller.abort();
+
+        signal.addEventListener(
+            "abort",
+            externalHandler,
+            { once: true }
+        );
+
+    }
 
 
     const timeoutId =
@@ -337,8 +352,7 @@ async function fetchJSON(
         ) {
 
             throw new Error(
-                "La petición tardó demasiado. "
-                "Por favor, intentá nuevamente."
+                "La petición tardó demasiado. Por favor, intentá nuevamente."
             );
         }
 
@@ -350,6 +364,18 @@ async function fetchJSON(
         clearTimeout(
             timeoutId
         );
+
+        if (
+            signal &&
+            externalHandler
+        ) {
+
+            signal.removeEventListener(
+                "abort",
+                externalHandler
+            );
+
+        }
 
     }
 }
@@ -2594,7 +2620,11 @@ async function loadTimes(
                         window.crypto.randomUUID
                     ) ?
                         window.crypto.randomUUID() :
-                        `b-${Date.now()}-${Math.random().toString(36).slice(2)}`
+                            `b-${Date.now()}-${Array.from(
+                                window.crypto.getRandomValues(
+                                    new Uint8Array(16)
+                                )
+                              ).map(b => b.toString(16).padStart(2, "0")).join("")}`
             };
 
         }
@@ -2769,8 +2799,8 @@ async function loadTimes(
 
                                     })
                             },
-                            signal,
-                            30000
+                            30000,
+                            signal
                         ),
                     30000
                 );
@@ -3154,7 +3184,7 @@ function showMyAppointments() {
 
     input.addEventListener(
         "keydown",
-        event => {
+        async (event) => {
 
             if (
                 event.key === "Enter"
@@ -3162,7 +3192,19 @@ function showMyAppointments() {
 
                 event.preventDefault();
 
-                search();
+                try {
+
+                    await search();
+
+                } catch (error) {
+
+                    console.error(
+                        "Error al buscar turnos:",
+                        error
+                    );
+
+                }
+
             }
 
         }
@@ -3733,8 +3775,8 @@ async function cancelAppointment(
                                 telefono: phone
                             })
                     },
-                    signal,
-                    15000
+                    15000,
+                    signal
                 ),
             15000
         );
@@ -4108,8 +4150,8 @@ async function rescheduleAppointment(
 
                             })
                     },
-                    signal,
-                    15000
+                    15000,
+                    signal
                 ),
             15000
         );
@@ -4317,8 +4359,8 @@ async function sendMessage(
 
                             })
                     },
-                    signal,
-                    30000
+                    30000,
+                    signal
                 ),
             30000
         );
@@ -4526,9 +4568,20 @@ document
 
 sendButton.addEventListener(
     "click",
-    () => {
+    async () => {
 
-        sendMessage();
+        try {
+
+            await sendMessage();
+
+        } catch (error) {
+
+            console.error(
+                "Error al enviar el mensaje:",
+                error
+            );
+
+        }
 
     }
 );
@@ -4537,10 +4590,9 @@ sendButton.addEventListener(
 // ============================================================
 // ENTER
 // ============================================================
-
 messageInput.addEventListener(
     "keydown",
-    event => {
+    async (event) => {
 
         if (
             event.key === "Enter"
@@ -4548,9 +4600,21 @@ messageInput.addEventListener(
 
             event.preventDefault();
 
-            sendMessage();
+            try {
+
+                await sendMessage();
+
+            } catch (error) {
+
+                console.error(
+                    "Error al enviar el mensaje:",
+                    error
+                );
+
+            }
 
         }
+
     }
 );
 
@@ -4792,4 +4856,13 @@ async function init() {
 }
 
 
-init();
+init().catch(
+    error => {
+
+        console.error(
+            "Error al inicializar la aplicación:",
+            error
+        );
+
+    }
+);
