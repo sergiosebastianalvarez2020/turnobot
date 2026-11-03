@@ -178,6 +178,20 @@ def chat():
         return jsonify({"success": False, "error": "No se pudo procesar la consulta."}), 500
 
 
+def _set_business_context(slug):
+    from app import resolve_business
+
+    business = resolve_business(slug)
+    if business is None:
+        abort(404)
+    g.current_business = business
+
+
+def business_chat(slug):
+    _set_business_context(slug)
+    return chat()
+
+
 def public_conversation_messages(public_token):
     from app import get_current_business_id
 
@@ -214,6 +228,11 @@ def public_current_conversation_messages():
     if messages is None:
         return jsonify({"success": True, "messages": []})
     return jsonify({"success": True, "messages": messages})
+
+
+def business_public_current_conversation_messages(slug):
+    _set_business_context(slug)
+    return public_current_conversation_messages()
 
 
 # ============================================================
