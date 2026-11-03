@@ -39,10 +39,11 @@ class TestBusinessSettings(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertIn('<h1 class="landing-title">El Corte</h1>', html)
-        self.assertIn('<span class="info-value">America/Argentina/Buenos_Aires</span>', html)
-        self.assertIn('data-initials="EC"', html)
-        self.assertIn('<span class="landing-badge">BARBERÍA</span>', html)
+        self.assertIn("<h1>El Corte</h1>", html)
+        self.assertIn('data-timezone="America/Argentina/Buenos_Aires"', html)
+        self.assertIn("<span>EC</span>", html)
+        self.assertIn('class="header-badge"', html)
+        self.assertIn("BARBERÍA", html)
         self.assertIn("barbería masculina", html.lower())
 
 

@@ -40,6 +40,8 @@ const BUSINESS_CONFIG = PUBLIC_FRONTEND_CONFIG.business || {};
 const BUSINESS_TIMEZONE = BUSINESS_CONFIG.timezone || "America/Argentina/Buenos_Aires";
 const BUSINESS_NAME = BUSINESS_CONFIG.name || "Mi negocio";
 const NOTIFICATIONS_ENABLED = Boolean(BUSINESS_CONFIG.notifications_enabled);
+const API_PREFIX = document.body.getAttribute("data-api-prefix") || "";
+const API_ROOT = `${API_PREFIX}/api`;
 
 
 // ============================================================
@@ -47,15 +49,27 @@ const NOTIFICATIONS_ENABLED = Boolean(BUSINESS_CONFIG.notifications_enabled);
 // ============================================================
 
 const API = {
-    api: "/api",
-    servicios: "/api/servicios",
-    disponibilidad: "/api/disponibilidad",
-    turnos: "/api/turnos",
-    reservar: "/api/reservar",
-    cancelar: "/api/cancelar",
-    reprogramar: "/api/reprogramar",
-    chat: "/chat"
+    api: API_ROOT,
+    servicios: `${API_ROOT}/servicios`,
+    disponibilidad: `${API_ROOT}/disponibilidad`,
+    turnos: `${API_ROOT}/turnos`,
+    reservar: `${API_ROOT}/reservar`,
+    cancelar: `${API_ROOT}/cancelar`,
+    reprogramar: `${API_ROOT}/reprogramar`,
+    chat: `${API_PREFIX}/chat`
 };
+
+function formatARS(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) {
+        return "Precio a consultar";
+    }
+
+    return `$${amount.toLocaleString("es-AR", {
+        minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+        maximumFractionDigits: 2
+    })}`;
+}
 
 
 // ============================================================
@@ -1592,10 +1606,7 @@ async function showServices() {
                 "service-price";
 
 
-            price.textContent =
-                `$${Number(
-                    service.precio
-                ).toLocaleString("es-AR")}`;
+            price.textContent = formatARS(service.precio);
 
 
             card.appendChild(name);
@@ -2324,9 +2335,7 @@ emailInput.required =
 
 
                 option.textContent =
-                    `${service.nombre} — $${Number(
-                        service.precio
-                    ).toLocaleString("es-AR")}`;
+                    `${service.nombre} — ${formatARS(service.precio)}`;
 
 
                 serviceSelect.appendChild(
@@ -2942,6 +2951,31 @@ async function loadTimes(
                 "bot",
                 "success"
             );
+
+            if (data.management_token && data.appointment_id) {
+                const confirmation = document.createElement("div");
+                confirmation.className = "message bot";
+
+                const bubble = document.createElement("div");
+                bubble.className = "bubble";
+                bubble.textContent =
+                    "Guardá este enlace seguro para consultar, cancelar o reprogramar tu turno:";
+
+                const managementLink = document.createElement("a");
+                managementLink.href =
+                    `${API_PREFIX}/turno/${encodeURIComponent(data.management_token)}` +
+                    `?id=${encodeURIComponent(data.appointment_id)}`;
+                managementLink.textContent = "Gestionar mi turno";
+                managementLink.className = "appointment-management-link";
+                managementLink.target = "_blank";
+                managementLink.rel = "noopener noreferrer";
+
+                bubble.appendChild(document.createElement("br"));
+                bubble.appendChild(managementLink);
+                confirmation.appendChild(bubble);
+                chat.appendChild(confirmation);
+                scrollChat();
+            }
         }
     );
 
@@ -3086,7 +3120,7 @@ function showMyAppointments() {
 
 
     subtitle.textContent =
-        "Ingresá tu nombre y teléfono para buscar tus reservas.";
+        "Ingresá tu nombre, teléfono y el código de gestión recibido al reservar.";
 
 
     const input =
@@ -3109,6 +3143,12 @@ function showMyAppointments() {
     phoneInput.placeholder = "Tu teléfono";
     phoneInput.className = "appointment-name-input";
 
+    const managementTokenInput = document.createElement("input");
+    managementTokenInput.type = "text";
+    managementTokenInput.placeholder = "Código de gestión del turno";
+    managementTokenInput.className = "appointment-name-input";
+    managementTokenInput.autocomplete = "off";
+
 
     const button =
         document.createElement("button");
@@ -3128,11 +3168,18 @@ function showMyAppointments() {
             input.value.trim();
 
         const phone = phoneInput.value.trim();
+        const managementToken = managementTokenInput.value.trim();
 
 
-        if (!name || !phone) {
+        if (!name || !phone || !managementToken) {
 
-            input.focus();
+            if (!name) {
+                input.focus();
+            } else if (!phone) {
+                phoneInput.focus();
+            } else {
+                managementTokenInput.focus();
+            }
 
             return;
         }
@@ -3156,8 +3203,11 @@ function showMyAppointments() {
         );
 
 
-        const loaded = await loadCustomerAppointments(name, phone);
+        const loaded = await loadCustomerAppointments(name, phone, managementToken);
 
+        if (loaded) {
+            managementTokenInput.value = "";
+        }
 
         if (!loaded) {
 
@@ -3219,6 +3269,8 @@ function showMyAppointments() {
 
     bubble.appendChild(phoneInput);
 
+    bubble.appendChild(managementTokenInput);
+
     bubble.appendChild(button);
 
 
@@ -3243,7 +3295,8 @@ function showMyAppointments() {
 
 async function loadCustomerAppointments(
     name,
-    phone
+    phone,
+    managementToken
 ) {
 
     const data =
@@ -3251,7 +3304,7 @@ async function loadCustomerAppointments(
             "Buscando tus turnos...",
             (signal) =>
                 fetchJSON(
-                    `${API.turnos}?nombre=${encodeURIComponent(name)}&telefono=${encodeURIComponent(phone)}`,
+                    `${API.turnos}?nombre=${encodeURIComponent(name)}&telefono=${encodeURIComponent(phone)}&management_token=${encodeURIComponent(managementToken)}`,
                     { signal },
                     15000
                 ),
@@ -3412,8 +3465,9 @@ async function loadCustomerAppointments(
                 createAppointmentCard(
                     turno,
                     name,
-                    phone
-                );
+                phone,
+                managementToken
+            );
 
 
             container.appendChild(card);
@@ -3444,7 +3498,8 @@ async function loadCustomerAppointments(
 function createAppointmentCard(
     turno,
     name,
-    phone
+    phone,
+    managementToken
 ) {
 
     const card =
@@ -3535,6 +3590,7 @@ function createAppointmentCard(
                 turno,
                 name,
                 phone,
+                managementToken,
                 card
             );
 
@@ -3562,6 +3618,7 @@ function createAppointmentCard(
                 turno,
                 name,
                 phone,
+                managementToken,
                 card
             );
 
@@ -3602,6 +3659,7 @@ function showCancelConfirmation(
     turno,
     name,
     phone,
+    managementToken,
     card
 ) {
 
@@ -3693,6 +3751,7 @@ function showCancelConfirmation(
                 turno,
                 name,
                 phone,
+                managementToken,
                 card,
                 message
             );
@@ -3749,6 +3808,7 @@ async function cancelAppointment(
     turno,
     name,
     phone,
+    managementToken,
     card,
     confirmationMessage
 ) {
@@ -3772,7 +3832,9 @@ async function cancelAppointment(
                                 appointment_id:
                                     turno.id,
 
-                                telefono: phone
+                                telefono: phone,
+                                customer_name: name,
+                                management_token: managementToken
                             })
                     },
                     15000,
@@ -3830,6 +3892,7 @@ function showRescheduleOptions(
     turno,
     name,
     phone,
+    managementToken,
     card
 ) {
 
@@ -3917,6 +3980,7 @@ function showRescheduleOptions(
                 turno,
                 name,
                 phone,
+                managementToken,
                 card,
                 input.value,
                 message
@@ -3953,6 +4017,7 @@ async function showRescheduleAvailability(
     turno,
     name,
     phone,
+    managementToken,
     card,
     newDate,
     previousMessage
@@ -4072,6 +4137,7 @@ async function showRescheduleAvailability(
                         turno,
                         name,
                         phone,
+                        managementToken,
                         card,
                         newDate,
                         time,
@@ -4113,6 +4179,7 @@ async function rescheduleAppointment(
     turno,
     name,
     phone,
+    managementToken,
     card,
     newDate,
     newTime,
@@ -4146,7 +4213,9 @@ async function rescheduleAppointment(
                                 nueva_hora:
                                     newTime,
 
-                                telefono: phone
+                                telefono: phone,
+                                customer_name: name,
+                                management_token: managementToken
 
                             })
                     },
@@ -4393,7 +4462,8 @@ async function sendMessage(
         addMessage(
             data.error ||
             "Ocurrió un problema al procesar tu consulta.",
-            "bot"
+            "bot",
+            "error"
         );
 
 
