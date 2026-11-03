@@ -33,7 +33,7 @@ def index():
 def business_index(slug):
     """Landing page comercial para un negocio específico vía slug.
 
-    Muestra hero, servicios en grid, información del negocio y CTA a wizard de reserva.
+    Muestra la experiencia conversacional del negocio y limita sus APIs al slug.
 
     Args:
         slug: Slug del negocio desde request.view_args.
@@ -53,13 +53,12 @@ def business_index(slug):
         if business_id is not None
         else application.get_business_settings()
     )
-    services = application.get_active_services_scoped(business_id) if business_id else []
 
     return render_template(
         "landing.html",
         business=business,
-        services=services,
         public_frontend_config=application.build_public_frontend_config(settings),
+        api_prefix=f"/b/{slug}",
     )
 
 

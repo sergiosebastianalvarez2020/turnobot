@@ -1,4 +1,3 @@
-from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +12,7 @@ class TestBusinessLandingChat:
     def setup_method(self):
         self.client = app.test_client()
 
-    def test_landing_formats_prices_and_uses_slug_scoped_chat_routes(self):
+    def test_landing_uses_conversational_ui_and_slug_scoped_api_prefix(self):
         business = {"id": 2, "name": "Otro", "slug": "otro"}
         frontend_config = {
             "business": {
@@ -24,41 +23,75 @@ class TestBusinessLandingChat:
                 "initials": "OT",
             },
             "branding": {"logo_url": "", "primary_color": "#123456", "secondary_color": "#234567"},
+            "content": {
+                "welcome_label": "BIENVENIDO A {business_name}",
+                "welcome_description": "Soy la recepción de {business_name}, {business_description}.",
+            },
         }
         with (
             mock.patch("app.resolve_business", return_value=business),
             mock.patch("app.get_business_settings_scoped", return_value={}),
-            mock.patch(
-                "app.get_active_services_scoped",
-                return_value=[
-                    {"name": "Corte", "price": 12345, "duration": 30},
-                    {"name": "Barba", "price": Decimal("12345.50"), "duration": 20},
-                ],
-            ),
             mock.patch("app.build_public_frontend_config", return_value=frontend_config),
         ):
             response = self.client.get("/b/otro")
 
         assert response.status_code == 200
-        assert b"$12.345" in response.data
-        assert b"$12.345,5" in response.data
-        assert b'data-chat-url="/b/otro/chat"' in response.data
-        assert b'data-history-url="/b/otro/api/conversations/current/messages"' in response.data
-        assert b"/static/landing-chat.js" in response.data
+        assert b'data-api-prefix="/b/otro"' in response.data
+        assert (
+            b'data-message="\xc2\xbfQu\xc3\xa9 servicios tienen y cu\xc3\xa1nto cuestan?"'
+            in response.data
+        )
+        assert b'data-message="Quiero reservar un turno"' in response.data
+        assert b'data-message="Quiero consultar mis turnos"' in response.data
+        assert b'id="message"' in response.data
+        assert b'id="send"' in response.data
+        assert response.data.count(b'class="quick-action"') == 4
+        assert b"$12.345" not in response.data
+        assert b"/static/app.js" in response.data
+        assert b"/static/landing-chat.js" not in response.data
         assert b"$${ service.price }" not in response.data
         assert b'name="viewport"' in response.data
-        assert b"@media (max-width: 600px)" in response.data
-        assert b"width: calc(100vw - 24px)" in response.data
 
-    def test_chat_widget_opens_posts_and_surfaces_errors(self):
-        script_path = Path(__file__).resolve().parents[1] / "static" / "landing-chat.js"
+    def test_conversational_frontend_keeps_argentine_currency_formatting(self):
+        script_path = Path(__file__).resolve().parents[1] / "static" / "app.js"
         script = script_path.read_text(encoding="utf-8")
 
-        assert 'toggle.addEventListener("click", openChat)' in script
-        assert "panel.hidden = false" in script
-        assert "fetch(panel.dataset.chatUrl" in script
-        assert 'appendMessage("error"' in script
-        assert "response.ok" in script
+        assert "function formatARS(value)" in script
+        assert 'amount.toLocaleString("es-AR"' in script
+        assert "Number.isInteger(amount) ? 0 : 2" in script
+        assert "formatARS(service.precio)" in script
+        assert "const API_ROOT = `${API_PREFIX}/api`;" in script
+        assert "chat: `${API_PREFIX}/chat`" in script
+        assert "servicios: `${API_ROOT}/servicios`" in script
+        assert "disponibilidad: `${API_ROOT}/disponibilidad`" in script
+        assert "reservar: `${API_ROOT}/reservar`" in script
+        assert "turnos: `${API_ROOT}/turnos`" in script
+        assert "cancelar: `${API_ROOT}/cancelar`" in script
+        assert "reprogramar: `${API_ROOT}/reprogramar`" in script
+        assert "management_token=${encodeURIComponent(managementToken)}" in script
+        assert "management_token: managementToken" in script
+        assert "customer_name: name" in script
+        assert "appointment-management-link" in script
+
+    def test_conversational_layout_has_mobile_height_and_scrolling_constraints(self):
+        stylesheet = Path(__file__).resolve().parents[1] / "static" / "style.css"
+        css = stylesheet.read_text(encoding="utf-8")
+
+        assert "@media (max-width: 600px)" in css
+        assert "height: 100dvh;" in css
+        assert "height: calc(100dvh - 42px);" in css
+        assert "overflow: hidden;" in css
+        assert "flex: 1 1 0;" in css
+
+    def test_conversational_chat_posts_and_restores_history(self):
+        script_path = Path(__file__).resolve().parents[1] / "static" / "app.js"
+        script = script_path.read_text(encoding="utf-8")
+
+        assert "fetchJSON(" in script
+        assert "API.chat" in script
+        assert "`${API.api}/conversations/current/messages`" in script
+        assert "No pude recuperar la conversación anterior" in script
+        assert "Ocurrió un problema al procesar tu consulta." in script
 
     def test_chat_and_history_are_scoped_to_the_requested_business(self):
         businesses = {

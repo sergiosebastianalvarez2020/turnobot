@@ -39,7 +39,7 @@ class TestLandingPage(unittest.TestCase):
     def test_landing_page_contains_cta_button(self):
         with application.app.test_client() as client:
             response = client.get("/b/" + self.BUSINESS_SLUG)
-            self.assertIn("Reservar turno", response.text)
+            self.assertIn('data-message="Quiero reservar un turno"', response.text)
 
     def test_landing_page_contains_services(self):
         with application.app.test_client() as client:
