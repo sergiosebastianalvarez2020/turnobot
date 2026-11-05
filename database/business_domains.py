@@ -40,8 +40,10 @@ def get_business_domain(business_id, domain_id):
         connection.close()
 
 
-def resolve_business_domain(hostname):
-    connection = get_connection()
+def resolve_business_domain(hostname, connection=None):
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
     try:
         row = connection.execute(
             "SELECT b.id, b.name, b.slug FROM business_domains d "
@@ -52,7 +54,8 @@ def resolve_business_domain(hostname):
         ).fetchone()
         return dict(row) if row else None
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def get_primary_business_domain(business_id):

@@ -138,7 +138,11 @@ def load_current_business():
     # Sobre HTTP nunca se resuelve un dominio custom (previene accesos inseguros).
     hostname = request.host.split(":")[0]
     if request.scheme == "https":
-        domain_business = resolve_business_domain(hostname)
+        connection = get_connection()
+        try:
+            domain_business = resolve_business_domain(hostname, connection=connection)
+        finally:
+            connection.close()
         if domain_business:
             g.current_business = domain_business
             g.business_id = domain_business["id"]
