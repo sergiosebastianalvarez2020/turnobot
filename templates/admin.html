@@ -11,7 +11,7 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <link rel="stylesheet"
           href="{{ url_for('static', filename='admin.css') }}">
@@ -67,6 +67,13 @@
                 <a href="{{ admin_prefix or '' }}/admin/usuarios" class="nav-item">
                     <span aria-hidden="true">👥</span>
                     Usuarios
+                </a>
+                {% endif %}
+
+                {% if is_owner %}
+                <a href="{{ admin_prefix or '' }}/admin/dominios" class="nav-item">
+                    <span aria-hidden="true">🌐</span>
+                    Dominios
                 </a>
                 {% endif %}
 
@@ -1393,6 +1400,26 @@
 
     </script>
 
+
+    <script>
+    (function(){
+      var sb = document.getElementById('sidebar');
+      if(!sb) return;
+      var btn = document.createElement('button');
+      btn.className='sidebar-collapse-btn'; btn.textContent='‹'; btn.setAttribute('aria-label','Contraer sidebar');
+      sb.prepend(btn);
+      btn.addEventListener('click', function(){ sb.classList.toggle('collapsed'); btn.textContent = sb.classList.contains('collapsed')?'›':'‹'; });
+    })();
+    </script>
+    <nav class="bottom-nav" aria-label="Navegación móvil">
+        <a href="{{ admin_prefix or '' }}/admin" class="bottom-nav-item active"><span>🏠</span><small>Inicio</small></a>
+        <a href="{{ admin_prefix or '' }}/admin#agenda" class="bottom-nav-item"><span>📅</span><small>Agenda</small></a>
+        <a href="{{ admin_prefix or '' }}/admin" class="bottom-nav-item"><span>📋</span><small>Turnos</small></a>
+        {% if can_manage_memberships %}
+        <a href="{{ admin_prefix or '' }}/admin/usuarios" class="bottom-nav-item"><span>👥</span><small>Clientes</small></a>
+        {% endif %}
+        <a href="#" class="bottom-nav-item" id="bottom-more"><span>⋯</span><small>Más</small></a>
+    </nav>
 
 </body>
 

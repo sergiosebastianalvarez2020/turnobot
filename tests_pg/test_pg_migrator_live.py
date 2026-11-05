@@ -726,10 +726,15 @@ def test_d4_percent_literal_in_parametrized_query(pg_enabled, tmp_path):
             pool.close()
 
 
-def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled):
+def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled, tmp_path):
     """Aplica las migraciones reales de migrations_pg/ (001 + 002)."""
+    migrations_dir = tmp_path / "migrations_pg"
+    migrations_dir.mkdir()
+    for versioned_name in ("001_initial_schema.sql", "002_notification_retry_policy.sql"):
+        shutil.copy(pgm.MIGRATIONS_PG_DIR / versioned_name, migrations_dir / versioned_name)
+
     with _disposable_db(pg_enabled) as conninfo:
-        result = pgm.run_migrations(conninfo)
+        result = pgm.run_migrations(conninfo, migrations_dir=migrations_dir, allow_external=True)
         assert [item.version for item in result.applied] == [1, 2]
         assert result.current_version == 2
         with connect_autocommit(conninfo) as conn:
@@ -751,6 +756,6 @@ def test_real_migrations_pg_apply_002_and_are_idempotent(pg_enabled):
                 "SELECT version, name FROM schema_migrations ORDER BY version"
             ).fetchall()
             assert rows == [(1, "001_initial_schema.sql"), (2, "002_notification_retry_policy.sql")]
-        second = pgm.run_migrations(conninfo)
+        second = pgm.run_migrations(conninfo, migrations_dir=migrations_dir, allow_external=True)
         assert second.applied == []
         assert second.current_version == 2

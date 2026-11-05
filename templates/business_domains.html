@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dominios — {{ business.name }}</title>
+    <style>
+        body { margin: 0; background: #f3f4f6; color: #172033; font: 16px/1.5 system-ui, sans-serif; }
+        main { box-sizing: border-box; max-width: 860px; margin: 2rem auto; padding: 1.5rem; }
+        section { margin: 1rem 0; padding: 1.25rem; border-radius: 12px; background: #fff; }
+        h1, h2 { margin-top: 0; }
+        label { display: block; margin-bottom: .35rem; font-weight: 600; }
+        input[type=text] { box-sizing: border-box; width: min(100%, 34rem); padding: .65rem; }
+        button { margin: .25rem .25rem .25rem 0; padding: .5rem .75rem; cursor: pointer; }
+        .notice { padding: .75rem; border-radius: 8px; background: #e8f4ff; overflow-wrap: anywhere; }
+        .error { background: #fff0ef; color: #8c241d; }
+        .domain { border-top: 1px solid #e5e7eb; padding: 1rem 0; }
+        code { overflow-wrap: anywhere; }
+        .muted { color: #596579; }
+    </style>
+</head>
+<body>
+<main>
+    <p><a href="{{ admin_prefix or '' }}/admin">← Volver a Administración</a></p>
+    <h1>Dominios de {{ business.name }}</h1>
+    <p>El dominio propio es opcional. Tu página gratuita sigue disponible en
+        <a href="{{ public_base_url }}/b/{{ business.slug }}">{{ public_base_url }}/b/{{ business.slug }}</a>.</p>
+
+    {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+    {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+
+    {% if verification %}
+    <section class="notice" aria-live="polite">
+        <h2>Configurá la verificación DNS</h2>
+        <p>Agregá un registro TXT. Este token se muestra ahora y no se almacena en claro; copialo antes de salir de esta página.</p>
+        <dl>
+            <dt>Nombre</dt><dd><code>{{ verification_record_name(verification.hostname) }}</code></dd>
+            <dt>Valor</dt><dd><code>{{ verification.token }}</code></dd>
+            <dt>TTL sugerido</dt><dd>300 segundos</dd>
+        </dl>
+        <p>La propagación DNS puede demorar. Después, usá “Verificar DNS”.</p>
+        <p>El token vence en {{ verification_ttl }}.</p>
+    </section>
+    {% endif %}
+
+    <section>
+        <h2>Conectar un dominio</h2>
+        <p class="muted">Ingresá el hostname, por ejemplo <code>www.ejemplo.com.ar</code>, sin protocolo ni puerto.</p>
+        <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/agregar">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="hostname">Dominio</label>
+            <input id="hostname" name="hostname" type="text" required maxlength="253" autocomplete="url">
+            <button type="submit">Agregar dominio</button>
+        </form>
+    </section>
+
+    <section>
+        <h2>Dominios conectados</h2>
+        {% if domains %}
+            {% for domain in domains %}
+            <article class="domain">
+                <h3>{{ domain.hostname }} {% if domain.is_primary %}<small>(principal)</small>{% endif %}</h3>
+                <p>Propiedad: <strong>{{ domain.verification_status }}</strong> · HTTPS: <strong>{{ domain.tls_status }}</strong> · Estado: <strong>{{ "activo" if domain.is_active else "inactivo" }}</strong></p>
+                {% if domain.verification_status == "pending" %}
+                <p>Registro TXT: <code>{{ verification_record_name(domain.hostname) }}</code></p>
+                <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/verificar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">Verificar DNS</button>
+                </form>
+                <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/rotar-token">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">Generar token nuevo</button>
+                </form>
+                {% elif domain.verification_status == "revoked" %}
+                <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/rotar-token">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">Volver a verificar</button>
+                </form>
+                {% elif domain.verification_status == "verified" %}
+                <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/tls">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">Comprobar HTTPS</button>
+                </form>
+                {% if domain.tls_status == "verified" %}
+                    {% if domain.is_active %}
+                    <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/desactivar">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit">Desactivar</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/activar">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit">Activar</button>
+                    </form>
+                    {% endif %}
+                    {% if domain.is_active and not domain.is_primary %}
+                    <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/principal">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit">Elegir como principal</button>
+                    </form>
+                    {% endif %}
+                {% endif %}
+                {% endif %}
+                {% if domain.verification_status != "revoked" %}
+                <form method="post" action="{{ admin_prefix or '' }}/admin/dominios/{{ domain.id }}/revocar">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">Revocar</button>
+                </form>
+                {% endif %}
+            </article>
+            {% endfor %}
+        {% else %}
+            <p>Todavía no conectaste dominios. Podés usar TurnoBot gratuitamente con tu URL por slug.</p>
+        {% endif %}
+    </section>
+
+    <section>
+        <h2>HTTPS y activación</h2>
+        <p>Después de verificar la propiedad, configurá DNS y un certificado TLS válido para el hostname. TurnoBot comprueba que el puerto 443 presente un certificado confiable para ese dominio. El dominio solo se activa después de esa comprobación; los enlaces públicos propios requieren que esté activo y sea principal.</p>
+        <p>La configuración de certificados y del proxy de entrada depende de la infraestructura operada por TurnoBot. Si la comprobación falla, el dominio no servirá la página del negocio.</p>
+    </section>
+</main>
+</body>
+</html>

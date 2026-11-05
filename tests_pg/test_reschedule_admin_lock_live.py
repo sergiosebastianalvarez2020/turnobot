@@ -15,6 +15,7 @@ SERIALIZACIÓN de verdad.
 import datetime
 import threading
 import time
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -32,10 +33,13 @@ from tests_pg._helpers import (
 
 PHONE = "5551234567"
 
-ORIGEN = "2026-11-02"  # lunes
-DESTINO = "2026-11-03"  # martes
-DIA_A = "2026-11-09"  # lunes
-DIA_B = "2026-11-11"  # miércoles
+_TODAY = datetime.datetime.now(ZoneInfo("America/Argentina/Buenos_Aires")).date()
+_DAYS_TO_MONDAY = (7 - _TODAY.weekday()) % 7 or 7
+_NEXT_MONDAY = _TODAY + datetime.timedelta(days=_DAYS_TO_MONDAY)
+ORIGEN = _NEXT_MONDAY.isoformat()
+DESTINO = (_NEXT_MONDAY + datetime.timedelta(days=1)).isoformat()
+DIA_A = (_NEXT_MONDAY + datetime.timedelta(days=7)).isoformat()
+DIA_B = (_NEXT_MONDAY + datetime.timedelta(days=9)).isoformat()
 
 
 def _setup_booking_context(pg_seed):

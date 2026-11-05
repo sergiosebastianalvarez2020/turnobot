@@ -26,7 +26,29 @@ from routes.booking_abuse import enforce_public_booking_abuse_checks
 
 
 def index():
-    """Landing comercial de TurnoBot, independiente de cualquier tenant."""
+    """Landing comercial de TurnoBot.
+
+    Si el request fue resuelto a un negocio vía dominio personalizado
+    (g.custom_domain_resolved), se muestra la landing de ese negocio.
+    De lo contrario, se muestra la página de marketing de la plataforma.
+    """
+    business = g.current_business
+    if business is not None and getattr(g, "custom_domain_resolved", False):
+        import app as application
+
+        business_id = g.business_id
+        settings = (
+            application.get_business_settings_scoped(business_id)
+            if business_id is not None
+            else application.get_business_settings()
+        )
+        services = application.get_active_services_scoped(business_id) if business_id else []
+        return render_template(
+            "landing.html",
+            business=business,
+            services=services,
+            public_frontend_config=application.build_public_frontend_config(settings),
+        )
     return render_template("marketing_home.html")
 
 

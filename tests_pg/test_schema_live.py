@@ -1,9 +1,9 @@
 """Pruebas del schema PostgreSQL REAL aplicado (Fase 4H).
 
-Verifica que migrations_pg/001_initial_schema.sql se aplica correctamente a
-PostgreSQL real: conexión/versión, tablas, PK, FK, índices (incluido el único
-parcial de appointments), tipos (BOOLEAN, DATE, TIME, TIMESTAMPTZ, NUMERIC) y
-seed de roles. No modifica el archivo del schema.
+Verifica que el esquema completo aplicado mediante apply_current_schema() está
+correcto en PostgreSQL real: conexión/versión, tablas, PK, FK, índices (incluido
+el único parcial de appointments), tipos (BOOLEAN, DATE, TIME, TIMESTAMPTZ,
+NUMERIC) y seed de roles. No modifica el archivo del schema.
 """
 
 import datetime
@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "appointments",
     "audit_log",
     "business_knowledge",
+    "business_domains",
     "business_settings",
     "business_users",
     "businesses",

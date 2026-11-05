@@ -17,6 +17,7 @@ from time import monotonic
 from flask import abort, g, request
 
 from application.logging_config import logger
+from database.business_domains import resolve_business_domain
 from database.database import (  # noqa: F401 (seam standalone: consumidos vía globals() en _load_seam)
     get_active_services_scoped,
     get_business_settings,
@@ -123,16 +124,43 @@ def load_current_business():
         )
         return None
 
-    g.current_business = _load_seam("resolve_business")()
-    if g.current_business:
-        g.business_id = (
-            g.current_business.get("id")
-            if isinstance(g.current_business, dict)
-            else (g.current_business["id"] if g.current_business else None)
-        )
-    else:
+    # Rutas públicas de autenticación y rutas de plataforma no tienen tenant
+    # asociado. No deben depender del Host presentado por el cliente.
+    endpoint = request.endpoint or ""
+    if endpoint in {"forgot_password", "reset_password", "registro"} or endpoint.startswith(
+        "superadmin_"
+    ):
+        g.current_business = None
         g.business_id = None
-    return None
+        return None
+
+    # Dominios personalizados: resolver por Host header solo sobre HTTPS.
+    # Sobre HTTP nunca se resuelve un dominio custom (previene accesos inseguros).
+    hostname = request.host.split(":")[0]
+    if request.scheme == "https":
+        domain_business = resolve_business_domain(hostname)
+        if domain_business:
+            g.current_business = domain_business
+            g.business_id = domain_business["id"]
+            g.custom_domain_resolved = True
+            return None
+
+    # Hosts de plataforma (localhost, 127.0.0.1): usan el negocio por defecto.
+    platform_hosts = {"localhost", "127.0.0.1"}
+    if hostname in platform_hosts:
+        g.current_business = _load_seam("resolve_business")()
+        if g.current_business:
+            g.business_id = (
+                g.current_business.get("id")
+                if isinstance(g.current_business, dict)
+                else (g.current_business["id"] if g.current_business else None)
+            )
+        else:
+            g.business_id = None
+        return None
+
+    # Host desconocido sin dominio custom verificado: 404.
+    abort(404)
 
 
 def _settings_value(settings, key, default=""):
