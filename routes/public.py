@@ -47,6 +47,7 @@ def index():
             "landing.html",
             business=business,
             services=services,
+            api_prefix=f"/b/{business['slug']}",
             public_frontend_config=application.build_public_frontend_config(settings),
         )
     return render_template("marketing_home.html")

@@ -29,12 +29,20 @@ class TestBusinessDomainRoutes(PostgreSQLTestCase):
         return business_id, slug, hostname
 
     def test_custom_domain_root_and_slug_are_bound_to_the_resolved_tenant(self):
-        _, slug, hostname = self._create_active_domain()
+        business_id, slug, hostname = self._create_active_domain()
+        business_name = f"Negocio {slug}"
+        with psycopg.connect(self.pg_test_url) as connection:
+            connection.execute(
+                "UPDATE business_settings SET business_name = %s WHERE business_id = %s",
+                (business_name, business_id),
+            )
         client = self.app.test_client()
 
         response = client.get("/", base_url=f"https://{hostname}")
         assert response.status_code == 200
-        assert slug in response.get_data(as_text=True)
+        body = response.get_data(as_text=True)
+        assert business_name in body
+        assert slug in body
 
         response = client.get("/b/not-the-business", base_url=f"https://{hostname}")
         assert response.status_code == 404
