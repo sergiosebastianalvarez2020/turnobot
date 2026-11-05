@@ -14,7 +14,7 @@ import sys
 import uuid
 from time import monotonic
 
-from flask import abort, g, current_app, request
+from flask import abort, g, request
 
 from application.logging_config import logger
 from database.business_domains import resolve_business_domain
