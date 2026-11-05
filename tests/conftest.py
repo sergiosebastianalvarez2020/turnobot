@@ -235,6 +235,11 @@ def pg_isolate_module_app(request):
         yield
         return
 
+    # Tests marked with no_pg must not connect to PostgreSQL
+    if request.node.get_closest_marker("no_pg"):
+        yield
+        return
+
     # Los tests que solicitan el fixture `app` ya reciben una instancia y una
     # base PostgreSQL propias. No hace falta crear además otra base para la
     # fachada global importada por compatibilidad (por ejemplo, para parches).

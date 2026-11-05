@@ -21,3 +21,6 @@ test_output*.txt
 run_*.ps1
 # Respaldo de limpieza del repositorio (no publicar)
 .cleanup_backup/
+
+# Resultados de pruebas visuales (capturas de pantalla)
+tests/visual/results/
