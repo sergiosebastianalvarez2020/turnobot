@@ -1,6 +1,7 @@
 import os
 import ssl
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from email import policy
 from email.parser import BytesParser
@@ -133,6 +134,25 @@ class TestConfirmationEmail(BaseNotificationTest):
             "appointment_end": "09:30",
         }
 
+    @staticmethod
+    def _smtp_env() -> dict:
+        return {
+            "SMTP_HOST": "smtp.test",
+            "SMTP_PORT": "587",
+            "SMTP_USER": "user",
+            "SMTP_PASSWORD": "secret-test-password",
+            "EMAIL_FROM": "no-reply@test.com",
+        }
+
+    @contextmanager
+    def _mock_smtp(self, fake_smtp):
+        env = self._smtp_env()
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake_smtp),
+        ):
+            yield fake_smtp
+
     def test_semis_sin_smtp_no_falla_ni_registra(self):
         result, apt = self._appointment()
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -209,17 +229,7 @@ class TestConfirmationEmail(BaseNotificationTest):
     def test_starttls_fallido_no_autentica_ni_envia(self):
         _, apt = self._appointment()
         fake = StartTLSFailureSMTP()
-        env = {
-            "SMTP_HOST": "smtp.test",
-            "SMTP_PORT": "587",
-            "SMTP_USER": "user",
-            "SMTP_PASSWORD": "secret-test-password",
-            "EMAIL_FROM": "no-reply@test.com",
-        }
-        with (
-            mock.patch.dict(os.environ, env, clear=False),
-            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
-        ):
+        with self._mock_smtp(fake):
             sent, reason = send_confirmation_email(1, apt, force=True)
 
         self.assertFalse(sent)
@@ -236,17 +246,7 @@ class TestConfirmationEmail(BaseNotificationTest):
     def test_starttls_ssl_error_identifica_fallo_y_sanitiza(self):
         _, apt = self._appointment()
         fake = SSLErrorSMTP()
-        env = {
-            "SMTP_HOST": "smtp.test",
-            "SMTP_PORT": "587",
-            "SMTP_USER": "user",
-            "SMTP_PASSWORD": "secret-test-password",
-            "EMAIL_FROM": "no-reply@test.com",
-        }
-        with (
-            mock.patch.dict(os.environ, env, clear=False),
-            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
-        ):
+        with self._mock_smtp(fake):
             sent, reason = send_confirmation_email(1, apt, force=True)
 
         self.assertFalse(sent)
@@ -263,17 +263,7 @@ class TestConfirmationEmail(BaseNotificationTest):
     def test_error_smtp_general_no_lleva_prefijo_starttls(self):
         _, apt = self._appointment()
         fake = LoginFailureSMTP()
-        env = {
-            "SMTP_HOST": "smtp.test",
-            "SMTP_PORT": "587",
-            "SMTP_USER": "user",
-            "SMTP_PASSWORD": "secret-test-password",
-            "EMAIL_FROM": "no-reply@test.com",
-        }
-        with (
-            mock.patch.dict(os.environ, env, clear=False),
-            mock.patch.object(notifications.smtplib, "SMTP", return_value=fake),
-        ):
+        with self._mock_smtp(fake):
             sent, reason = send_confirmation_email(1, apt, force=True)
 
         self.assertFalse(sent)
@@ -305,31 +295,39 @@ class TestAppointmentByToken(BaseNotificationTest):
 
 
 class TestRetryFailedNotificationsPacing(unittest.TestCase):
-    def test_pausa_entre_elementos_del_lote(self):
-        fake_failed = [
+    @staticmethod
+    def _build_fake_failed(count: int, start_id: int = 1, business_id: int = 1) -> list[dict]:
+        return [
             {
-                "id": 1,
-                "business_id": 1,
-                "appointment_id": 101,
+                "id": start_id + i,
+                "business_id": business_id,
+                "appointment_id": 100 + start_id + i,
                 "type": "confirmation",
-                "destination": "a@test.com",
-            },
-            {
-                "id": 2,
-                "business_id": 1,
-                "appointment_id": 102,
-                "type": "confirmation",
-                "destination": "b@test.com",
-            },
-            {
-                "id": 3,
-                "business_id": 1,
-                "appointment_id": 103,
-                "type": "confirmation",
-                "destination": "c@test.com",
-            },
+                "destination": f"test{i + 1}@example.com",
+            }
+            for i in range(count)
         ]
-        settings = {"notifications_enabled": 1}
+
+    @contextmanager
+    def _mock_runner(
+        self,
+        fake_failed: list[dict],
+        settings: dict | None = None,
+        resend_side_effect: list[tuple] | tuple | None = None,
+    ):
+        settings = settings or {"notifications_enabled": 1}
+        if resend_side_effect is None:
+            resend_mock = mock.patch.object(retry_runner, "_resend", return_value=(True, None))
+        else:
+            if isinstance(resend_side_effect, tuple):
+                resend_mock = mock.patch.object(
+                    retry_runner, "_resend", return_value=resend_side_effect
+                )
+            else:
+                resend_mock = mock.patch.object(
+                    retry_runner, "_resend", side_effect=resend_side_effect
+                )
+
         with (
             mock.patch.object(retry_runner, "smtp_configured", return_value=True),
             mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
@@ -338,118 +336,51 @@ class TestRetryFailedNotificationsPacing(unittest.TestCase):
                 retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
             ),
             mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
-            mock.patch.object(retry_runner, "_resend", return_value=(True, None)) as mock_resend,
+            resend_mock as mock_resend,
             mock.patch("time.sleep") as mock_sleep,
         ):
+            yield mock_resend, mock_sleep
+
+    def test_pausa_entre_elementos_del_lote(self):
+        fake_failed = self._build_fake_failed(3)
+        with self._mock_runner(fake_failed) as (mock_resend, mock_sleep):
             ok_count = retry_runner._run_once()
 
         self.assertEqual(ok_count, 3)
         self.assertEqual(mock_resend.call_count, 3)
-        # Pausa entre elementos: 2 pausas para 3 elementos (no después del último)
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_has_calls([mock.call(0.5), mock.call(0.5)])
 
     def test_un_solo_elemento_no_genera_pausa(self):
-        fake_failed = [
-            {
-                "id": 1,
-                "business_id": 1,
-                "appointment_id": 101,
-                "type": "confirmation",
-                "destination": "a@test.com",
-            }
-        ]
-        settings = {"notifications_enabled": 1}
-        with (
-            mock.patch.object(retry_runner, "smtp_configured", return_value=True),
-            mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
-            mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(
-                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
-            ),
-            mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
-            mock.patch.object(retry_runner, "_resend", return_value=(True, None)),
-            mock.patch("time.sleep") as mock_sleep,
-        ):
+        fake_failed = self._build_fake_failed(1)
+        with self._mock_runner(fake_failed) as (mock_resend, mock_sleep):
             ok_count = retry_runner._run_once()
 
         self.assertEqual(ok_count, 1)
-        # 1 elemento -> no debe haber pausa después del único elemento
         mock_sleep.assert_not_called()
 
     def test_lote_vacio_no_genera_pausas(self):
-        with (
-            mock.patch.object(retry_runner, "smtp_configured", return_value=True),
-            mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
-            mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(retry_runner, "list_failed_notifications_scoped", return_value=[]),
-            mock.patch("time.sleep") as mock_sleep,
-        ):
+        with self._mock_runner([]) as (mock_resend, mock_sleep):
             ok_count = retry_runner._run_once()
 
         self.assertEqual(ok_count, 0)
         mock_sleep.assert_not_called()
 
     def test_fallo_individual_continua_y_mantiene_pausa(self):
-        fake_failed = [
-            {
-                "id": 1,
-                "business_id": 1,
-                "appointment_id": 101,
-                "type": "confirmation",
-                "destination": "a@test.com",
-            },
-            {
-                "id": 2,
-                "business_id": 1,
-                "appointment_id": 102,
-                "type": "confirmation",
-                "destination": "b@test.com",
-            },
-        ]
-        settings = {"notifications_enabled": 1}
-        with (
-            mock.patch.object(retry_runner, "smtp_configured", return_value=True),
-            mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
-            mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(
-                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
-            ),
-            mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
-            mock.patch.object(
-                retry_runner, "_resend", side_effect=[(False, "send_failed"), (True, None)]
-            ) as mock_resend,
-            mock.patch("time.sleep") as mock_sleep,
-        ):
+        fake_failed = self._build_fake_failed(2)
+        with self._mock_runner(
+            fake_failed, resend_side_effect=[(False, "send_failed"), (True, None)]
+        ) as (mock_resend, mock_sleep):
             ok_count = retry_runner._run_once()
 
         self.assertEqual(ok_count, 1)
         self.assertEqual(mock_resend.call_count, 2)
-        # Falló el primero, pero continúa con el segundo y respeta la pausa entre ambos
         mock_sleep.assert_called_once_with(0.5)
 
     def test_negocio_deshabilitado_se_omite(self):
-        fake_failed = [
-            {
-                "id": 1,
-                "business_id": 1,
-                "appointment_id": 101,
-                "type": "confirmation",
-                "destination": "a@test.com",
-            }
-        ]
+        fake_failed = self._build_fake_failed(1)
         settings = {"notifications_enabled": 0}
-        with (
-            mock.patch.object(retry_runner, "smtp_configured", return_value=True),
-            mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
-            mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(
-                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
-            ),
-            mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
-            mock.patch.object(retry_runner, "_resend") as mock_resend,
-            mock.patch("time.sleep") as mock_sleep,
-        ):
+        with self._mock_runner(fake_failed, settings=settings) as (mock_resend, mock_sleep):
             ok_count = retry_runner._run_once()
 
         self.assertEqual(ok_count, 0)
