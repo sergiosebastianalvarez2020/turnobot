@@ -307,16 +307,36 @@ class TestAppointmentByToken(BaseNotificationTest):
 class TestRetryFailedNotificationsPacing(unittest.TestCase):
     def test_pausa_entre_elementos_del_lote(self):
         fake_failed = [
-            {"id": 1, "business_id": 1, "appointment_id": 101, "type": "confirmation", "destination": "a@test.com"},
-            {"id": 2, "business_id": 1, "appointment_id": 102, "type": "confirmation", "destination": "b@test.com"},
-            {"id": 3, "business_id": 1, "appointment_id": 103, "type": "confirmation", "destination": "c@test.com"},
+            {
+                "id": 1,
+                "business_id": 1,
+                "appointment_id": 101,
+                "type": "confirmation",
+                "destination": "a@test.com",
+            },
+            {
+                "id": 2,
+                "business_id": 1,
+                "appointment_id": 102,
+                "type": "confirmation",
+                "destination": "b@test.com",
+            },
+            {
+                "id": 3,
+                "business_id": 1,
+                "appointment_id": 103,
+                "type": "confirmation",
+                "destination": "c@test.com",
+            },
         ]
         settings = {"notifications_enabled": 1}
         with (
             mock.patch.object(retry_runner, "smtp_configured", return_value=True),
             mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
             mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(retry_runner, "list_failed_notifications_scoped", return_value=fake_failed),
+            mock.patch.object(
+                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
+            ),
             mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
             mock.patch.object(retry_runner, "_resend", return_value=(True, None)) as mock_resend,
             mock.patch("time.sleep") as mock_sleep,
@@ -331,14 +351,22 @@ class TestRetryFailedNotificationsPacing(unittest.TestCase):
 
     def test_un_solo_elemento_no_genera_pausa(self):
         fake_failed = [
-            {"id": 1, "business_id": 1, "appointment_id": 101, "type": "confirmation", "destination": "a@test.com"},
+            {
+                "id": 1,
+                "business_id": 1,
+                "appointment_id": 101,
+                "type": "confirmation",
+                "destination": "a@test.com",
+            }
         ]
         settings = {"notifications_enabled": 1}
         with (
             mock.patch.object(retry_runner, "smtp_configured", return_value=True),
             mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
             mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(retry_runner, "list_failed_notifications_scoped", return_value=fake_failed),
+            mock.patch.object(
+                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
+            ),
             mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
             mock.patch.object(retry_runner, "_resend", return_value=(True, None)),
             mock.patch("time.sleep") as mock_sleep,
@@ -364,15 +392,29 @@ class TestRetryFailedNotificationsPacing(unittest.TestCase):
 
     def test_fallo_individual_continua_y_mantiene_pausa(self):
         fake_failed = [
-            {"id": 1, "business_id": 1, "appointment_id": 101, "type": "confirmation", "destination": "a@test.com"},
-            {"id": 2, "business_id": 1, "appointment_id": 102, "type": "confirmation", "destination": "b@test.com"},
+            {
+                "id": 1,
+                "business_id": 1,
+                "appointment_id": 101,
+                "type": "confirmation",
+                "destination": "a@test.com",
+            },
+            {
+                "id": 2,
+                "business_id": 1,
+                "appointment_id": 102,
+                "type": "confirmation",
+                "destination": "b@test.com",
+            },
         ]
         settings = {"notifications_enabled": 1}
         with (
             mock.patch.object(retry_runner, "smtp_configured", return_value=True),
             mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
             mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(retry_runner, "list_failed_notifications_scoped", return_value=fake_failed),
+            mock.patch.object(
+                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
+            ),
             mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
             mock.patch.object(
                 retry_runner, "_resend", side_effect=[(False, "send_failed"), (True, None)]
@@ -388,14 +430,22 @@ class TestRetryFailedNotificationsPacing(unittest.TestCase):
 
     def test_negocio_deshabilitado_se_omite(self):
         fake_failed = [
-            {"id": 1, "business_id": 1, "appointment_id": 101, "type": "confirmation", "destination": "a@test.com"},
+            {
+                "id": 1,
+                "business_id": 1,
+                "appointment_id": 101,
+                "type": "confirmation",
+                "destination": "a@test.com",
+            }
         ]
         settings = {"notifications_enabled": 0}
         with (
             mock.patch.object(retry_runner, "smtp_configured", return_value=True),
             mock.patch.object(retry_runner, "_init_cli_pool", return_value=None),
             mock.patch.object(retry_runner, "close_pg_pool"),
-            mock.patch.object(retry_runner, "list_failed_notifications_scoped", return_value=fake_failed),
+            mock.patch.object(
+                retry_runner, "list_failed_notifications_scoped", return_value=fake_failed
+            ),
             mock.patch.object(retry_runner, "get_business_settings_scoped", return_value=settings),
             mock.patch.object(retry_runner, "_resend") as mock_resend,
             mock.patch("time.sleep") as mock_sleep,
