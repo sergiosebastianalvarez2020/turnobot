@@ -3,10 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
+
+pytestmark = pytest.mark.no_pg
 
 
 class TestAdminServices(unittest.TestCase):

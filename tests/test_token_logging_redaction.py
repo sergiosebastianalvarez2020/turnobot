@@ -8,6 +8,8 @@ import json
 import logging
 import unittest
 
+import pytest
+
 import app as application
 from application.logging_config import StructuredFormatter, redact_sensitive_path
 
@@ -15,8 +17,6 @@ _REAL_TOKEN = "aB3x-def456-GHI789-jkl012-mnP987-qRsTuVwXyZ-0xABCDEF"
 
 
 class _LogCapture:
-    """Captura registros de log para aserciones."""
-
     def __init__(self, logger_name="el_corte"):
         self.records = []
         self.handler = logging.Handler()
@@ -39,6 +39,8 @@ class _LogCapture:
 
 class TestRedactSensitivePath(unittest.TestCase):
     """Tests unitarios de la función redact_sensitive_path."""
+
+    pytestmark = pytest.mark.no_pg
 
     def test_password_reset_token_redacted(self):
         result = redact_sensitive_path("/reset/SECRETO_REAL")
@@ -111,6 +113,8 @@ class TestRedactSensitivePath(unittest.TestCase):
 
 class TestTokenLoggingEndToEnd(unittest.TestCase):
     """Tests end-to-end: el token no aparece en los logs de la aplicacio'n."""
+
+    pytestmark = pytest.mark.no_pg
 
     def setUp(self):
         self.original_hash = application.ADMIN_PASSWORD_HASH

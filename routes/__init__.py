@@ -7,6 +7,7 @@ histórico del archivo monolítico original.
 """
 
 from routes import (
+    business_domains,
     register_admin,
     register_auth,
     register_auth_public,
@@ -38,3 +39,4 @@ def register_blueprints(app):
     register_superadmin.register(app)
     register_invitation.register(app)
     register_admin.register(app)
+    business_domains.register(app)

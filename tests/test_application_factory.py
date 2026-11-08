@@ -22,6 +22,7 @@ import unittest
 from pathlib import Path
 
 import flask
+import pytest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import app as application
@@ -67,7 +68,9 @@ class _FactoryIsolationMixin:
                 os.environ[key] = value
 
 
-class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
+class FactoryContractTests(_FactoryIsolationMixin, unittest.TestCase):
+    pytestmark = pytest.mark.no_pg
+
     # C1 — Factory funcional
     def test_create_app_returns_functional_flask_app(self):
         os.environ["DB_BACKEND"] = "sqlite"
@@ -100,8 +103,8 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         rules = list(new_app.url_map.iter_rules())
         endpoints = {rule.endpoint for rule in rules}
 
-        self.assertEqual(len(rules), 118)
-        self.assertEqual(len(endpoints), 85)
+        self.assertEqual(len(rules), 136)
+        self.assertEqual(len(endpoints), 103)
 
         for endpoint in (
             "health",
@@ -162,7 +165,9 @@ class FactoryContractTests(unittest.TestCase, _FactoryIsolationMixin):
         )
 
 
-class FactoryConfigTests(unittest.TestCase, _FactoryIsolationMixin):
+class FactoryConfigTests(_FactoryIsolationMixin, unittest.TestCase):
+    pytestmark = pytest.mark.no_pg
+
     # C5 — Configuración de desarrollo/default
     def test_dev_default_config(self):
         for key in _ENV_KEYS:

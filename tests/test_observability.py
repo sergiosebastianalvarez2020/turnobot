@@ -19,10 +19,13 @@ import re
 import unittest
 from unittest import mock
 
+import pytest
 from google.genai import errors as genai_errors
 
 import app as application
 import services.ai as ai
+
+pytestmark = pytest.mark.no_pg
 
 
 class _LogCapture:

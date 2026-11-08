@@ -13,12 +13,15 @@ import unittest
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
 from services import appointments, loyalty
 from services.knowledge import create_knowledge_scoped
+
+pytestmark = pytest.mark.no_pg
 
 BUSINESS_2_SQL = "INSERT INTO businesses (id, name, slug) VALUES (2, 'Business B', 'business-b')"
 

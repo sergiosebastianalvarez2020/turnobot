@@ -1,10 +1,15 @@
 import unittest
 
+import pytest
+
 import database.database as database
 from services.appointments import DEFAULT_TIMEZONE, get_business_timezone
 
 
+@pytest.mark.usefixtures("sqlite_temp_db")
 class TestBusinessSettings(unittest.TestCase):
+    pytestmark = pytest.mark.no_pg
+
     def test_devuelve_configuracion_del_negocio(self):
         settings = database.get_business_settings(1)
 

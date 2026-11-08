@@ -19,6 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import app as application
@@ -29,6 +30,8 @@ TELEFONO_SHARED = "3838439222"
 
 class TestExcepcionAdminDelCupo(unittest.TestCase):
     """La ruta manual admin puede exceder el cupo; la pública no."""
+
+    pytestmark = pytest.mark.no_pg
 
     def setUp(self):
         application.rate_limit_state.clear()
@@ -91,7 +94,7 @@ class TestExcepcionAdminDelCupo(unittest.TestCase):
         match = re.search(r'name="csrf_token" value="([^"]+)"', admin_page.text)
         self.csrf_token = match.group(1) if match else self.csrf_login
 
-        self._fecha = self._proximo_dia_abierto()
+        self._fecha = self._proximo_dia_abierto(min_slots=9)
 
     def tearDown(self):
         application.ADMIN_PASSWORD_HASH = self._original_hash
@@ -107,8 +110,13 @@ class TestExcepcionAdminDelCupo(unittest.TestCase):
     # Helpers
     # ------------------------------------------------------------
 
-    def _proximo_dia_abierto(self):
-        """Primer día con horarios disponibles (negocio 1)."""
+    def _proximo_dia_abierto(self, min_slots=1):
+        """Primer día futuro con al menos min_slots horarios disponibles (negocio 1).
+
+        No depende del día de la semana ni del orden de los días: recorre hasta
+        30 días hacia adelante y devuelve el primero cuya grilla real tenga
+        suficientes franjas libres.
+        """
         from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
 
@@ -120,9 +128,11 @@ class TestExcepcionAdminDelCupo(unittest.TestCase):
         for offset in range(1, 30):
             candidato = hoy + timedelta(days=offset)
             slots = appointments.get_available_slots(candidato.isoformat(), 1, service="Corte")
-            if slots:
-                return candidato.isoformat(), slots[0]
-        raise AssertionError("No hay días abiertos en el seed.")
+            if len(slots) >= min_slots:
+                return candidato.isoformat(), slots
+        raise AssertionError(
+            f"No hay un día futuro con al menos {min_slots} slots libres en los próximos 30 días."
+        )
 
     def _crear_admin(self, hora, telefono=TELEFONO_SHARED, csrf=None):
         return self.client.post(
@@ -229,10 +239,19 @@ class TestExcepcionAdminDelCupo(unittest.TestCase):
         )
 
     def _franjas_libres(self, cantidad):
-        """Horarios disponibles y consecutivos para el día elegido."""
+        """Horarios libres y distintos para el día elegido.
+
+        Verifica explícitamente que existen suficientes franjas antes de
+        devolverlas. Nunca reutiliza una franja ya entregada.
+        """
         from services import appointments
 
         slots = appointments.get_available_slots(self._fecha[0], 1, service="Corte")
+        if len(slots) < cantidad:
+            raise AssertionError(
+                f"El día {self._fecha[0]} solo tiene {len(slots)} slots libres; "
+                f"se necesitan {cantidad}."
+            )
         return slots[:cantidad]
 
 

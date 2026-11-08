@@ -9,8 +9,12 @@
 import re
 import unittest
 
+import pytest
+
 import app as application
 from database.database import get_connection
+
+pytestmark = pytest.mark.no_pg
 
 
 class BrandingBase(unittest.TestCase):
@@ -75,7 +79,10 @@ class BrandingBase(unittest.TestCase):
         return row[0]["id"] if row else None
 
 
+@pytest.mark.usefixtures("sqlite_temp_db")
 class TestBrandingValidation(BrandingBase):
+    pytestmark = pytest.mark.no_pg
+
     def setUp(self):
         super().setUp()
         self._setup()
