@@ -22,6 +22,7 @@ import datetime
 import logging
 import os
 import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
@@ -218,8 +219,15 @@ def _send_email(to_addr, subject, html, text):
         with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as server:
             server.ehlo()
             if cfg["port"] == 587 or cfg.get("user"):
-                server.starttls()
-                server.ehlo()
+                try:
+                    server.starttls()
+                    server.ehlo()
+
+                except (smtplib.SMTPException, ssl.SSLError) as error:
+                    detail = _safe_error(str(error).strip() or error.__class__.__name__)
+                    logger.error("STARTTLS falló para %s: %s", to_addr, detail)
+                    return False, f"starttls_failed: {detail}"
+
             if cfg["user"]:
                 server.login(cfg["user"], cfg["password"])
             server.sendmail(cfg["from_addr"], [to_addr], message.as_string())

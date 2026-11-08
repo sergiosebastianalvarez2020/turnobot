@@ -23,6 +23,7 @@ Usa la misma config SMTP que la app (env). Nunca toca la ventana de reserva.
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,6 +54,9 @@ from services.notifications import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("retry_failed_notifications")
+
+# Pausa entre envíos individuales del lote para moderar la tasa hacia el servidor SMTP.
+RETRY_ITEM_DELAY_SECONDS = 0.5
 
 
 def _init_cli_pool():
@@ -115,7 +119,7 @@ def _run_once(business_id=None, limit=100):
             return 0
 
         ok_count = 0
-        for row in failed:
+        for i, row in enumerate(failed):
             business_id = row["business_id"]
             settings = get_business_settings_scoped(business_id)
             if not settings:
@@ -143,6 +147,9 @@ def _run_once(business_id=None, limit=100):
                 logger.info(
                     "Sigue fallando %s turno %s: %s", row["type"], row["appointment_id"], reason
                 )
+
+            if i + 1 < len(failed) and RETRY_ITEM_DELAY_SECONDS > 0:
+                time.sleep(RETRY_ITEM_DELAY_SECONDS)
 
         logger.info("Resumen: %s reenviados de %s intentados.", ok_count, len(failed))
         return ok_count
