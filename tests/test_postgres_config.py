@@ -19,6 +19,8 @@ from database.pg_pool import (
     sanitize_database_url,
 )
 
+pytestmark = pytest.mark.no_pg
+
 
 @pytest.fixture(autouse=True)
 def pg_test_env():

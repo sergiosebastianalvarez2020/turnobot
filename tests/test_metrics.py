@@ -24,12 +24,15 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
 from database.database import get_connection
 from services import metrics
+
+pytestmark = pytest.mark.no_pg
 
 START = date(2026, 3, 9)
 END = date(2026, 3, 15)

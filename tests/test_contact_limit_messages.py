@@ -17,6 +17,8 @@ import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import app as application
 import database.database as database
 from application.requests import _human_reschedule_error, contact_limit_response
@@ -206,6 +208,8 @@ class TestMensajeCupoReprogramacionIA(unittest.TestCase, _BaseCupo):
 
 class TestMensajeCupoHumanReschedule(unittest.TestCase):
     """`_human_reschedule_error` traduce el cupo sin tocar los demás motivos."""
+
+    pytestmark = pytest.mark.no_pg
 
     def test_contact_limit_tiene_mensaje_accionable(self):
         mensaje = _human_reschedule_error("contact_limit")

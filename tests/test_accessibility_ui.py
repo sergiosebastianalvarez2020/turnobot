@@ -16,11 +16,14 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
 from werkzeug.security import generate_password_hash
 
 import app as application
 import database.database as database
 from services import appointments
+
+pytestmark = pytest.mark.no_pg
 
 
 def _next_open_day():

@@ -30,6 +30,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import app as application
 import database.database as database
 from services import appointments
@@ -55,8 +57,8 @@ class _CasoFuncional(unittest.TestCase, PostgreSQLTestCase):
     # Helpers
     # ---------------------------------------------------------------
 
-    def _primer_dia_abierto(self):
-        """(fecha, [horarios]) del primer día con horarios disponibles."""
+    def _primer_dia_abierto(self, min_slots=appointments.MAX_ACTIVE_BOOKINGS_PER_CONTACT + 2):
+        """(fecha, [horarios]) del primer día con al menos min_slots horarios disponibles."""
         with self.app.app_context():
             from database.database import get_business_settings_scoped
 
@@ -76,9 +78,11 @@ class _CasoFuncional(unittest.TestCase, PostgreSQLTestCase):
                 slots = appointments.get_available_slots(
                     candidate.isoformat(), self.BUSINESS_ID, service="Corte"
                 )
-                if slots:
+                if len(slots) >= min_slots:
                     return candidate.isoformat(), slots
-        raise AssertionError("No hay días abiertos con horarios en los próximos 20 días.")
+        raise AssertionError(
+            f"No hay días abiertos con al menos {min_slots} horarios en los próximos 20 días."
+        )
 
     def _payload_reserva(self, fecha, hora, telefono="3838439222", **extra):
         payload = {
@@ -962,12 +966,15 @@ class TestCupoContactoSqlite(unittest.TestCase):
     fuerza `DB_BACKEND=sqlite` durante el test, igual que los tests de migración.
     """
 
+    pytestmark = pytest.mark.no_pg
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temp_dir.name) / "appointments.db"
         self._original_path = os.environ.get("DATABASE_PATH")
         self._original_backend = os.environ.get("DB_BACKEND")
         self._original_url = os.environ.get("DATABASE_URL")
+        self._original_flask_env = os.environ.get("FLASK_ENV")
 
         import database.database as database
 
@@ -975,6 +982,7 @@ class TestCupoContactoSqlite(unittest.TestCase):
         database.DATABASE_PATH = self.database_path
         os.environ["DB_BACKEND"] = "sqlite"
         os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("FLASK_ENV", None)
 
         database.init_database()
         self._sembrar()
@@ -986,6 +994,7 @@ class TestCupoContactoSqlite(unittest.TestCase):
         for clave, valor in (
             ("DB_BACKEND", self._original_backend),
             ("DATABASE_URL", self._original_url),
+            ("FLASK_ENV", self._original_flask_env),
         ):
             if valor is None:
                 os.environ.pop(clave, None)
@@ -1139,16 +1148,20 @@ class TestCupoConcurrenciaSqlite(unittest.TestCase):
     que el resultado debe ser exactamente el cupo, sin importar el interleaving.
     """
 
+    pytestmark = pytest.mark.no_pg
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temp_dir.name) / "race.db"
         self._original_db_path = database.DATABASE_PATH
         self._original_backend = os.environ.get("DB_BACKEND")
         self._original_url = os.environ.get("DATABASE_URL")
+        self._original_flask_env = os.environ.get("FLASK_ENV")
 
         database.DATABASE_PATH = self.database_path
         os.environ["DB_BACKEND"] = "sqlite"
         os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("FLASK_ENV", None)
 
         database.init_database()
         self._sembrar()
@@ -1158,6 +1171,7 @@ class TestCupoConcurrenciaSqlite(unittest.TestCase):
         for clave, valor in (
             ("DB_BACKEND", self._original_backend),
             ("DATABASE_URL", self._original_url),
+            ("FLASK_ENV", self._original_flask_env),
         ):
             if valor is None:
                 os.environ.pop(clave, None)

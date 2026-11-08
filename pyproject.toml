@@ -43,6 +43,7 @@ line-length = 100
 exclude = [
     "venv",
     "venv312",
+    ".venv312",
     ".kilo",
     ".github",
     "logs",

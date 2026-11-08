@@ -13,7 +13,7 @@ con `sys.executable -c` y verifica, en ese proceso aislado:
     2. `app` NO está en sys.modules en ningún momento (ni antes ni después).
     3. `create_app()` se ejecuta sin errores.
     4. Se obtiene una instancia Flask válida.
-    5. El URL map tiene 118 rules / 85 endpoints.
+    5. El URL map tiene 136 rules / 103 endpoints.
     6. Los endpoints canónicos existen y sus URLs son las esperadas.
     7. Hooks, context processors, CSRF, error handlers y security headers
        siguen enganchados.
@@ -32,9 +32,42 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+pytestmark = pytest.mark.no_pg
+
 _PAYLOAD_MARKER = "__STANDALONE_PAYLOAD__:"
+
+EXPECTED_BUSINESS_DOMAIN_RULES = {
+    ("/admin/dominios", "business_domains"): ("GET",),
+    ("/b/<slug>/admin/dominios", "business_domains_slug"): ("GET",),
+    ("/admin/dominios/agregar", "add_business_domain"): ("POST",),
+    ("/b/<slug>/admin/dominios/agregar", "add_business_domain_slug"): ("POST",),
+    ("/admin/dominios/<int:domain_id>/verificar", "business_domain_verificar"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/verificar", "business_domain_verificar_slug"): (
+        "POST",
+    ),
+    ("/admin/dominios/<int:domain_id>/tls", "business_domain_tls"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/tls", "business_domain_tls_slug"): ("POST",),
+    ("/admin/dominios/<int:domain_id>/activar", "business_domain_activar"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/activar", "business_domain_activar_slug"): ("POST",),
+    ("/admin/dominios/<int:domain_id>/desactivar", "business_domain_desactivar"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/desactivar", "business_domain_desactivar_slug"): (
+        "POST",
+    ),
+    ("/admin/dominios/<int:domain_id>/revocar", "business_domain_revocar"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/revocar", "business_domain_revocar_slug"): ("POST",),
+    ("/admin/dominios/<int:domain_id>/principal", "business_domain_principal"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/principal", "business_domain_principal_slug"): (
+        "POST",
+    ),
+    ("/admin/dominios/<int:domain_id>/rotar-token", "business_domain_rotar_token"): ("POST",),
+    ("/b/<slug>/admin/dominios/<int:domain_id>/rotar-token", "business_domain_rotar_token_slug"): (
+        "POST",
+    ),
+}
 
 # Entorno mínimo y determinista para el subproceso: sin SECRET_KEY (se genera
 # una efímera), sin FLASK_ENV=production (activaría las guardas de config) y
@@ -55,7 +88,9 @@ _STRIPPED_ENV_KEYS = (
 
 _STANDALONE_PROBE = r"""
 import json
+import os
 import sys
+from pathlib import Path
 
 from flask import url_for as _flask_url_for
 
@@ -65,6 +100,9 @@ payload = {"app_imported_before": "app" in sys.modules}
 
 # 1 + 3: importar la factory y ejecutarla sin haber importado `app`
 from application import create_app
+import database.database as database_module
+
+database_module.DATABASE_PATH = Path(os.environ["TURNOBOT_ROUTE_TEST_DB"])
 
 payload["app_imported_after_import"] = "app" in sys.modules
 
@@ -89,6 +127,11 @@ payload["has_rule_fingerprint"] = (
     sorted(rule.rule for rule in rules) == EXPECTED_RULES
 )
 payload["endpoints_list"] = endpoints
+payload["business_domain_rules"] = sorted(
+    [rule.rule, rule.endpoint, sorted(rule.methods - {"HEAD", "OPTIONS"})]
+    for rule in rules
+    if "dominios" in rule.rule
+)
 
 # 6: endpoints canónicos y sus URLs reales
 canonical = {}
@@ -186,6 +229,8 @@ class StandaloneCreateAppTests(unittest.TestCase):
         env["FLASK_ENV"] = "development"
         env["PYTHONIOENCODING"] = "utf-8"
         env["LOG_DIR"] = self._tmp.name
+        env["TURNOBOT_ROUTE_TEST_DB"] = str(Path(self._tmp.name) / "route-test.sqlite")
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         script = (
             "PROJECT_ROOT = "
@@ -193,6 +238,9 @@ class StandaloneCreateAppTests(unittest.TestCase):
             + "\n"
             + "EXPECTED_RULES = "
             + repr(self._expected_rules)
+            + "\n"
+            + "EXPECTED_BUSINESS_DOMAIN_RULES = "
+            + repr(EXPECTED_BUSINESS_DOMAIN_RULES)
             + "\n"
             + "MARKER = "
             + repr(_PAYLOAD_MARKER)
@@ -253,8 +301,8 @@ class StandaloneCreateAppTests(unittest.TestCase):
         # Identidad con el mapa de la fachada y con el contrato histórico
         self.assertEqual(payload["rules"], self._expectations["rules"])
         self.assertEqual(payload["endpoints"], self._expectations["endpoints"])
-        self.assertEqual(payload["rules"], 118)
-        self.assertEqual(payload["endpoints"], 85)
+        self.assertEqual(payload["rules"], 136)
+        self.assertEqual(payload["endpoints"], 103)
         # Fingerprint completo del conjunto de rutas
         self.assertTrue(payload["has_rule_fingerprint"])
 
@@ -267,6 +315,16 @@ class StandaloneCreateAppTests(unittest.TestCase):
         self.assertEqual(canonical["index"], "/")
         self.assertEqual(canonical["admin"], "/admin")
         self.assertEqual(canonical["admin_slug"], "/b/mi-negocio/admin")
+
+    def test_standalone_registers_expected_business_domain_routes(self):
+        payload = self._run_probe()
+        self.assertEqual(
+            payload["business_domain_rules"],
+            sorted(
+                [rule, endpoint, list(methods)]
+                for (rule, endpoint), methods in EXPECTED_BUSINESS_DOMAIN_RULES.items()
+            ),
+        )
 
     def test_standalone_preserves_hooks_csrf_and_security_headers(self):
         payload = self._run_probe()

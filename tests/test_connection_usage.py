@@ -5,8 +5,12 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
+import pytest
+
 import database.database as database
 from services import appointments
+
+pytestmark = pytest.mark.no_pg
 
 ZONA_HORARIA = ZoneInfo("America/Argentina/Buenos_Aires")
 

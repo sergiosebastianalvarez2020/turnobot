@@ -11,10 +11,14 @@ import threading
 import unittest
 from collections import deque
 
+import pytest
+
 import app as application
 
 
 class RateLimitMemoryTests(unittest.TestCase):
+    pytestmark = pytest.mark.no_pg
+
     def setUp(self):
         application.rate_limit_state.clear()
 

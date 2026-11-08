@@ -41,6 +41,8 @@ from database.pg_pool import (
     register_pg_pool_teardown,
 )
 
+pytestmark = pytest.mark.no_pg
+
 _PG_URL = "postgresql://usr:pwd@localhost:5432/turnobot_test"
 _SQLITE_URL = "sqlite:///database/appointments.db"
 

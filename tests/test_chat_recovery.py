@@ -2,6 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 import database.database as database
 from app import app
 from services import ai
@@ -12,7 +14,10 @@ from services.conversations import (
 )
 
 
+@pytest.mark.usefixtures("sqlite_temp_db")
 class TestChatRecovery(unittest.TestCase):
+    pytestmark = pytest.mark.no_pg
+
     def setUp(self):
         self.client = app.test_client()
 

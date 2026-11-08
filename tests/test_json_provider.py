@@ -4,6 +4,7 @@ import datetime
 import json
 import unittest
 
+import pytest
 from flask import Flask
 
 from application.json_provider import PgAwareJSONProvider
@@ -11,6 +12,8 @@ from application.json_provider import PgAwareJSONProvider
 
 class TestPgAwareJSONProvider(unittest.TestCase):
     """Tests unitarios del proveedor JSON que soporta datetime.date/time."""
+
+    pytestmark = pytest.mark.no_pg
 
     def setUp(self):
         self.app = Flask(__name__)
