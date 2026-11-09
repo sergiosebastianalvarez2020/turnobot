@@ -133,7 +133,7 @@ jobs:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
           set -o pipefail
-          python -m pytest tests --cov=. --cov-report=term-missing -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+          python -m pytest tests --ignore=tests/visual --cov=. --cov-report=term-missing -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
       - name: Run general tests (paralelo)
         if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.parallel == '4' || inputs.parallel == '8' }}
         id: tests_parallel
@@ -141,7 +141,7 @@ jobs:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
           set -o pipefail
-          python -m pytest tests -n ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '8' || inputs.parallel }} --cov=. --cov-append --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+          python -m pytest tests --ignore=tests/visual -n ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '8' || inputs.parallel }} --cov=. --cov-append --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
       - name: Upload coverage artifact (paralelo)
         if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.parallel == '4' || inputs.parallel == '8' }}
         uses: actions/upload-artifact@v4
@@ -218,3 +218,26 @@ jobs:
             "tests/test_multi_tenant_admin.py::TestSesion::test_usuario_miembro_ambos_negocios_accede_a_ambos_admin" \
             "tests/test_multi_tenant_admin.py::TestSesion::test_post_admin_otro_negocio_rechazado_sin_efecto" \
             -v --tb=short -p no:cacheprovider --no-cov
+
+  visual-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install playwright
+      - name: Install Playwright Chromium
+        run: |
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
+      - name: Run visual tests
+        run: |
+          python -m pytest tests/visual/ -v --tb=short -m no_pg
