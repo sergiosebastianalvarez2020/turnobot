@@ -1,153 +1,145 @@
-<!DOCTYPE html>
-<html lang="es">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1463FF">
-    <title>{{ public_frontend_config.business.name }} | {{ public_frontend_config.business.type }}</title>
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
-        rel="stylesheet"
-    >
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-
-{% set theme = public_frontend_config.get('theme', {}) %}
-{% set allowed_fonts = ['DM Sans', 'Arial', 'Georgia', 'Verdana'] %}
-{% set safe_font = theme.get('font_family', 'DM Sans') %}
-{% if safe_font not in allowed_fonts %}
-    {% set safe_font = 'DM Sans' %}
-{% endif %}
-<body
-    data-timezone="{{ public_frontend_config.business.timezone }}"
-    data-business-name="{{ public_frontend_config.business.name }}"
-    data-api-prefix="{{ api_prefix|e }}"
-    style="--primary: {{ theme.get('primary', '#1463FF')|e }}; --primary-deep: {{ theme.get('secondary', '#0B1B3A')|e }}; --bg: {{ theme.get('background', '#EAF4FF')|e }}; --text: {{ theme.get('text', '#102A56')|e }}; --font-family: '{{ safe_font|e }}';"
->
-    <a class="skip-link" href="#chat">Saltar al contenido</a>
-    <script id="public-frontend-config" type="application/json">{{ public_frontend_config|tojson }}</script>
-
-    <main class="app-shell" id="app-shell">
-        <header class="chat-header">
-            <div class="brand">
-                <div class="brand-mark">
-                    {% if public_frontend_config.branding.logo_url %}
-                    <img
-                        src="{{ public_frontend_config.branding.logo_url }}"
-                        alt="Logo de {{ public_frontend_config.business.name }}"
-                        class="brand-logo"
-                    >
-                    {% else %}
-                    <span>{{ public_frontend_config.business.initials }}</span>
-                    {% endif %}
-                </div>
-                <div class="brand-info">
-                    <h1>{{ public_frontend_config.business.name }}</h1>
-                    <div class="status">
-                        <span class="status-dot" aria-hidden="true"></span>
-                        <span>Recepción online</span>
-                    </div>
-                </div>
-            </div>
-            <div class="header-badge">
-                {{ public_frontend_config.business.type|upper }}
-            </div>
-        </header>
-
-        <section id="chat" class="chat" aria-label="Conversación con {{ public_frontend_config.business.name }}" aria-live="polite">
-            <div class="welcome">
-                <div class="welcome-icon" aria-hidden="true">✦</div>
-                <p class="welcome-label">
-                    {{ public_frontend_config.content.welcome_label|replace('{business_name}', public_frontend_config.business.name|upper) }}
-                </p>
-                <h2>
-                    Tu próxima visita<br>
-                    empieza <span class="highlight">acá</span>.
-                </h2>
-                <p class="welcome-text">
-                    {{ public_frontend_config.content.welcome_description|replace('{business_name}', public_frontend_config.business.name)|replace('{business_description}', public_frontend_config.business.description|lower) }}
-                </p>
-            </div>
-
-            <div class="message bot initial-message">
-                <div class="avatar" aria-hidden="true">
-                    {{ public_frontend_config.business.initials }}
-                </div>
-                <div class="message-content">
-                    <span class="message-name">{{ public_frontend_config.business.name }}</span>
-                    <div class="bubble">
-                        ¡Hola! 👋
-                        <br><br>
-                        ¿En qué puedo ayudarte hoy?
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <nav class="quick-actions" aria-label="Acciones rápidas">
-            <button type="button" class="quick-action" data-message="¿Qué servicios tienen y cuánto cuestan?">
-                <span class="quick-icon" aria-hidden="true">✂</span>
-                <span class="quick-action-text">Servicios</span>
-                <span class="quick-action-sub">Ver todos los servicios</span>
-            </button>
-            <button type="button" class="quick-action" data-message="¿Qué horarios hay disponibles?">
-                <span class="quick-icon" aria-hidden="true">◷</span>
-                <span class="quick-action-text">Disponibilidad</span>
-                <span class="quick-action-sub">Ver horarios disponibles</span>
-            </button>
-            <button type="button" class="quick-action" data-message="Quiero reservar un turno">
-                <span class="quick-icon" aria-hidden="true">＋</span>
-                <span class="quick-action-text">Reservar</span>
-                <span class="quick-action-sub">Agendar un turno</span>
-            </button>
-            <button type="button" class="quick-action" data-message="Quiero consultar mis turnos">
-                <span class="quick-icon" aria-hidden="true">☰</span>
-                <span class="quick-action-text">Mis turnos</span>
-                <span class="quick-action-sub">Ver mis reservas</span>
-            </button>
-        </nav>
-
-        <footer class="input-area">
-            <div class="input-wrapper">
-                <input
-                    type="text"
-                    id="message"
-                    placeholder="Escribí tu mensaje..."
-                    autocomplete="off"
-                    aria-label="Mensaje"
-                >
-                <button id="send" class="send-button" type="button" aria-label="Enviar mensaje">
-                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                        <path
-                            d="M22 2L11 13"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                        <path
-                            d="M22 2L15 22L11 13L2 9L22 2Z"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                    </svg>
-                </button>
-            </div>
-            <p class="privacy-note">Tus datos están protegidos y son confidenciales</p>
-        </footer>
-    </main>
-
-    <footer class="app-footer">
-        {{ public_frontend_config.business.name }} {{ public_frontend_config.business.type }} &copy; 2025 — Todos los derechos reservados
-    </footer>
-
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
-</body>
-
-</html>
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1463FF">
+    <title>{{ public_frontend_config.business.name }} | {{ public_frontend_config.business.type }}</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+        rel="stylesheet"
+    >
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+{% set theme = public_frontend_config.get('theme', {}) %}
+{% set allowed_fonts = ['DM Sans', 'Arial', 'Georgia', 'Verdana'] %}
+{% set safe_font = theme.get('font_family', 'DM Sans') %}
+{% if safe_font not in allowed_fonts %}
+    {% set safe_font = 'DM Sans' %}
+{% endif %}
+<body
+    data-timezone="{{ public_frontend_config.business.timezone }}"
+    data-business-name="{{ public_frontend_config.business.name }}"
+    data-api-prefix="{{ api_prefix|e }}"
+    style="--primary: {{ theme.get('primary', '#1463FF')|e }}; --primary-deep: {{ theme.get('secondary', '#0B1B3A')|e }}; --bg: {{ theme.get('background', '#EAF4FF')|e }}; --text: {{ theme.get('text', '#102A56')|e }}; --font-family: '{{ safe_font|e }}';"
+>
+    <a class="skip-link" href="#chat">Saltar al contenido</a>
+    <script id="public-frontend-config" type="application/json">{{ public_frontend_config|tojson }}</script>
+
+    <main class="app-shell" id="app-shell">
+        <header class="chat-header">
+            <div class="brand">
+                <div class="brand-mark">
+                    {% if public_frontend_config.branding.logo_url %}
+                    <img
+                        src="{{ public_frontend_config.branding.logo_url }}"
+                        alt="Logo de {{ public_frontend_config.business.name }}"
+                        class="brand-logo"
+                    >
+                    {% else %}
+                    <span>{{ public_frontend_config.business.initials }}</span>
+                    {% endif %}
+                </div>
+                <div class="brand-info">
+                    <h1>{{ public_frontend_config.business.name }}</h1>
+                    <div class="status">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span>Recepción online</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-badge">
+                {{ public_frontend_config.business.type|upper }}
+            </div>
+        </header>
+
+        <section id="chat" class="chat" aria-label="Conversación con {{ public_frontend_config.business.name }}" aria-live="polite">
+            <div class="welcome">
+                <div class="welcome-icon" aria-hidden="true">✦</div>
+                <p class="welcome-label">
+                    {{ public_frontend_config.content.welcome_label|replace('{business_name}', public_frontend_config.business.name|upper) }}
+                </p>
+                <h2>
+                    Tu próxima visita<br>
+                    empieza <span class="highlight">acá</span>.
+                </h2>
+                <p class="welcome-text">
+                    {{ public_frontend_config.content.welcome_description|replace('{business_name}', public_frontend_config.business.name)|replace('{business_description}', public_frontend_config.business.description|lower) }}
+                </p>
+            </div>
+
+            <div class="message bot initial-message">
+                <div class="avatar" aria-hidden="true">
+                    {{ public_frontend_config.business.initials }}
+                </div>
+                <div class="message-content">
+                    <span class="message-name">{{ public_frontend_config.business.name }}</span>
+                    <div class="bubble">
+                        {{ (public_frontend_config.get('content', {}).get('initial_message') or "¡Hola! 👋\n\n¿En qué puedo ayudarte hoy?") | e | replace('\n', '<br>\n'|safe) }}
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        {% set default_quick_actions = [
+            {"label": "Servicios", "sub": "Ver todos los servicios", "message": "¿Qué servicios tienen y cuánto cuestan?"},
+            {"label": "Disponibilidad", "sub": "Ver horarios disponibles", "message": "¿Qué horarios hay disponibles?"},
+            {"label": "Reservar", "sub": "Agendar un turno", "message": "Quiero reservar un turno"},
+            {"label": "Mis turnos", "sub": "Ver mis reservas", "message": "Quiero consultar mis turnos"},
+        ] %}
+        {% set quick_actions = public_frontend_config.get('content', {}).get('quick_actions') or default_quick_actions %}
+        <nav class="quick-actions" aria-label="Acciones rápidas">
+            {% for action in quick_actions %}
+            <button type="button" class="quick-action" data-message="{{ action.get('message', '')|e }}">
+                <span class="quick-icon" aria-hidden="true">{{ ['✂','◷','＋','☰'][loop.index0] if loop.index0 < 4 else '•' }}</span>
+                <span class="quick-action-text">{{ action.get('label', '')|e }}</span>
+                <span class="quick-action-sub">{{ action.get('sub', '')|e }}</span>
+            </button>
+            {% endfor %}
+        </nav>
+
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <input
+                    type="text"
+                    id="message"
+                    placeholder="Escribí tu mensaje..."
+                    autocomplete="off"
+                    aria-label="Mensaje"
+                >
+                <button id="send" class="send-button" type="button" aria-label="Enviar mensaje">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <path
+                            d="M22 2L11 13"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                        <path
+                            d="M22 2L15 22L11 13L2 9L22 2Z"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                    </svg>
+                </button>
+            </div>
+            <p class="privacy-note">Tus datos están protegidos y son confidenciales</p>
+        </footer>
+    </main>
+
+    <footer class="app-footer">
+        {{ public_frontend_config.business.name }} {{ public_frontend_config.business.type }} &copy; 2025 — Todos los derechos reservados
+    </footer>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+
+</html>
