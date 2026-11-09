@@ -1,4 +1,3 @@
-import hashlib
 import secrets
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -6,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 import database.database as database
-from routes import public_api
 from services import appointments
 from tests._pg_compat import PostgreSQLTestCase
 
@@ -115,14 +113,15 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
         assert response.get_json()["success"] is True
         assert len(response.get_json()["turnos"]) == 1
 
-    def test_turnos_missing_token_returns_verification_required_without_personal_data(self, app, client):
+    def test_turnos_missing_token_returns_verification_required_without_personal_data(
+        self, app, client
+    ):
         self._seed_second_business(app)
         self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
 
         with patch("app.resolve_business", return_value=self._business(1)):
             response = client.post(
-                "/b/el-corte/api/turnos",
-                json={"nombre": "Cliente A", "telefono": "3838439222"},
+                "/b/el-corte/api/turnos", json={"nombre": "Cliente A", "telefono": "3838439222"}
             )
 
         assert response.status_code == 401
@@ -147,7 +146,9 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
         assert response.status_code == 401
         assert response.get_json()["code"] == "verification_required"
 
-    def test_turnos_token_from_other_business_is_rejected_without_cross_tenant_leak(self, app, client):
+    def test_turnos_token_from_other_business_is_rejected_without_cross_tenant_leak(
+        self, app, client
+    ):
         self._seed_second_business(app)
         created_b = self._create_appointment(app, "Cliente B", "3838439333", "Corte B", "10:00", 2)
 
@@ -182,7 +183,9 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
 
         assert response.status_code == 200
         assert response.get_json()["success"] is True
-        status = self._query(app, "SELECT status FROM appointments WHERE id = %s", (created["appointment_id"],))[0]["status"]
+        status = self._query(
+            app, "SELECT status FROM appointments WHERE id = %s", (created["appointment_id"],)
+        )[0]["status"]
         assert status == "cancelled"
 
     def test_cancel_with_invalid_token_does_not_cancel(self, app, client):
@@ -201,7 +204,9 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
             )
 
         assert response.status_code == 400
-        status = self._query(app, "SELECT status FROM appointments WHERE id = %s", (created["appointment_id"],))[0]["status"]
+        status = self._query(
+            app, "SELECT status FROM appointments WHERE id = %s", (created["appointment_id"],)
+        )[0]["status"]
         assert status == "confirmed"
 
     def test_cancel_with_token_from_other_business_does_not_cross_tenant(self, app, client):
@@ -220,7 +225,9 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
             )
 
         assert response.status_code == 400
-        status = self._query(app, "SELECT status FROM appointments WHERE id = %s", (created_b["appointment_id"],))[0]["status"]
+        status = self._query(
+            app, "SELECT status FROM appointments WHERE id = %s", (created_b["appointment_id"],)
+        )[0]["status"]
         assert status == "confirmed"
 
     def test_reschedule_with_valid_token_scoped_to_business(self, app, client):
@@ -242,7 +249,11 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
 
         assert response.status_code == 200
         assert response.get_json()["success"] is True
-        row = self._query(app, "SELECT appointment_time, status FROM appointments WHERE id = %s", (created["appointment_id"],))[0]
+        row = self._query(
+            app,
+            "SELECT appointment_time, status FROM appointments WHERE id = %s",
+            (created["appointment_id"],),
+        )[0]
         assert str(row["appointment_time"]).startswith("11:00")
         assert row["status"] == "confirmed"
 
@@ -265,7 +276,11 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
 
         assert response.status_code == 200
         assert response.get_json()["success"] is False
-        row = self._query(app, "SELECT appointment_time FROM appointments WHERE id = %s", (created["appointment_id"],))[0]
+        row = self._query(
+            app,
+            "SELECT appointment_time FROM appointments WHERE id = %s",
+            (created["appointment_id"],),
+        )[0]
         assert str(row["appointment_time"]).startswith("09:00")
 
     def test_reschedule_with_token_from_other_business_does_not_cross_tenant(self, app, client):
@@ -287,7 +302,11 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
 
         assert response.status_code == 200
         assert response.get_json()["success"] is False
-        row = self._query(app, "SELECT appointment_time FROM appointments WHERE id = %s", (created_b["appointment_id"],))[0]
+        row = self._query(
+            app,
+            "SELECT appointment_time FROM appointments WHERE id = %s",
+            (created_b["appointment_id"],),
+        )[0]
         assert str(row["appointment_time"]).startswith("10:00")
 
     def test_public_manage_turno_get_valid_token_renders_scoped_appointment(self, app, client):
