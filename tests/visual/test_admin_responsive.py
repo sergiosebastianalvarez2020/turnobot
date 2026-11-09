@@ -271,9 +271,9 @@ def _assert_sidebar_and_navigation(page, width: int, name: str) -> None:
             (item.locator("small").inner_text(), item.get_attribute("href")) for item in items.all()
         ]
         assert actual == expected, f"{name}: unexpected bottom navigation: {actual}"
-        assert items.nth(0).get_attribute("class") and "active" in items.nth(0).get_attribute(
-            "class"
-        )
+        first_item_class = items.nth(0).get_attribute("class")
+        assert first_item_class, f"{name}: first bottom-nav-item has no class attribute"
+        assert "active" in first_item_class, f"{name}: first bottom-nav-item missing 'active' class"
         items.nth(1).click()
         assert page.url.endswith("#agenda"), f"{name}: Agenda did not navigate to #agenda"
     else:
