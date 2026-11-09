@@ -15,8 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
-
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 RESOLUTIONS = [
     {"name": "desktop", "width": 1440, "height": 900},
