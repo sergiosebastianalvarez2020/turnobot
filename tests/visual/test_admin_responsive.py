@@ -1,4 +1,4 @@
-﻿"""Visual responsive tests for the TurnoBot admin panel using Playwright.
+"""Visual responsive tests for the TurnoBot admin panel using Playwright.
 
 Run with:
     python -m pytest tests/visual/ -v --tb=short -m no_pg
@@ -6,6 +6,7 @@ Run with:
 Markers:
     no_pg: test independiente de PostgreSQL (no requiere base de datos).
 """
+
 import os
 import socket
 import subprocess
@@ -28,6 +29,7 @@ TEST_ADMIN_PASSWORD = "testpass123"
 
 RESULTS_DIR = Path(__file__).parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
+
 
 def _capture_screenshot(page, name: str) -> Path:
     """Capture a screenshot and return the path."""
@@ -198,9 +200,7 @@ def _capture_browser_issues(page) -> dict:
 
     def handle_console(msg):
         if msg.type() == "error":
-            issues["console"].append(
-                {"text": msg.text, "location": msg.location()}
-            )
+            issues["console"].append({"text": msg.text, "location": msg.location()})
 
     page.on("console", handle_console)
     page.on("pageerror", lambda error: issues["page_errors"].append(str(error)))
@@ -212,11 +212,11 @@ def _capture_browser_issues(page) -> dict:
     )
     page.on(
         "response",
-        lambda response: issues["http_errors"].append(
-            {"status": response.status, "url": response.url}
-        )
-        if response.status >= 400
-        else None,
+        lambda response: (
+            issues["http_errors"].append({"status": response.status, "url": response.url})
+            if response.status >= 400
+            else None
+        ),
     )
     return issues
 
@@ -268,11 +268,12 @@ def _assert_sidebar_and_navigation(page, width: int, name: str) -> None:
             ("Más", "#"),
         ]
         actual = [
-            (item.locator("small").inner_text(), item.get_attribute("href"))
-            for item in items.all()
+            (item.locator("small").inner_text(), item.get_attribute("href")) for item in items.all()
         ]
         assert actual == expected, f"{name}: unexpected bottom navigation: {actual}"
-        assert items.nth(0).get_attribute("class") and "active" in items.nth(0).get_attribute("class")
+        assert items.nth(0).get_attribute("class") and "active" in items.nth(0).get_attribute(
+            "class"
+        )
         items.nth(1).click()
         assert page.url.endswith("#agenda"), f"{name}: Agenda did not navigate to #agenda"
     else:
@@ -401,19 +402,11 @@ server = create_server(app, host="127.0.0.1", port=int(os.environ["TURNOBOT_VISU
 Path(os.environ["TURNOBOT_VISUAL_READY_FILE"]).write_text("ready", encoding="utf-8")
 server.run()
 """
-    cmd = [
-        sys.executable,
-        "-c",
-        child_script,
-    ]
+    cmd = [sys.executable, "-c", child_script]
     proc = None
     try:
         proc = subprocess.Popen(
-            cmd,
-            env=env,
-            cwd=str(project_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            cmd, env=env, cwd=str(project_root), stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         for _ in range(100):
             if ready_file.exists():
@@ -489,9 +482,7 @@ def test_admin_responsive_visual():
                 width = resolution["width"]
                 height = resolution["height"]
 
-                context = browser.new_context(
-                    viewport={"width": width, "height": height}
-                )
+                context = browser.new_context(viewport={"width": width, "height": height})
                 page = context.new_page()
 
                 browser_issues = _capture_browser_issues(page)
@@ -543,13 +534,13 @@ def test_admin_responsive_visual():
                 if has_overflow:
                     print(f"  WARNING: {name}: Horizontal overflow detected")
                 else:
-                    print(f"  {name}: no accidental document overflow (internal table scrolling is allowed)")
+                    print(
+                        f"  {name}: no accidental document overflow (internal table scrolling is allowed)"
+                    )
 
                 assert not has_overflow, f"{name}: Accidental horizontal overflow detected"
 
-                assert sidebar_visible, (
-                    f"{name}: Sidebar not visible"
-                )
+                assert sidebar_visible, f"{name}: Sidebar not visible"
 
                 print(f"âœ“ {name} ({width}Ã—{height}): Passed")
                 print(f"  Screenshot: {screenshot_path}")
@@ -575,11 +566,3 @@ def test_admin_responsive_visual():
 
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", "--tb=short", __file__]))
-
-
-
-
-
-
-
-
