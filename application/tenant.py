@@ -13,8 +13,9 @@ fachada no está importada (uso standalone), cae a las implementaciones locales.
 import sys
 import uuid
 from time import monotonic
+from urllib.parse import urlsplit
 
-from flask import abort, g, request
+from flask import abort, current_app, g, request
 
 from application.logging_config import logger
 from database.business_domains import resolve_business_domain
@@ -158,9 +159,18 @@ def load_current_business():
             g.custom_domain_resolved = True
             return None
 
-    # Hosts de plataforma (localhost, 127.0.0.1): usan el negocio por defecto.
+    # Hosts de plataforma: localhost, 127.0.0.1 y el dominio canónico de la
+    # plataforma (extraído de PUBLIC_BASE_URL). Cualquier otro host sobre HTTPS
+    # sin dominio custom verificado devuelve 404.
     platform_hosts = {"localhost", "127.0.0.1"}
-    if hostname in platform_hosts:
+    _public_base_url = current_app.config.get("PUBLIC_BASE_URL", "http://localhost")
+    try:
+        _public_hostname = urlsplit(_public_base_url).hostname
+    except ValueError:
+        _public_hostname = None
+    if _public_hostname:
+        platform_hosts.add(_public_hostname.lower())
+    if hostname.lower() in platform_hosts:
         g.current_business = _load_seam("resolve_business")()
         if g.current_business:
             g.business_id = (
