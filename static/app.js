@@ -3304,8 +3304,19 @@ async function loadCustomerAppointments(
             "Buscando tus turnos...",
             (signal) =>
                 fetchJSON(
-                    `${API.turnos}?nombre=${encodeURIComponent(name)}&telefono=${encodeURIComponent(phone)}&management_token=${encodeURIComponent(managementToken)}`,
-                    { signal },
+                    API.turnos,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Management-Token": managementToken
+                        },
+                        body: JSON.stringify({
+                            nombre: name,
+                            telefono: phone
+                        }),
+                        signal
+                    },
                     15000
                 ),
             15000

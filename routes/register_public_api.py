@@ -94,12 +94,16 @@ def register(app):
         view_func=business_api_disponibilidad,
         methods=["GET"],
     )
-    app.add_url_rule("/api/turnos", endpoint="api_turnos", view_func=api_turnos, methods=["GET"])
+
+    app.add_url_rule(
+        "/api/turnos", endpoint="api_turnos", view_func=api_turnos, methods=["GET", "POST"]
+    )
+
     app.add_url_rule(
         "/b/<slug>/api/turnos",
         endpoint="business_api_turnos",
         view_func=business_api_turnos,
-        methods=["GET"],
+        methods=["GET", "POST"],
     )
     app.add_url_rule(
         "/api/reservar", endpoint="api_reservar", view_func=api_reservar, methods=["POST"]

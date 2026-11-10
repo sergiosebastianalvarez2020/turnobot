@@ -1,0 +1,3 @@
+# Normaliza los HTML a LF en el repo (evita finales CRCRLF como los que
+# traía templates/landing.html antes de este PR).
+*.html text eol=lf

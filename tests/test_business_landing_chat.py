@@ -52,6 +52,83 @@ class TestBusinessLandingChat:
         assert b"$${ service.price }" not in response.data
         assert b'name="viewport"' in response.data
 
+    def test_landing_renders_dynamic_content_from_frontend_config(self):
+        business = {"id": 2, "name": "Otro", "slug": "otro"}
+        frontend_config = {
+            "business": {
+                "name": "Otro",
+                "type": "Barbería",
+                "description": "Un negocio",
+                "timezone": "America/Argentina/Buenos_Aires",
+                "initials": "OT",
+            },
+            "branding": {"logo_url": "", "primary_color": "#123456", "secondary_color": "#234567"},
+            "content": {
+                "welcome_label": "BIENVENIDO A {business_name}",
+                "welcome_description": "Soy la recepción de {business_name}, {business_description}.",
+                "initial_message": "Hola dinámico 👋\n¿Cómo te ayudo?",
+                "quick_actions": [
+                    {"label": "Precios", "sub": "Ver precios", "message": "Quiero ver precios"},
+                    {"label": "Agenda", "sub": "Ver agenda", "message": "Quiero ver agenda"},
+                ],
+            },
+        }
+        with (
+            mock.patch("app.resolve_business", return_value=business),
+            mock.patch("app.get_business_settings_scoped", return_value={}),
+            mock.patch("app.build_public_frontend_config", return_value=frontend_config),
+        ):
+            response = self.client.get("/b/otro")
+        assert response.status_code == 200
+        assert "Hola dinámico 👋".encode() in response.data
+        assert b'data-message="Quiero ver precios"' in response.data
+        assert b'data-message="Quiero ver agenda"' in response.data
+        assert b">Precios<" in response.data
+        assert b">Agenda<" in response.data
+        assert response.data.count(b'class="quick-action"') == 2
+
+    def test_landing_escapes_initial_message_html_and_preserves_line_breaks(self):
+        business = {"id": 2, "name": "Otro", "slug": "otro"}
+        frontend_config = {
+            "business": {
+                "name": "Otro",
+                "type": "Barbería",
+                "description": "Un negocio",
+                "timezone": "America/Argentina/Buenos_Aires",
+                "initials": "OT",
+            },
+            "branding": {"logo_url": "", "primary_color": "#123456", "secondary_color": "#234567"},
+            "content": {
+                "initial_message": '<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n<b>texto</b> "quotes"',
+                "quick_actions": [
+                    {
+                        "label": "<b>L</b>",
+                        "sub": "<img src=x onerror=1>",
+                        "message": '<script>"x"</script>',
+                    }
+                ],
+            },
+        }
+        with (
+            mock.patch("app.resolve_business", return_value=business),
+            mock.patch("app.get_business_settings_scoped", return_value={}),
+            mock.patch("app.build_public_frontend_config", return_value=frontend_config),
+        ):
+            response = self.client.get("/b/otro")
+        assert response.status_code == 200
+        body = response.get_data(as_text=True)
+        assert "<script>alert(1)</script>" not in body
+        assert "<img src=x onerror=alert(1)>" not in body
+        assert "<b>texto</b>" not in body
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+        assert "&lt;img src=x onerror=alert(1)&gt;" in body
+        assert "&lt;b&gt;texto&lt;/b&gt; &#34;quotes&#34;" in body
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;<br>" in body
+        assert "&lt;img src=x onerror=alert(1)&gt;<br>" in body
+        assert 'data-message="&lt;script&gt;&#34;x&#34;&lt;/script&gt;"' in body
+        assert "&lt;b&gt;L&lt;/b&gt;" in body
+        assert "&lt;img src=x onerror=1&gt;" in body
+
     def test_conversational_frontend_keeps_argentine_currency_formatting(self):
         script_path = Path(__file__).resolve().parents[1] / "static" / "app.js"
         script = script_path.read_text(encoding="utf-8")
@@ -68,7 +145,11 @@ class TestBusinessLandingChat:
         assert "turnos: `${API_ROOT}/turnos`" in script
         assert "cancelar: `${API_ROOT}/cancelar`" in script
         assert "reprogramar: `${API_ROOT}/reprogramar`" in script
-        assert "management_token=${encodeURIComponent(managementToken)}" in script
+
+        assert "management_token=${encodeURIComponent(managementToken)}" not in script
+
+        assert '"X-Management-Token": managementToken' in script
+
         assert "management_token: managementToken" in script
         assert "customer_name: name" in script
         assert "appointment-management-link" in script

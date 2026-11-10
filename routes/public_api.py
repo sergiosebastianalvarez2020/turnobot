@@ -469,14 +469,62 @@ def _verification_required_response():
     )
 
 
+def _request_value(name):
+    """Lee un valor no sensible de JSON body, formulario o query string.
+
+    Precedencia: JSON body > formulario > query string. Se usa para campos
+    como `nombre` y `telefono`. El `management_token` NO usa este helper:
+    tiene su propio resolver (`_management_token`) cuya prioridad máxima es
+    el encabezado `X-Management-Token`.
+    """
+    data = request.get_json(silent=True)
+    if isinstance(data, dict) and name in data and data[name] is not None:
+        return str(data[name]).strip()
+    if request.form and name in request.form:
+        return (request.form.get(name) or "").strip()
+    return (request.args.get(name) or "").strip()
+
+
+def _management_token():
+    """Resuelve el `management_token` de la petición.
+
+    Precedencia (gana siempre la primera fuente con valor no vacío):
+
+    1. Encabezado `X-Management-Token` — mecanismo recomendado.
+    2. Campo `management_token` del cuerpo JSON.
+    3. Campo `management_token` del formulario.
+    4. Parámetro `management_token` del query string — compatibilidad con
+       consumidores anteriores; el frontend ya no lo envía allí.
+
+    Los valores vacíos se ignoran y se consulta la siguiente fuente. El token
+    nunca se registra en logs ni se devuelve en respuestas.
+    """
+    header = (request.headers.get("X-Management-Token") or "").strip()
+    if header:
+        return header
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        value = data.get("management_token")
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    for source in (request.form, request.args):
+        value = (source.get("management_token") or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _get_public_appointments_response(business_id):
     """Consulta de turnos del cliente con VERIFICACIÓN de posesión.
 
-    Exige nombre + teléfono (validación de forma) y `management_token` en la
-    query string: sin un token válido perteneciente a UNO de los turnos de
-    ese cliente en ESTE negocio, la respuesta es 401 `verification_required`
-    sin datos personales. El filtro por business_id (tenant de la URL) se
-    mantiene en la capa de servicio.
+    Exige nombre + teléfono y `management_token`. El token se acepta por
+    encabezado `X-Management-Token` (mecanismo recomendado y de mayor
+    prioridad) y, por compatibilidad, en el cuerpo JSON, el formulario o el
+    query string —en ese orden de prioridad, ver `_management_token`—; el
+    frontend no debe enviarlo en query strings. Sin un token válido
+    perteneciente a UNO de los turnos de ese cliente en ESTE negocio, la
+    respuesta es 401 `verification_required` sin datos personales. El filtro
+    por business_id (tenant de la URL) se mantiene en la capa de servicio.
     """
     from app import get_client_ip, is_api_request_allowed
 
@@ -489,9 +537,9 @@ def _get_public_appointments_response(business_id):
             }
         ), 429
 
-    nombre = request.args.get("nombre", "").strip()
+    nombre = _request_value("nombre")
 
-    telefono = request.args.get("telefono", "").strip()
+    telefono = _request_value("telefono")
 
     if not nombre:
         return jsonify({"success": False, "error": "El nombre es obligatorio."}), 400
@@ -501,7 +549,8 @@ def _get_public_appointments_response(business_id):
             {"success": False, "error": "El teléfono es obligatorio para consultar tus turnos."}
         ), 400
 
-    management_token = (request.args.get("management_token") or "").strip()
+    management_token = _management_token()
+
     if not management_token:
         return _verification_required_response()
 
@@ -522,7 +571,11 @@ def _get_public_appointments_response(business_id):
 def api_turnos():
     from app import get_current_business_id
 
-    return _get_public_appointments_response(get_current_business_id())
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _get_public_appointments_response(business_id)
 
 
 def business_api_turnos(slug):
@@ -1085,11 +1138,7 @@ def _cancel_public_appointment_response(business_id):
         if not appointment_id:
             return jsonify({"success": False, "error": "Falta el ID del turno."}), 400
 
-        management_token = data.get("management_token")
-        if management_token is not None and (
-            not isinstance(management_token, str) or not management_token
-        ):
-            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+        management_token = _management_token()
 
         telefono = data.get("telefono", "").strip()
         customer_name = data.get("customer_name", "").strip()
@@ -1122,7 +1171,7 @@ def _cancel_public_appointment_response(business_id):
             return jsonify(
                 {
                     "success": False,
-                    "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente.",
+                    "error": "No pudimos encontrar ese turno con el token de gestión indicado. Verificá el enlace de gestión e intentá nuevamente.",
                 }
             ), 400
 
@@ -1194,11 +1243,7 @@ def _get_public_reschedule_response(business_id):
         if not appointment_id:
             return jsonify({"success": False, "error": "Falta el ID del turno."}), 400
 
-        management_token = data.get("management_token")
-        if management_token is not None and (
-            not isinstance(management_token, str) or not management_token
-        ):
-            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+        management_token = _management_token()
 
         telefono = data.get("telefono", "").strip()
         customer_name = data.get("customer_name", "").strip()
@@ -1271,7 +1316,7 @@ def _get_public_reschedule_response(business_id):
                     "success": False,
                     "code": "not_found",
                     "reason": "not_found",
-                    "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente.",
+                    "error": "No pudimos encontrar ese turno con el token de gestión indicado. Verificá el enlace de gestión e intentá nuevamente.",
                 }
             )
 

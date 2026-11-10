@@ -206,13 +206,15 @@ python -m pytest --no-cov     # faster, no coverage
 | `GET` | `/api/recursos` | List resources |
 | `GET` | `/api/puntos` | Loyalty points info (per-completed points, balance) |
 | `GET` | `/api/disponibilidad/<fecha>` | Availability for date |
-| `GET` | `/api/turnos` | List customer appointments |
+| `GET`/`POST` | `/api/turnos` | List customer appointments (`nombre`, `telefono`, `management_token`) |
 | `POST` | `/api/reservar` | Book appointment |
 | `POST` | `/api/cancelar` | Cancel appointment (management_token) |
 | `POST` | `/api/reprogramar` | Reschedule appointment (management_token) |
 | `GET`/`POST` | `/b/<slug>/turno/<token>?id=<id>` | Public turn management |
 
 All `/api/*` and `/b/<slug>/api/*` routes support both generic and business-scoped variants.
+
+`GET`/`POST` `/api/turnos` (and `/b/<slug>/api/turnos`) requires `nombre`, `telefono` and a `management_token` belonging to one of that customer's appointments in that business. Without a valid token it answers `401` with `code: "verification_required"` and no personal data; missing `nombre`/`telefono` answers `400`, and the endpoint is rate limited (`429`, `code: "RATE_LIMITED"`). Send the token in the `X-Management-Token` header (recommended) or, for compatibility only, as a `management_token` field in the JSON body, the form, or the query string — in that order of precedence, first non-empty value wins. The frontend no longer sends it in the query string.
 
 ### Authentication
 
