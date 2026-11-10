@@ -1,59 +1,31 @@
 """
-
 Módulo de rutas públicas: API de servicios, recursos, puntos, disponibilidad,
-
 turnos, reservas, cancelación, reprogramación, chat y gestión de turnos públicos.
 
-
-
 Contiene las view functions para:
-
 - /chat                              -> endpoint: chat
-
 - /api/conversations/<public_token>/messages -> endpoint: public_conversation_messages
-
 - /api/servicios                     -> endpoint: api_servicios
-
 - /b/<slug>/api/servicios            -> endpoint: api_servicios
-
 - /api/recursos                      -> endpoint: api_recursos
-
 - /b/<slug>/api/recursos             -> endpoint: api_recursos
-
 - /api/puntos                        -> endpoint: api_puntos
-
 - /b/<slug>/api/puntos               -> endpoint: api_puntos
-
 - /api/disponibilidad/<fecha>        -> endpoint: api_disponibilidad
-
 - /b/<slug>/api/disponibilidad/<fecha> -> endpoint: api_disponibilidad
-
 - /api/turnos                        -> endpoint: api_turnos
-
 - /b/<slug>/api/turnos               -> endpoint: api_turnos
-
 - /api/reservar                      -> endpoint: api_reservar
-
 - /b/<slug>/api/reservar             -> endpoint: api_reservar
-
 - /b/<slug>/turno/<token>            -> endpoint: public_manage_turno
-
 - /api/cancelar                      -> endpoint: api_cancelar
-
 - /b/<slug>/api/cancelar             -> endpoint: api_cancelar
-
 - /api/reprogramar                   -> endpoint: api_reprogramar
-
 - /b/<slug>/api/reprogramar          -> endpoint: api_reprogramar
 
-
-
 Estas rutas NO usan Blueprint registrado. Las view functions se
-
 registran vía app.add_url_rule() en routes/__init__.py preservando
-
 los endpoint names globales.
-
 """
 
 import logging
@@ -84,25 +56,19 @@ from services.conversations import get_conversation_messages_by_public_token_sco
 from services.notifications import notifications_enabled
 
 logger = logging.getLogger(__name__)
-
 _ANONYMOUS_CHAT_TOKENS_KEY = "anonymous_chat_tokens"
 
 
 def _anonymous_chat_tokens():
     """Return the signed-session mapping of business IDs to visitor tokens."""
-
     tokens = session.get(_ANONYMOUS_CHAT_TOKENS_KEY)
-
     if not isinstance(tokens, dict):
         tokens = {}
-
         session[_ANONYMOUS_CHAT_TOKENS_KEY] = tokens
-
     return tokens
 
 
 def chat():
-
     from app import (
         MAX_HISTORY_CONTENT_LENGTH,
         MAX_HISTORY_MESSAGES,
@@ -117,7 +83,6 @@ def chat():
 
     try:
         data = json_object()
-
         if data is None:
             return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
@@ -134,7 +99,6 @@ def chat():
             ), 429
 
         raw_message = data.get("message", "")
-
         if not isinstance(raw_message, str):
             return jsonify({"success": False, "error": "El mensaje debe ser texto."}), 400
 
@@ -161,29 +125,22 @@ def chat():
             return jsonify({"success": False, "error": "El mensaje es demasiado largo."}), 400
 
         customer_phone_raw = data.get("customer_phone", "")
-
         customer_phone = (
             normalize_phone(customer_phone_raw) if isinstance(customer_phone_raw, str) else ""
         )
-
         customer_name = (
             data.get("customer_name", "").strip()
             if isinstance(data.get("customer_name"), str)
             else ""
         )
-
         customer_email = (
             data.get("customer_email", "").strip()
             if isinstance(data.get("customer_email"), str)
             else ""
         )
-
         business_id = get_current_business_id()
-
         business_key = str(business_id) if business_id is not None else None
-
         visitor_tokens = _anonymous_chat_tokens() if not customer_phone else {}
-
         visitor_token = visitor_tokens.get(business_key) if business_key else None
 
         if customer_phone and not is_chat_phone_request_allowed(
@@ -209,7 +166,6 @@ def chat():
 
         if not customer_phone and business_key and public_token:
             visitor_tokens[business_key] = public_token
-
             session[_ANONYMOUS_CHAT_TOKENS_KEY] = visitor_tokens
 
         payload = {"success": True, "response": response}
@@ -223,44 +179,35 @@ def chat():
 
 
 def _set_business_context(slug):
-
     from app import resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
-
     g.current_business = business
 
 
 def business_chat(slug):
-
     _set_business_context(slug)
-
     return chat()
 
 
 def public_conversation_messages(public_token):
-
     from app import get_current_business_id
 
     business_id = get_current_business_id()
-
     if business_id is None:
         return jsonify(
             {"success": False, "error": "No hay un negocio activo para esta solicitud."}
         ), 404
 
     visitor_token = _anonymous_chat_tokens().get(str(business_id))
-
     if not isinstance(visitor_token, str) or not secrets.compare_digest(
         visitor_token, public_token
     ):
         return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
 
     messages = get_conversation_messages_by_public_token_scoped(public_token, business_id)
-
     if messages is None:
         return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
 
@@ -269,31 +216,22 @@ def public_conversation_messages(public_token):
 
 def public_current_conversation_messages():
     """Return the current visitor's history using the business-scoped session cookie."""
-
     from app import get_current_business_id
 
     business_id = get_current_business_id()
-
     if business_id is None:
         return jsonify({"success": False, "error": "Conversación no encontrada."}), 404
-
     public_token = _anonymous_chat_tokens().get(str(business_id))
-
     if not isinstance(public_token, str):
         return jsonify({"success": True, "messages": []})
-
     messages = get_conversation_messages_by_public_token_scoped(public_token, business_id)
-
     if messages is None:
         return jsonify({"success": True, "messages": []})
-
     return jsonify({"success": True, "messages": messages})
 
 
 def business_public_current_conversation_messages(slug):
-
     _set_business_context(slug)
-
     return public_current_conversation_messages()
 
 
@@ -301,7 +239,6 @@ def business_public_current_conversation_messages(slug):
 
 
 def _get_public_services_response(business_id):
-
     from app import get_client_ip, is_api_request_allowed
 
     if not is_api_request_allowed(get_client_ip(), "api:servicios", business_id):
@@ -312,7 +249,6 @@ def _get_public_services_response(business_id):
                 "error": "Demasiadas solicitudes. Esperá un momento.",
             }
         ), 429
-
     if business_id is None:
         return jsonify(
             {
@@ -323,9 +259,7 @@ def _get_public_services_response(business_id):
         ), 404
 
     services = get_active_services_scoped(business_id)
-
     servicios = []
-
     for row in services:
         servicios.append(
             {"nombre": row["name"], "precio": row["price"], "duracion": row["duration"]}
@@ -335,23 +269,19 @@ def _get_public_services_response(business_id):
 
 
 def api_servicios():
-
     from app import get_current_business_id
 
     return _get_public_services_response(get_current_business_id())
 
 
 def business_api_servicios(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     return _get_public_services_response(get_current_business_id())
 
 
@@ -359,11 +289,9 @@ def business_api_servicios(slug):
 
 
 def _get_public_resources_response(business_id):
-
     from app import get_client_ip, is_api_request_allowed
 
     """Devuelve los recursos activos del negocio actual."""
-
     if not is_api_request_allowed(get_client_ip(), "api:recursos", business_id):
         return jsonify(
             {
@@ -372,7 +300,6 @@ def _get_public_resources_response(business_id):
                 "error": "Demasiadas solicitudes. Esperá un momento.",
             }
         ), 429
-
     if business_id is None:
         return jsonify(
             {
@@ -383,9 +310,7 @@ def _get_public_resources_response(business_id):
         ), 404
 
     resources = get_resources_scoped(business_id, only_active=True)
-
     recursos = []
-
     for row in resources:
         recursos.append({"id": row["id"], "nombre": row["name"]})
 
@@ -393,23 +318,19 @@ def _get_public_resources_response(business_id):
 
 
 def api_recursos():
-
     from app import get_current_business_id
 
     return _get_public_resources_response(get_current_business_id())
 
 
 def business_api_recursos(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     return _get_public_resources_response(get_current_business_id())
 
 
@@ -417,21 +338,14 @@ def business_api_recursos(slug):
 
 
 def _get_public_points_response(business_id):
-
     from app import get_client_ip, is_api_request_allowed
 
     """Saldo de puntos del cliente para una consulta pública del negocio.
 
-
-
     Solo devuelve el saldo si fidelización está habilitada y el phone es válido.
-
     No expone el ledger completo (es info sensible; en v1 el cliente ve el saldo,
-
     el historial detallado queda para el panel admin).
-
     """
-
     if not is_api_request_allowed(get_client_ip(), "api:puntos", business_id):
         return jsonify(
             {
@@ -440,7 +354,6 @@ def _get_public_points_response(business_id):
                 "error": "Demasiadas solicitudes. Esperá un momento.",
             }
         ), 429
-
     if business_id is None:
         return jsonify(
             {
@@ -451,16 +364,12 @@ def _get_public_points_response(business_id):
         ), 404
 
     settings = ensure_loyalty_settings_scoped(business_id)
-
     if not settings or not settings.get("enabled"):
         return jsonify({"success": True, "enabled": False, "balance": 0})
 
     # A phone number is an identifier, not proof of ownership. Preserve the
-
     # numeric response field for existing clients but never query its balance
-
     # without an authenticated verification flow.
-
     return jsonify(
         {
             "success": True,
@@ -473,23 +382,18 @@ def _get_public_points_response(business_id):
 
 
 def api_puntos():
-
     from app import get_current_business_id
 
     return _get_public_points_response(get_current_business_id())
 
 
 def business_api_puntos(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
-
     g.current_business = business
-
     return _get_public_points_response(get_current_business_id())
 
 
@@ -497,7 +401,6 @@ def business_api_puntos(slug):
 
 
 def _get_public_availability_response(fecha, business_id):
-
     from app import get_client_ip, is_api_request_allowed
 
     if not is_api_request_allowed(get_client_ip(), "api:disponibilidad", business_id):
@@ -510,15 +413,11 @@ def _get_public_availability_response(fecha, business_id):
         ), 429
 
     # resource_id opcional: permite filtrar disponibilidad por recurso
-
     resource_id_raw = request.args.get("resource_id")
-
     resource_id = None
-
     if resource_id_raw:
         try:
             resource_id = int(resource_id_raw)
-
         except (ValueError, TypeError):
             return jsonify({"success": False, "error": "resource_id inválido."}), 400
 
@@ -526,33 +425,26 @@ def _get_public_availability_response(fecha, business_id):
         horarios = get_available_times(
             fecha, business_id, request.args.get("servicio"), resource_id
         )
-
         return jsonify({"success": True, "fecha": fecha, "horarios_disponibles": horarios})
-
     except Exception:
         logger.exception("Error consultando disponibilidad")
-
         return jsonify({"success": False, "error": "No se pudo consultar la disponibilidad."}), 500
 
 
 def api_disponibilidad(fecha):
-
     from app import get_current_business_id
 
     return _get_public_availability_response(fecha, get_current_business_id())
 
 
 def business_api_disponibilidad(slug, fecha):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     return _get_public_availability_response(fecha, get_current_business_id())
 
 
@@ -560,11 +452,8 @@ def business_api_disponibilidad(slug, fecha):
 
 
 # Mensaje ÚNICO para toda falla de verificación (sin token, token inválido,
-
 # token de otra persona o de otro negocio): idéntico en todos los casos para
-
 # no revelar si el cliente o el turno existen (anti-enumeración).
-
 _TURNOS_VERIFICATION_ERROR = (
     "No pudimos verificar tu consulta. Ingresá el management_token "
     "que recibiste al reservar (en el enlace de gestión del turno)."
@@ -572,7 +461,6 @@ _TURNOS_VERIFICATION_ERROR = (
 
 
 def _verification_required_response():
-
     return (
         jsonify(
             {"success": False, "code": "verification_required", "error": _TURNOS_VERIFICATION_ERROR}
@@ -582,38 +470,62 @@ def _verification_required_response():
 
 
 def _request_value(name):
-    """Lee un valor de JSON body, form o query (compatibilidad controlada)."""
+    """Lee un valor no sensible de JSON body, formulario o query string.
 
+    Precedencia: JSON body > formulario > query string. Se usa para campos
+    como `nombre` y `telefono`. El `management_token` NO usa este helper:
+    tiene su propio resolver (`_management_token`) cuya prioridad máxima es
+    el encabezado `X-Management-Token`.
+    """
     data = request.get_json(silent=True)
-
     if isinstance(data, dict) and name in data and data[name] is not None:
         return str(data[name]).strip()
-
     if request.form and name in request.form:
         return (request.form.get(name) or "").strip()
-
     return (request.args.get(name) or "").strip()
+
+
+def _management_token():
+    """Resuelve el `management_token` de la petición.
+
+    Precedencia (gana siempre la primera fuente con valor no vacío):
+
+    1. Encabezado `X-Management-Token` — mecanismo recomendado.
+    2. Campo `management_token` del cuerpo JSON.
+    3. Campo `management_token` del formulario.
+    4. Parámetro `management_token` del query string — compatibilidad con
+       consumidores anteriores; el frontend ya no lo envía allí.
+
+    Los valores vacíos se ignoran y se consulta la siguiente fuente. El token
+    nunca se registra en logs ni se devuelve en respuestas.
+    """
+    header = (request.headers.get("X-Management-Token") or "").strip()
+    if header:
+        return header
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        value = data.get("management_token")
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    for source in (request.form, request.args):
+        value = (source.get("management_token") or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _get_public_appointments_response(business_id):
     """Consulta de turnos del cliente con VERIFICACIÓN de posesión.
 
-
-
-    Exige nombre + teléfono y `management_token`. El token se acepta en JSON
-
-    body o encabezado `X-Management-Token` (preferido) y, por compatibilidad,
-
-    en query/form; el frontend no debe enviarlo en query strings. Sin un token
-
-    válido perteneciente a UNO de los turnos de ese cliente en ESTE negocio,
-
-    la respuesta es 401 `verification_required` sin datos personales. El
-
-    filtro por business_id (tenant de la URL) se mantiene en la capa de servicio.
-
+    Exige nombre + teléfono y `management_token`. El token se acepta por
+    encabezado `X-Management-Token` (mecanismo recomendado y de mayor
+    prioridad) y, por compatibilidad, en el cuerpo JSON, el formulario o el
+    query string —en ese orden de prioridad, ver `_management_token`—; el
+    frontend no debe enviarlo en query strings. Sin un token válido
+    perteneciente a UNO de los turnos de ese cliente en ESTE negocio, la
+    respuesta es 401 `verification_required` sin datos personales. El filtro
+    por business_id (tenant de la URL) se mantiene en la capa de servicio.
     """
-
     from app import get_client_ip, is_api_request_allowed
 
     if not is_api_request_allowed(get_client_ip(), "api:turnos", business_id):
@@ -637,10 +549,7 @@ def _get_public_appointments_response(business_id):
             {"success": False, "error": "El teléfono es obligatorio para consultar tus turnos."}
         ), 400
 
-    management_token = _request_value("management_token")
-
-    if not management_token:
-        management_token = (request.headers.get("X-Management-Token") or "").strip()
+    management_token = _management_token()
 
     if not management_token:
         return _verification_required_response()
@@ -660,25 +569,24 @@ def _get_public_appointments_response(business_id):
 
 
 def api_turnos():
-
     from app import get_current_business_id
 
-    return _get_public_appointments_response(get_current_business_id())
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
+    return _get_public_appointments_response(business_id)
 
 
 def business_api_turnos(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     business_id = get_current_business_id()
-
     if business_id is None:
         abort(404)
 
@@ -689,7 +597,6 @@ def business_api_turnos(slug):
 
 
 def _create_public_appointment_response(business_id):
-
     from app import (
         get_client_ip,
         is_api_request_allowed,
@@ -709,26 +616,20 @@ def _create_public_appointment_response(business_id):
 
     try:
         data = json_object()
-
         if data is None:
             return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
         nombre = data.get("nombre", "")
-
         telefono = data.get("telefono", "")
-
         if not isinstance(nombre, str) or not isinstance(telefono, str):
             return jsonify({"success": False, "error": "Nombre y teléfono deben ser texto."}), 400
-
         nombre = nombre.strip()
 
         telefono = telefono.strip()
 
         email = data.get("email", "")
-
         if not isinstance(email, str):
             email = ""
-
         email = email.strip()
 
         servicio = data.get("servicio")
@@ -738,9 +639,7 @@ def _create_public_appointment_response(business_id):
         hora = data.get("hora")
 
         # ----------------------------------------------------
-
         # VALIDACIONES
-
         # ----------------------------------------------------
 
         if not nombre:
@@ -765,24 +664,16 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # PROTECCIÓN ANTI-ABUSO (Fase 1)
-
         #
-
         # Se evalúa ANTES de cualquier consulta a la base y de crear la
-
         # reserva: una solicitud bloqueada nunca inserta un turno.
-
         # ----------------------------------------------------
-
         abuse_check = enforce_public_booking_abuse_checks(data, telefono, email, business_id)
-
         if abuse_check is not None:
             return abuse_check
 
         services = get_active_services_scoped(business_id) if business_id is not None else []
-
         allowed_services = {row["name"] for row in services}
 
         if servicio not in allowed_services:
@@ -796,42 +687,30 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # VALIDAR RECURSO (opcional)
-
         # ----------------------------------------------------
 
         resource_id_raw = data.get("resource_id")
-
         resource_id = None
-
         if resource_id_raw is not None:
             try:
                 resource_id = int(resource_id_raw)
-
                 if resource_id <= 0:
                     resource_id = None
-
             except (ValueError, TypeError):
                 return jsonify({"success": False, "error": "resource_id inválido."}), 400
 
         # Clave de idempotencia OPCIONAL: mismo patron que el canje de
-
         # fidelizacion. Si el cliente la reenvia, un reintento devuelve el turno
-
         # original en lugar de 'occupied'. Sin ella el flujo es el historico.
-
         idempotency_key = data.get("idempotency_key")
-
         if idempotency_key is not None and (
             not isinstance(idempotency_key, str) or not idempotency_key
         ):
             idempotency_key = None
 
         # ----------------------------------------------------
-
         # CREAR TURNO
-
         # ----------------------------------------------------
 
         resultado = create_appointment(
@@ -847,26 +726,18 @@ def _create_public_appointment_response(business_id):
         )
 
         # ----------------------------------------------------
-
         # CUPO DE RESERVAS ACTIVAS POR CONTACTO (ENFORCEMENT)
-
         #
-
         # El chequeo de arriba es fail-fast: corre fuera de la transacción. Este
-
         # es el resultado del recontaje atómico dentro de `create_appointment`,
-
         # que es el que no puede eludirse con solicitudes simultáneas.
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "contact_limit":
             return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
-
         # FECHA PASADA
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "past_date":
@@ -880,9 +751,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # DÍA CERRADO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "closed_day":
@@ -896,9 +765,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # FECHA INVÁLIDA
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_date":
@@ -912,9 +779,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # HORARIO INVÁLIDO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_time":
@@ -928,9 +793,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # HORARIO OCUPADO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "occupied":
@@ -944,9 +807,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # NOMBRE INVÁLIDO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_name":
@@ -960,9 +821,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # TELÉFONO INVÁLIDO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_phone":
@@ -976,24 +835,16 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # RESERVA CORRECTA
-
         # ----------------------------------------------------
 
         if resultado.get("success"):
             # ----------------------------------------------------
-
             # REPLAY IDEMPOTENTE
-
             #
-
             # El turno ya existe (misma idempotency_key): se responde 200 con el
-
             # mismo appointment_id y NO se reenvian los emails de confirmacion
-
             # (el cliente ya los recibio en el intento original).
-
             # ----------------------------------------------------
 
             if resultado.get("idempotent_replay"):
@@ -1010,20 +861,15 @@ def _create_public_appointment_response(business_id):
                 )
 
             # ----------------------------------------------------
-
             # CONFIRMACIÓN POR EMAIL (no bloqueante para la reserva)
-
             # ----------------------------------------------------
 
             try:
                 current = getattr(g, "current_business", None) or {}
-
                 slug = current.get("slug") or None
-
                 from application.public_urls import public_url
 
                 base_url = public_url("").rstrip("/")
-
                 appointment_data = {
                     "id": resultado.get("appointment_id"),
                     "customer_name": resultado.get("customer_name"),
@@ -1033,7 +879,6 @@ def _create_public_appointment_response(business_id):
                     "appointment_time": resultado.get("appointment_time"),
                     "appointment_end": resultado.get("appointment_end"),
                 }
-
                 send_confirmation_email(
                     business_id,
                     appointment_data,
@@ -1041,11 +886,8 @@ def _create_public_appointment_response(business_id):
                     slug=slug,
                     public_base_url=base_url,
                 )
-
                 # EMAIL 5: aviso al negocio (scoped, no bloqueante)
-
                 send_business_confirmation_email(business_id, appointment_data)
-
             except Exception:
                 logger.exception("Error enviando confirmación de turno")
 
@@ -1055,14 +897,10 @@ def _create_public_appointment_response(business_id):
                 "management_token": resultado.get("management_token"),
                 "message": "El turno fue reservado correctamente.",
             }
-
             if resultado.get("resource_id"):
                 response_data["resource_id"] = resultado["resource_id"]
-
                 # Obtener el nombre del recurso para la respuesta
-
                 resource = get_resource_scoped(resultado["resource_id"], business_id)
-
                 if resource:
                     response_data["resource_nombre"] = resource["name"]
 
@@ -1099,9 +937,7 @@ def _create_public_appointment_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # ERROR DESCONOCIDO
-
         # ----------------------------------------------------
 
         return jsonify(
@@ -1117,25 +953,20 @@ def _create_public_appointment_response(business_id):
 
 
 def api_reservar():
-
     from app import get_current_business_id
 
     return _create_public_appointment_response(get_current_business_id())
 
 
 def business_api_reservar(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     business_id = get_current_business_id()
-
     if business_id is None:
         abort(404)
 
@@ -1146,28 +977,22 @@ def business_api_reservar(slug):
 
 
 def public_manage_turno(slug, token):
-
     from app import _human_reschedule_error, get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None or business.get("slug") != slug:
         abort(404)
 
     g.current_business = business
-
     business_id = get_current_business_id()
-
     if business_id is None:
         abort(404)
 
     appointment_id = request.args.get("id") or (
         request.form.get("id") or request.view_args.get("id")
     )
-
     try:
         appointment_id = int(appointment_id)
-
     except (TypeError, ValueError):
         appointment_id = None
 
@@ -1181,10 +1006,8 @@ def public_manage_turno(slug, token):
         ), 404
 
     appointment = get_appointment_by_token(appointment_id, business_id, token)
-
     if appointment is not None:
         appointment = dict(appointment)
-
     if appointment is None:
         return render_template(
             "gestionar_turno.html",
@@ -1195,7 +1018,6 @@ def public_manage_turno(slug, token):
         ), 404
 
     error = None
-
     message = None
 
     if request.method == "POST":
@@ -1206,20 +1028,15 @@ def public_manage_turno(slug, token):
                 appointment_id, appointment.get("phone") or "", business_id, management_token=token
             ):
                 message = "Tu turno fue cancelado correctamente."
-
                 appointment = get_appointment_by_token(appointment_id, business_id, token)
-
                 if appointment is not None:
                     appointment = dict(appointment)
-
             else:
                 error = "No se pudo cancelar el turno. Puede que ya haya sido cancelado."
 
         elif action == "reprogramar":
             nueva_fecha = (request.form.get("fecha") or "").strip()
-
             nueva_hora = (request.form.get("hora") or "").strip()
-
             res = reschedule_appointment(
                 appointment_id,
                 nueva_fecha,
@@ -1228,15 +1045,11 @@ def public_manage_turno(slug, token):
                 business_id,
                 management_token=token,
             )
-
             if res.get("success"):
                 message = "Tu turno fue reprogramado correctamente."
-
                 appointment = get_appointment_by_token(appointment_id, business_id, token)
-
                 if appointment is not None:
                     appointment = dict(appointment)
-
             else:
                 error = "No se pudo reprogramar el turno: " + _human_reschedule_error(
                     res.get("reason")
@@ -1244,7 +1057,6 @@ def public_manage_turno(slug, token):
 
         elif action == "canjear":
             settings = ensure_loyalty_settings_scoped(business_id)
-
             result = (
                 loyalty.redeem(
                     business_id,
@@ -1257,13 +1069,11 @@ def public_manage_turno(slug, token):
                 and loyalty.get_account(business_id, appointment.get("phone") or "")
                 else {"success": False, "reason": "disabled"}
             )
-
             message = (
                 "Canje realizado correctamente."
                 if result["success"]
                 else "No se pudo realizar el canje: " + result["reason"]
             )
-
             if not result["success"]:
                 error, message = message, None
 
@@ -1280,30 +1090,18 @@ def public_manage_turno(slug, token):
 def _loyalty_public_context(business_id, appointment):
     """Contexto público de fidelización para la vista del cliente.
 
-
-
     Devuelve un dict que la plantilla usa para mostrar el bloque "Mis puntos".
-
     Si fidelización está desactivada o no hay cuenta, devuelve un estado minimal
-
     para no inventar puntos de un sistema apagado.
-
     """
-
     if appointment is None:
         return {"enabled": False, "balance": 0, "settings": None}
-
     settings = ensure_loyalty_settings_scoped(business_id)
-
     enabled = bool(settings and settings.get("enabled"))
-
     if not enabled:
         return {"enabled": False, "balance": 0, "settings": settings}
-
     phone = (appointment.get("phone") or "").strip()
-
     balance = loyalty.get_balance(business_id, phone) if phone else 0
-
     return {
         "enabled": True,
         "balance": balance,
@@ -1317,7 +1115,6 @@ def _loyalty_public_context(business_id, appointment):
 
 
 def _cancel_public_appointment_response(business_id):
-
     from app import get_client_ip, is_api_request_allowed, json_object
 
     if not is_api_request_allowed(get_client_ip(), "api:cancelar", business_id):
@@ -1331,7 +1128,6 @@ def _cancel_public_appointment_response(business_id):
 
     try:
         data = json_object()
-
         if data is None:
             return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
@@ -1342,15 +1138,9 @@ def _cancel_public_appointment_response(business_id):
         if not appointment_id:
             return jsonify({"success": False, "error": "Falta el ID del turno."}), 400
 
-        management_token = data.get("management_token")
-
-        if management_token is not None and (
-            not isinstance(management_token, str) or not management_token
-        ):
-            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+        management_token = _management_token()
 
         telefono = data.get("telefono", "").strip()
-
         customer_name = data.get("customer_name", "").strip()
 
         if not telefono:
@@ -1381,7 +1171,7 @@ def _cancel_public_appointment_response(business_id):
             return jsonify(
                 {
                     "success": False,
-                    "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente.",
+                    "error": "No pudimos encontrar ese turno con el token de gestión indicado. Verificá el enlace de gestión e intentá nuevamente.",
                 }
             ), 400
 
@@ -1402,25 +1192,20 @@ def _cancel_public_appointment_response(business_id):
 
 
 def api_cancelar():
-
     from app import get_current_business_id
 
     return _cancel_public_appointment_response(get_current_business_id())
 
 
 def business_api_cancelar(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     business_id = get_current_business_id()
-
     if business_id is None:
         abort(404)
 
@@ -1431,7 +1216,6 @@ def business_api_cancelar(slug):
 
 
 def _get_public_reschedule_response(business_id):
-
     from app import get_client_ip, is_api_request_allowed, json_object
 
     if not is_api_request_allowed(get_client_ip(), "api:reprogramar", business_id):
@@ -1445,7 +1229,6 @@ def _get_public_reschedule_response(business_id):
 
     try:
         data = json_object()
-
         if data is None:
             return jsonify({"success": False, "error": "El cuerpo JSON no es válido."}), 400
 
@@ -1460,15 +1243,9 @@ def _get_public_reschedule_response(business_id):
         if not appointment_id:
             return jsonify({"success": False, "error": "Falta el ID del turno."}), 400
 
-        management_token = data.get("management_token")
-
-        if management_token is not None and (
-            not isinstance(management_token, str) or not management_token
-        ):
-            return jsonify({"success": False, "error": "No pudimos validar ese turno."}), 400
+        management_token = _management_token()
 
         telefono = data.get("telefono", "").strip()
-
         customer_name = data.get("customer_name", "").strip()
 
         if not nueva_fecha or not nueva_hora:
@@ -1503,30 +1280,20 @@ def _get_public_reschedule_response(business_id):
         )
 
         # ----------------------------------------------------
-
         # CUPO DE RESERVAS ACTIVAS POR CONTACTO
-
         #
-
         # Mismo enforcement atómico que en la creación: el turno que se mueve se
-
         # excluye del recontaje, así que reprogramar uno de los turnos que ya se
-
         # tienen sigue permitido. Solo se rechaza cuando la jugada dejaría al
-
         # contacto por encima del máximo (típicamente: mover una reserva vieja a
-
         # una fecha futura estando ya al límite).
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "contact_limit":
             return contact_limit_response(resultado.get("contact_limit_kind"))
 
         # ----------------------------------------------------
-
         # HORARIO OCUPADO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "occupied":
@@ -1540,9 +1307,7 @@ def _get_public_reschedule_response(business_id):
             )
 
         # ----------------------------------------------------
-
         # TURNO NO ENCONTRADO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "not_found":
@@ -1551,14 +1316,12 @@ def _get_public_reschedule_response(business_id):
                     "success": False,
                     "code": "not_found",
                     "reason": "not_found",
-                    "error": "No pudimos encontrar ese turno con los datos indicados. Verificá tu nombre y teléfono e intentá nuevamente.",
+                    "error": "No pudimos encontrar ese turno con el token de gestión indicado. Verificá el enlace de gestión e intentá nuevamente.",
                 }
             )
 
         # ----------------------------------------------------
-
         # ID DE TURNO INVÁLIDO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_appointment_id":
@@ -1572,9 +1335,7 @@ def _get_public_reschedule_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # HORARIO INVÁLIDO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_time":
@@ -1596,11 +1357,8 @@ def _get_public_reschedule_response(business_id):
                     "error": "Ese horario ya pasó.",
                 }
             ), 400
-
             # ----------------------------------------------------
-
         # FECHA PASADA
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "past_date":
@@ -1614,9 +1372,7 @@ def _get_public_reschedule_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # DÍA CERRADO
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "closed_day":
@@ -1630,9 +1386,7 @@ def _get_public_reschedule_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # FECHA INVÁLIDA
-
         # ----------------------------------------------------
 
         if resultado.get("reason") == "invalid_date":
@@ -1646,9 +1400,7 @@ def _get_public_reschedule_response(business_id):
             ), 400
 
         # ----------------------------------------------------
-
         # CORRECTO
-
         # ----------------------------------------------------
 
         return jsonify(
@@ -1672,25 +1424,20 @@ def _get_public_reschedule_response(business_id):
 
 
 def api_reprogramar():
-
     from app import get_current_business_id
 
     return _get_public_reschedule_response(get_current_business_id())
 
 
 def business_api_reprogramar(slug):
-
     from app import get_current_business_id, resolve_business
 
     business = resolve_business(slug)
-
     if business is None:
         abort(404)
 
     g.current_business = business
-
     business_id = get_current_business_id()
-
     if business_id is None:
         abort(404)
 

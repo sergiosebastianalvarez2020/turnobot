@@ -1,14 +1,20 @@
+"""Contrato HTTP del management_token en la API pública de turnos (PR #35).
+
+Estos tests son de INTEGRACIÓN: requieren PostgreSQL (`TURNOBOT_PG_URL`) y
+cada test corre contra una base temporal descartable vía
+`tests._pg_compat.PostgreSQLTestCase`. Por eso NO llevan el marker `no_pg`
+("no requiere base de datos"): sin `TURNOBOT_PG_URL` deben omitirse con un
+mensaje explícito de dependencia, nunca ejecutarse contra SQLite ni
+reportarse como aprobados.
+"""
+
 import secrets
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-import pytest
-
 import database.database as database
 from services import appointments
 from tests._pg_compat import PostgreSQLTestCase
-
-pytestmark = pytest.mark.no_pg
 
 
 def next_open_day():
@@ -309,6 +315,171 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
         )[0]
         assert str(row["appointment_time"]).startswith("10:00")
 
+    def test_cancel_with_header_token_scoped_to_business(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/cancelar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                },
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+        status = self._query(
+            app, "SELECT status FROM appointments WHERE id = %s", (created["appointment_id"],)
+        )[0]["status"]
+        assert status == "cancelled"
+
+    def test_cancel_header_token_wins_over_json_body(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/cancelar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "management_token": self._foreign_token(),
+                },
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_cancel_empty_header_falls_back_to_json_body(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/cancelar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "management_token": created["management_token"],
+                },
+                headers={"X-Management-Token": ""},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_cancel_without_token_returns_400(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/cancelar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "token de gestión es obligatorio" in response.get_json()["error"]
+
+    def test_reschedule_with_header_token_scoped_to_business(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/reprogramar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "nueva_fecha": next_open_day(),
+                    "nueva_hora": "11:00",
+                },
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+        row = self._query(
+            app,
+            "SELECT appointment_time, status FROM appointments WHERE id = %s",
+            (created["appointment_id"],),
+        )[0]
+        assert str(row["appointment_time"]).startswith("11:00")
+        assert row["status"] == "confirmed"
+
+    def test_reschedule_header_token_wins_over_json_body(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/reprogramar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "nueva_fecha": next_open_day(),
+                    "nueva_hora": "11:00",
+                    "management_token": self._foreign_token(),
+                },
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_reschedule_empty_header_falls_back_to_json_body(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/reprogramar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "nueva_fecha": next_open_day(),
+                    "nueva_hora": "11:00",
+                    "management_token": created["management_token"],
+                },
+                headers={"X-Management-Token": ""},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_reschedule_without_token_returns_400(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/reprogramar",
+                json={
+                    "appointment_id": created["appointment_id"],
+                    "telefono": "3838439222",
+                    "customer_name": "Cliente A",
+                    "nueva_fecha": next_open_day(),
+                    "nueva_hora": "11:00",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "token de gestión es obligatorio" in response.get_json()["error"]
+
     def test_public_manage_turno_get_valid_token_renders_scoped_appointment(self, app, client):
         self._seed_second_business(app)
         created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
@@ -351,3 +522,133 @@ class TestPR29ManagementTokenApi(PostgreSQLTestCase):
 
         assert response.status_code == 404
         assert "Cliente A" not in response.get_data(as_text=True)
+
+    def test_turnos_form_token_accepted_for_compatibility(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/turnos",
+                data={
+                    "nombre": "Cliente A",
+                    "telefono": "3838439222",
+                    "management_token": created["management_token"],
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert len(data["turnos"]) == 1
+
+    def test_turnos_query_token_accepted_for_compatibility(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.get(
+                "/b/el-corte/api/turnos"
+                f"?nombre=Cliente+A&telefono=3838439222&management_token={created['management_token']}"
+            )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert len(data["turnos"]) == 1
+
+    def test_turnos_header_token_wins_over_query_string(self, app, client):
+        """El encabezado recomendado tiene prioridad sobre el query string."""
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                f"/b/el-corte/api/turnos?management_token={self._foreign_token()}",
+                json={"nombre": "Cliente A", "telefono": "3838439222"},
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_turnos_header_token_wins_over_json_body(self, app, client):
+        """El encabezado recomendado tiene prioridad sobre el cuerpo JSON."""
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/turnos",
+                json={
+                    "nombre": "Cliente A",
+                    "telefono": "3838439222",
+                    "management_token": self._foreign_token(),
+                },
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_turnos_json_body_token_wins_over_query_string(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                f"/b/el-corte/api/turnos?management_token={self._foreign_token()}",
+                json={
+                    "nombre": "Cliente A",
+                    "telefono": "3838439222",
+                    "management_token": created["management_token"],
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_turnos_form_token_wins_over_query_string(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                f"/b/el-corte/api/turnos?management_token={self._foreign_token()}",
+                data={
+                    "nombre": "Cliente A",
+                    "telefono": "3838439222",
+                    "management_token": created["management_token"],
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_turnos_empty_json_token_falls_back_to_header(self, app, client):
+        """Un token vacío en el cuerpo no enmascara al encabezado recomendado."""
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                "/b/el-corte/api/turnos",
+                json={"nombre": "Cliente A", "telefono": "3838439222", "management_token": ""},
+                headers={"X-Management-Token": created["management_token"]},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
+
+    def test_turnos_empty_json_token_falls_back_to_query_string(self, app, client):
+        self._seed_second_business(app)
+        created = self._create_appointment(app, "Cliente A", "3838439222", "Corte", "09:00", 1)
+
+        with patch("app.resolve_business", return_value=self._business(1)):
+            response = client.post(
+                f"/b/el-corte/api/turnos?management_token={created['management_token']}",
+                json={"nombre": "Cliente A", "telefono": "3838439222", "management_token": ""},
+            )
+
+        assert response.status_code == 200
+        assert response.get_json()["success"] is True
