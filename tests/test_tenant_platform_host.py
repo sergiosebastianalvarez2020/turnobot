@@ -11,6 +11,7 @@ Todas las pruebas corren sobre SQLite (no requieren PostgreSQL).
 """
 
 import unittest
+from unittest import mock
 
 import pytest
 
@@ -137,6 +138,27 @@ class TestConfigurationEdgeCases(BaseTenantHostTest):
         # No se agrega ningún host a platform_hosts
         response = self._get("/", "turnobot.net.ar", scheme="https")
         self.assertEqual(response.status_code, 404)
+
+
+class TestConnectionErrorsAreNotMappedTo404(BaseTenantHostTest):
+    """Un error de conexión PostgreSQL es error operativo (500), nunca un 404."""
+
+    def test_pool_unavailable_returns_500_not_404(self):
+        import application.tenant as tenant_module
+
+        testing = application.app.config.get("TESTING", False)
+        application.app.config["TESTING"] = False
+        try:
+            with mock.patch.object(
+                tenant_module,
+                "resolve_business_domain",
+                side_effect=RuntimeError("El pool PostgreSQL no está inicializado"),
+            ):
+                response = self._get("/", "unknown.example.com", scheme="https")
+        finally:
+            application.app.config["TESTING"] = testing
+        self.assertEqual(response.status_code, 500)
+        self.assertNotEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

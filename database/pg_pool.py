@@ -372,12 +372,33 @@ def init_pg_pool(
 
 
 def get_pg_pool(app: Flask | None = None) -> psycopg_pool.ConnectionPool | None:
-    """Obtiene el pool activo: app explícita > app del contexto Flask > respaldo global."""
+    """Obtiene el pool activo: app explícita > app del contexto Flask > respaldo global.
+
+    Si hay una aplicación Flask activa configurada para un backend no-PostgreSQL
+    (p. ej. SQLite), no se devuelve el pool global de PostgreSQL, aunque exista
+    uno residual de otra aplicación o de una base temporal ya eliminada. Esto
+    evita que una app SQLite use accidentalmente un pool PostgreSQL cerrado o
+    perteneciente a otra instancia.
+
+    Si no hay contexto Flask activo (scripts CLI), se retorna el respaldo
+    global `_global_pool`, que es el uso legítimo previsto de esa variable.
+    """
     target_app = app if app is not None else _current_flask_app()
     if target_app is not None:
         pool = getattr(target_app, "extensions", {}).get("pg_pool")
         if pool is not None:
             return pool
+        # La app no tiene pool registrado en sus extensiones. Verificar el
+        # backend para decidir si caer al respaldo global.
+        backend = target_app.config.get("DB_BACKEND")
+        if backend == "postgresql":
+            # App configurada para PostgreSQL pero sin pool aún: no hay pool
+            # para esta app.
+            return None
+        # Backend no es PostgreSQL (o no está configurado): no usar pool
+        # global residual de otra aplicación.
+        return None
+    # Sin contexto Flask: usar el respaldo global (scripts CLI, etc.).
     return _global_pool
 
 
