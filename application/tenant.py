@@ -13,8 +13,9 @@ fachada no está importada (uso standalone), cae a las implementaciones locales.
 import sys
 import uuid
 from time import monotonic
+from urllib.parse import urlsplit
 
-from flask import abort, g, request
+from flask import abort, current_app, g, request
 
 from application.logging_config import logger
 from database.business_domains import resolve_business_domain
@@ -137,7 +138,37 @@ def load_current_business():
 
     # Dominios personalizados: resolver por Host header solo sobre HTTPS.
     # Sobre HTTP nunca se resuelve un dominio custom (previene accesos inseguros).
+    # Primero verificamos si es un host de plataforma para evitar consultas
+    # innecesarias a la base de datos y errores cuando el servicio de base de
+    # datos no está disponible.
     hostname = request.host.split(":")[0]
+
+    # Hosts de plataforma: localhost, 127.0.0.1 y el dominio canónico de la
+    # plataforma (extraído de PUBLIC_BASE_URL). Cualquier otro host sobre HTTPS
+    # sin dominio custom verificado devuelve 404.
+    platform_hosts = {"localhost", "127.0.0.1"}
+    _public_base_url = current_app.config.get("PUBLIC_BASE_URL", "http://localhost")
+    try:
+        _public_hostname = urlsplit(_public_base_url).hostname
+    except ValueError:
+        _public_hostname = None
+    if _public_hostname:
+        platform_hosts.add(_public_hostname.lower())
+
+    if hostname.lower() in platform_hosts:
+        g.current_business = _load_seam("resolve_business")()
+        if g.current_business:
+            g.business_id = (
+                g.current_business.get("id")
+                if isinstance(g.current_business, dict)
+                else (g.current_business["id"] if g.current_business else None)
+            )
+        else:
+            g.business_id = None
+        return None
+
+    # Dominios personalizados: resolver por Host header solo sobre HTTPS.
+    # Sobre HTTP nunca se resuelve un dominio custom (previene accesos inseguros).
     if request.scheme == "https":
         pool = get_pg_pool(None)
         if pool is not None:
@@ -157,20 +188,6 @@ def load_current_business():
             g.business_id = domain_business["id"]
             g.custom_domain_resolved = True
             return None
-
-    # Hosts de plataforma (localhost, 127.0.0.1): usan el negocio por defecto.
-    platform_hosts = {"localhost", "127.0.0.1"}
-    if hostname in platform_hosts:
-        g.current_business = _load_seam("resolve_business")()
-        if g.current_business:
-            g.business_id = (
-                g.current_business.get("id")
-                if isinstance(g.current_business, dict)
-                else (g.current_business["id"] if g.current_business else None)
-            )
-        else:
-            g.business_id = None
-        return None
 
     # Host desconocido sin dominio custom verificado: 404.
     abort(404)
