@@ -25,6 +25,7 @@ import sqlite3
 
 import pytest
 from flask import Flask
+from psycopg_pool import PoolClosed
 
 import database.database as dbmod
 import database.pg_pool as pg_pool_mod
@@ -579,3 +580,71 @@ def test_create_app_con_sqlite_no_registra_teardown(monkeypatch, tmp_path):
     assert "pg_pool" not in app.extensions
     assert get_pg_pool(app) is None
     assert registrados == []
+
+
+# ============================================================
+# ETAPA 14I — SEMÁNTICA DE get_pg_pool() PARA CLI, APPS MÚLTIPLES Y open=False
+# ============================================================
+
+
+def test_scripts_cli_conservan_el_acceso_al_pool_global(monkeypatch):
+    """Sin contexto Flask (scripts CLI) el respaldo global sigue siendo el pool vigente."""
+    creados = _patch_pool_factory(monkeypatch)
+
+    pool = init_pg_pool(None, conninfo=_PG_URL, open=False)
+
+    assert pool is not None
+    assert len(creados) == 1
+    assert get_pg_pool() is pool, "el script CLI perdió el acceso al pool global"
+    assert pg_pool_mod._global_pool is pool
+
+    close_pg_pool()
+    assert get_pg_pool() is None
+    assert pool.closed is True
+
+
+def test_dos_aplicaciones_postgresql_conservan_pools_independientes():
+    """Cada app PostgreSQL usa SU pool; una app sin pool nunca cae a otro residual."""
+    app_a = Flask("pg_app_a")
+    app_a.config["DATABASE_URL"] = _PG_URL
+    app_a.config["DB_BACKEND"] = "postgresql"
+    pool_a = _FakePool(_PG_URL)
+    app_a.extensions["pg_pool"] = pool_a
+
+    app_b = Flask("pg_app_b")
+    app_b.config["DATABASE_URL"] = _PG_URL
+    app_b.config["DB_BACKEND"] = "postgresql"
+    pool_b = _FakePool(_PG_URL)
+    app_b.extensions["pg_pool"] = pool_b
+
+    with app_a.app_context():
+        assert get_pg_pool() is pool_a
+    with app_b.app_context():
+        assert get_pg_pool() is pool_b
+    assert get_pg_pool(app_a) is pool_a
+    assert get_pg_pool(app_b) is pool_b
+
+    residual = _FakePool(_PG_URL)
+    pg_pool_mod._global_pool = residual
+    app_sin_pool = Flask("pg_app_sin_pool")
+    app_sin_pool.config["DATABASE_URL"] = _PG_URL
+    app_sin_pool.config["DB_BACKEND"] = "postgresql"
+    with app_sin_pool.app_context():
+        assert get_pg_pool() is None, "una app sin pool recibió un pool residual"
+
+
+def test_pool_creado_con_open_false_conserva_su_contrato(monkeypatch):
+    """Los pools open=False siguen siendo vigentes: se crean, reutilizan y cierran."""
+    pool = init_pg_pool(None, conninfo=_PG_URL, open=False)
+
+    assert pool is not None
+    assert get_pg_pool() is pool
+    assert init_pg_pool(None, conninfo=_PG_URL, open=False) is pool
+    assert pg_pool_mod._global_pool is pool
+
+    with pytest.raises(PoolClosed):
+        pool.getconn()
+
+    close_pg_pool(pool)
+    assert get_pg_pool() is None
+    close_pg_pool(pool)
