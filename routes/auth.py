@@ -214,15 +214,15 @@ def login():
                 error=True,
                 error_message=error,
                 public_frontend_config=_login_frontend_config(),
-            ), (
-                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
-            )
+            ), (429 if error == "Demasiados intentos. Esperá unos minutos." else 200)
         _establish_session(user_id)
         return redirect(url_for("admin"))
 
     if session.get("user_id"):
         return redirect(url_for("admin"))
-    return render_template("login.html", error=False, public_frontend_config=_login_frontend_config())
+    return render_template(
+        "login.html", error=False, public_frontend_config=_login_frontend_config()
+    )
 
 
 def login_slug(slug):
@@ -247,15 +247,15 @@ def login_slug(slug):
                 error=True,
                 error_message=error,
                 public_frontend_config=_login_frontend_config(),
-            ), (
-                429 if error == "Demasiados intentos. Esperá unos minutos." else 200
-            )
+            ), (429 if error == "Demasiados intentos. Esperá unos minutos." else 200)
         _establish_session(user_id)
         return redirect(url_for("admin_slug", slug=business["slug"]))
 
     if session.get("user_id"):
         return redirect(url_for("admin_slug", slug=business["slug"]))
-    return render_template("login.html", error=False, public_frontend_config=_login_frontend_config())
+    return render_template(
+        "login.html", error=False, public_frontend_config=_login_frontend_config()
+    )
 
 
 def logout():

@@ -157,9 +157,7 @@ class TestAdminVisualIdentity(unittest.TestCase):
         return self._post("admin/identidad/preview", extra or {})
 
     def test_preview_crea_draft_y_frame_renderiza_landing(self):
-        resp = self._preview_post(
-            {"primary_color": "#0F766E", "font_family": "Work Sans"}
-        )
+        resp = self._preview_post({"primary_color": "#0F766E", "font_family": "Work Sans"})
         self.assertEqual(resp.status_code, 302)
         location = resp.headers["Location"]
         self.assertIn("/admin/identidad/preview", location)
@@ -196,10 +194,7 @@ class TestAdminVisualIdentity(unittest.TestCase):
     def test_draft_aislado_por_tenant(self):
         other_id = _provision(slug="test-av-other", email="owner2@test-av.com")
         with self.client.session_transaction() as sess:
-            sess["visual_draft"] = {
-                "business_id": other_id,
-                "config": {"primary_color": "#123456"},
-            }
+            sess["visual_draft"] = {"business_id": other_id, "config": {"primary_color": "#123456"}}
         frame = self.client.get(f"/b/{SLUG}/admin/identidad/preview-frame")
         self.assertEqual(frame.status_code, 404)
 
@@ -217,10 +212,7 @@ class TestAdminVisualIdentity(unittest.TestCase):
     def test_anonimo_redirige_a_login(self):
         with self.client.session_transaction() as sess:
             sess.clear()
-        for path in (
-            "admin/identidad/preview",
-            "admin/identidad/preview-frame",
-        ):
+        for path in ("admin/identidad/preview", "admin/identidad/preview-frame"):
             resp = self.client.get(f"/b/{SLUG}/{path}")
             self.assertEqual(resp.status_code, 302)
             self.assertIn("/login", resp.headers.get("Location", ""))

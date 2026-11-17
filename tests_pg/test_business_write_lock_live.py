@@ -38,9 +38,7 @@ def _probe_try(url, business_id, lock_key):
     """¿Está libre ahora la clave combinada? (xact lock en autocommit)."""
     combined = business_lock_key(business_id, lock_key)
     with connect_autocommit(url) as conn:
-        row = conn.execute(
-            "SELECT pg_try_advisory_xact_lock(%s::bigint)", (combined,)
-        ).fetchone()
+        row = conn.execute("SELECT pg_try_advisory_xact_lock(%s::bigint)", (combined,)).fetchone()
     return bool(row[0])
 
 

@@ -29,12 +29,7 @@ CONFIG_KEYS = (
 )
 
 # Campos de media (rutas o URLs) — para validación de uploads.
-MEDIA_KEYS = (
-    "logo_url",
-    "favicon_url",
-    "cover_image_url",
-    "header_bg_image_url",
-)
+MEDIA_KEYS = ("logo_url", "favicon_url", "cover_image_url", "header_bg_image_url")
 
 # Campos de color HEX.
 COLOR_KEYS = (

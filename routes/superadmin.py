@@ -380,9 +380,7 @@ def superadmin_visual_identity_detail(business_id):
         return denied
     user, _ = _platform_current_user()
     context = _visual_identity_form_context(
-        business_id,
-        message=request.args.get("message", ""),
-        error=request.args.get("error", ""),
+        business_id, message=request.args.get("message", ""), error=request.args.get("error", "")
     )
     return render_template(
         "superadmin.html", superadmin=user, section="visual_identity_detail", **context

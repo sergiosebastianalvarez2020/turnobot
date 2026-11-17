@@ -130,10 +130,7 @@ def save_business_image(business_id: int, file_storage, field_name: str) -> str 
     ext, error = validate_image_file(file_storage, field_name)
     if error or ext is None:
         logger.warning(
-            "Upload rechazado business_id=%s field=%s: %s",
-            business_id,
-            field_name,
-            error,
+            "Upload rechazado business_id=%s field=%s: %s", business_id, field_name, error
         )
         return None
 

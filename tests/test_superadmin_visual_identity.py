@@ -49,11 +49,7 @@ class TestSuperadminVisualIdentity(unittest.TestCase):
         csrf = _csrf_from(page)
         resp = self.client.post(
             "/superadmin/login",
-            data={
-                "email": SUPERADMIN_EMAIL,
-                "password": SUPERADMIN_PASSWORD,
-                "csrf_token": csrf,
-            },
+            data={"email": SUPERADMIN_EMAIL, "password": SUPERADMIN_PASSWORD, "csrf_token": csrf},
         )
         assert resp.status_code == 302, resp.status_code
         self.business_id = _provision()
@@ -63,10 +59,7 @@ class TestSuperadminVisualIdentity(unittest.TestCase):
     def test_anonimo_redirige_a_login(self):
         with self.client.session_transaction() as sess:
             sess.clear()
-        for url in (
-            "/superadmin/identidad",
-            f"/superadmin/identidad/{self.business_id}",
-        ):
+        for url in ("/superadmin/identidad", f"/superadmin/identidad/{self.business_id}"):
             resp = self.client.get(url)
             self.assertEqual(resp.status_code, 302)
             self.assertIn("/superadmin/login", resp.headers.get("Location", ""))
@@ -141,12 +134,7 @@ class TestSuperadminVisualIdentity(unittest.TestCase):
         self.assertEqual(config["primary_color"], "#1463FF")
 
     def test_guardar_contraste_insuficiente_rechazado(self):
-        resp = self._post_save(
-            {
-                "page_text_color": "#777777",
-                "page_background_color": "#888888",
-            }
-        )
+        resp = self._post_save({"page_text_color": "#777777", "page_background_color": "#888888"})
         self.assertEqual(resp.status_code, 302)
         self.assertIn("error=", resp.headers["Location"])
         config, _locked = vi.load_identity(self.business_id)

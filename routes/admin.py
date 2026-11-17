@@ -533,9 +533,7 @@ def admin_visual_identity_save(slug=None):
     business_id = get_current_business_id()
     if business_id is None:
         abort(404)
-    result = visual_identity.save_identity(
-        business_id, _visual_form_config(), enforce_locks=True
-    )
+    result = visual_identity.save_identity(business_id, _visual_form_config(), enforce_locks=True)
     if not result["success"]:
         detail = result.get("violations") or result.get("errors") or []
         reason = result["reason"]
@@ -576,9 +574,7 @@ def admin_visual_identity_preview(slug=None):
         abort(404)
     normalized, errors = visual_identity.validate_config(_visual_form_config())
     if errors:
-        return redirect(
-            _admin_url(identidad_error="Vista previa no válida: " + "; ".join(errors))
-        )
+        return redirect(_admin_url(identidad_error="Vista previa no válida: " + "; ".join(errors)))
     session["visual_draft"] = {"business_id": business_id, "config": normalized}
     return redirect(_identidad_url("admin_visual_identity_preview_page"))
 

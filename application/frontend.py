@@ -46,12 +46,7 @@ def build_public_frontend_config(settings=None):
 
     # Paleta completa: derivados (hover/dark/light/rgb) calculados desde primary
     # para que la cascada de style.css no quede pegada al azul por defecto.
-    palette = derive_palette(
-        primary=primary,
-        secondary=secondary,
-        background=background,
-        text=text,
-    )
+    palette = derive_palette(primary=primary, secondary=secondary, background=background, text=text)
     palette["font_family"] = font_family
 
     return {

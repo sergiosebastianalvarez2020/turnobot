@@ -94,17 +94,13 @@ class TestFrontendConfigPalette(unittest.TestCase):
         self.assertEqual(config["theme"]["primary"], DEFAULT_PRIMARY)
 
     def test_config_rewrites_external_logo(self):
-        config = build_public_frontend_config(
-            {"logo_url": "https://cdn.example.com/logo.png"}
-        )
+        config = build_public_frontend_config({"logo_url": "https://cdn.example.com/logo.png"})
         logo = config["branding"]["logo_url"]
         self.assertTrue(logo.startswith("/media/external?url="))
         self.assertIn("cdn.example.com", logo)
 
     def test_config_keeps_local_logo(self):
-        config = build_public_frontend_config(
-            {"logo_url": "/media/business_1/logo.png"}
-        )
+        config = build_public_frontend_config({"logo_url": "/media/business_1/logo.png"})
         self.assertEqual(config["branding"]["logo_url"], "/media/business_1/logo.png")
 
 
@@ -115,8 +111,7 @@ class TestRewriteExternalLogo(unittest.TestCase):
 
     def test_local_path_untouched(self):
         self.assertEqual(
-            rewrite_external_logo_url("/media/business_2/x.png"),
-            "/media/business_2/x.png",
+            rewrite_external_logo_url("/media/business_2/x.png"), "/media/business_2/x.png"
         )
 
     def test_https_rewritten(self):
@@ -167,12 +162,8 @@ class TestLandingThemeInjection(unittest.TestCase):
             "secondary_color": "#112233",
         }
         with patch.object(application, "resolve_business", return_value=business_b):
-            with patch.object(
-                application, "get_business_settings_scoped", return_value=settings_b
-            ):
-                with patch.object(
-                    application, "get_active_services_scoped", return_value=[]
-                ):
+            with patch.object(application, "get_business_settings_scoped", return_value=settings_b):
+                with patch.object(application, "get_active_services_scoped", return_value=[]):
                     with application.app.test_client() as client:
                         response = client.get("/b/biz-x")
                         self.assertEqual(response.status_code, 200)
@@ -198,12 +189,8 @@ class TestLandingThemeInjection(unittest.TestCase):
             "secondary_color": "#002244",
         }
         with patch.object(application, "resolve_business", return_value=business_b):
-            with patch.object(
-                application, "get_business_settings_scoped", return_value=settings_b
-            ):
-                with patch.object(
-                    application, "get_active_services_scoped", return_value=[]
-                ):
+            with patch.object(application, "get_business_settings_scoped", return_value=settings_b):
+                with patch.object(application, "get_active_services_scoped", return_value=[]):
                     with application.app.test_client() as client:
                         response = client.get("/b/biz-w/reservar")
                         self.assertEqual(response.status_code, 200)
@@ -223,12 +210,8 @@ class TestLandingThemeInjection(unittest.TestCase):
             "secondary_color": "#003322",
         }
         with patch.object(application, "resolve_business", return_value=business_b):
-            with patch.object(
-                application, "get_business_settings_scoped", return_value=settings_b
-            ):
-                with patch.object(
-                    application, "get_active_services_scoped", return_value=[]
-                ):
+            with patch.object(application, "get_business_settings_scoped", return_value=settings_b):
+                with patch.object(application, "get_active_services_scoped", return_value=[]):
                     with application.app.test_client() as client:
                         response = client.get("/b/biz-g/gestionar/1")
                         # Puede ser 200 o redirect según flujo; el HTML si hay 200

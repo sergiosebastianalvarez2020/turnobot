@@ -50,9 +50,7 @@ def test_migration_026_creates_table():
         assert rows, "tabla business_visual_identity debe existir (migración 026)"
         cols = {r[1] for r in c.execute("PRAGMA table_info(business_visual_identity)")}
         assert {"id", "business_id", "config", "locked_options", "updated_at"} <= cols
-        idx = c.execute(
-            "PRAGMA index_list(business_visual_identity)"
-        ).fetchall()
+        idx = c.execute("PRAGMA index_list(business_visual_identity)").fetchall()
         unique_business = False
         for i in idx:
             info = c.execute(f"PRAGMA index_info({i[1]})").fetchall()
@@ -116,8 +114,7 @@ class TestVisualIdentityService(unittest.TestCase):
 
     def test_save_and_load_roundtrip(self):
         result = vi.save_identity(
-            self.business_id,
-            {"primary_color": "#AA0000", "secondary_color": "#220000"},
+            self.business_id, {"primary_color": "#AA0000", "secondary_color": "#220000"}
         )
         self.assertTrue(result["success"], result)
         config, locked = vi.load_identity(self.business_id)
@@ -165,11 +162,7 @@ class TestVisualIdentityService(unittest.TestCase):
 
     def test_contrast_below_minimum_rejected(self):
         result = vi.save_identity(
-            self.business_id,
-            {
-                "page_text_color": "#FFFFFE",
-                "page_background_color": "#FFFFFF",
-            },
+            self.business_id, {"page_text_color": "#FFFFFE", "page_background_color": "#FFFFFF"}
         )
         self.assertFalse(result["success"])
         self.assertEqual(result["reason"], "contrast_below_minimum")
@@ -234,8 +227,7 @@ class TestVisualIdentityService(unittest.TestCase):
 
     def test_effective_public_settings_merges(self):
         vi.save_identity(
-            self.business_id,
-            {"primary_color": "#770000", "logo_url": "/media/business_1/l.png"},
+            self.business_id, {"primary_color": "#770000", "logo_url": "/media/business_1/l.png"}
         )
         from database.database import get_business_settings_scoped
 

@@ -69,8 +69,5 @@ def serve_external_image():
 
     cache_path.write_bytes(data)
     return send_file(
-        cache_path,
-        mimetype=sniff_image_content_type(data),
-        conditional=True,
-        max_age=86400,
+        cache_path, mimetype=sniff_image_content_type(data), conditional=True, max_age=86400
     )

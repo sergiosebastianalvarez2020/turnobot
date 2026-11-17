@@ -163,8 +163,7 @@ def check_contrast(config):
         ratio = contrast_ratio(fg, bg)
         if ratio < MIN_CONTRAST_RATIO:
             violations.append(
-                f"{label}: contraste {ratio:.2f}:1 < {MIN_CONTRAST_RATIO}:1 "
-                f"({fg} sobre {bg})"
+                f"{label}: contraste {ratio:.2f}:1 < {MIN_CONTRAST_RATIO}:1 ({fg} sobre {bg})"
             )
     return violations
 

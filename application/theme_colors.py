@@ -60,11 +60,7 @@ def _mix(hex_color: str, target: tuple[int, int, int], amount: float) -> str:
     """Mezcla hex_color hacia target en [0, 1]."""
     r, g, b = hex_to_rgb(hex_color)
     tr, tg, tb = target
-    return rgb_to_hex(
-        r + (tr - r) * amount,
-        g + (tg - g) * amount,
-        b + (tb - b) * amount,
-    )
+    return rgb_to_hex(r + (tr - r) * amount, g + (tg - g) * amount, b + (tb - b) * amount)
 
 
 def darken(hex_color: str, amount: float) -> str:
