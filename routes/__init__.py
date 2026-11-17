@@ -13,6 +13,7 @@ from routes import (
     register_auth_public,
     register_health,
     register_invitation,
+    register_media,
     register_public,
     register_public_api,
     register_superadmin,
@@ -32,6 +33,7 @@ def register_blueprints(app):
         app: Instancia de Flask application.
     """
     register_health.register(app)
+    register_media.register(app)
     register_public.register(app)
     register_public_api.register(app)
     register_auth.register(app)

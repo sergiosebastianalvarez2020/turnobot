@@ -39,6 +39,11 @@ from routes.admin import (
     admin_usuarios_cambiar_rol,
     admin_usuarios_invitar,
     admin_usuarios_revocar,
+    admin_visual_identity_preset,
+    admin_visual_identity_preview,
+    admin_visual_identity_preview_frame,
+    admin_visual_identity_preview_page,
+    admin_visual_identity_save,
 )
 
 
@@ -88,6 +93,66 @@ def register(app):
         endpoint="admin_update_business_settings",
         view_func=admin_update_business_settings,
         methods=["POST"],
+    )
+    app.add_url_rule(
+        "/admin/identidad/guardar",
+        endpoint="admin_visual_identity_save",
+        view_func=admin_visual_identity_save,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/identidad/guardar",
+        endpoint="admin_visual_identity_save",
+        view_func=admin_visual_identity_save,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/admin/identidad/preset",
+        endpoint="admin_visual_identity_preset",
+        view_func=admin_visual_identity_preset,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/identidad/preset",
+        endpoint="admin_visual_identity_preset",
+        view_func=admin_visual_identity_preset,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/admin/identidad/preview",
+        endpoint="admin_visual_identity_preview",
+        view_func=admin_visual_identity_preview,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/identidad/preview",
+        endpoint="admin_visual_identity_preview",
+        view_func=admin_visual_identity_preview,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/admin/identidad/preview",
+        endpoint="admin_visual_identity_preview_page",
+        view_func=admin_visual_identity_preview_page,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/identidad/preview",
+        endpoint="admin_visual_identity_preview_page",
+        view_func=admin_visual_identity_preview_page,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/admin/identidad/preview-frame",
+        endpoint="admin_visual_identity_preview_frame",
+        view_func=admin_visual_identity_preview_frame,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/b/<slug>/admin/identidad/preview-frame",
+        endpoint="admin_visual_identity_preview_frame",
+        view_func=admin_visual_identity_preview_frame,
+        methods=["GET"],
     )
     app.add_url_rule(
         "/admin/horarios/guardar",

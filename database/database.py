@@ -907,6 +907,79 @@ def get_business_settings_scoped(business_id, connection=None):
     return get_business_settings(business_id, connection=connection)
 
 
+def get_visual_identity_scoped(business_id, connection=None):
+    """Devuelve la fila de identidad visual de un negocio (o None).
+
+    No lanza si la tabla no existe aún (base pre-migración 026): devuelve None
+    para que los consumidores caigan a business_settings/defaults.
+    """
+    owns_connection = connection is None
+    if owns_connection:
+        connection = get_connection()
+    try:
+        try:
+            return connection.execute(
+                """
+                SELECT business_id, config, locked_options, updated_at
+                FROM business_visual_identity
+                WHERE business_id = ?
+                """,
+                (business_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+    finally:
+        if owns_connection:
+            connection.close()
+
+
+def upsert_visual_identity_scoped(business_id, config_json, locked_options_json=None):
+    """Inserta o actualiza la identidad visual de un negocio (scoped por tenant).
+
+    `config_json` y `locked_options_json` deben ser strings JSON ya serializados.
+    """
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            INSERT INTO business_visual_identity (business_id, config, locked_options)
+            VALUES (?, ?, ?)
+            ON CONFLICT (business_id) DO UPDATE SET
+                config = excluded.config,
+                locked_options = COALESCE(excluded.locked_options,
+                                          business_visual_identity.locked_options),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                business_id,
+                config_json,
+                locked_options_json if locked_options_json is not None else None,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def set_visual_identity_locks_scoped(business_id, locked_options_json):
+    """Actualiza solo las opciones bloqueadas (Super Admin)."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            INSERT INTO business_visual_identity (business_id, config, locked_options)
+            VALUES (?, '{}', ?)
+            ON CONFLICT (business_id) DO UPDATE SET
+                locked_options = excluded.locked_options,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (business_id, locked_options_json),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def update_business_settings_scoped(
     business_id,
     business_name,

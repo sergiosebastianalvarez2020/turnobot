@@ -12,6 +12,11 @@ Contiene las view functions para la administración de la plataforma:
 - /superadmin/negocios/<id>/desactivar  -> endpoint: superadmin_negocios_desactivar
 - /superadmin/negocios/<id>/activar     -> endpoint: superadmin_negocios_activar
 - /superadmin/negocios/<id>/reinviar    -> endpoint: superadmin_negocios_reinviar
+- /superadmin/identidad                 -> endpoint: superadmin_visual_identity
+- /superadmin/identidad/<id>            -> endpoint: superadmin_visual_identity_detail
+- /superadmin/identidad/<id>/guardar    -> endpoint: superadmin_visual_identity_save
+- /superadmin/identidad/<id>/bloqueos   -> endpoint: superadmin_visual_identity_locks
+- /superadmin/identidad/<id>/preset     -> endpoint: superadmin_visual_identity_preset
 
 Estas rutas operan a nivel de PLATAFORMA (superadmin), no son tenant-scoped.
 """
@@ -29,6 +34,15 @@ from application.platform import (
 from application.public_urls import public_url
 from application.rate_limit import is_login_request_allowed
 from application.requests import get_client_ip
+from application.themes import (
+    ALLOWED_FONTS,
+    COLOR_KEYS,
+    CONFIG_KEYS,
+    DEFAULT_PRESET,
+    LOCKABLE_OPTIONS,
+    MEDIA_KEYS,
+    preset_names,
+)
 from database.database import (
     get_business_settings_scoped,
     list_members_scoped,
@@ -36,6 +50,7 @@ from database.database import (
 )
 from extensions import valid_csrf_token
 from services import platform as platform_service
+from services import visual_identity as visual_identity_service
 from services.notifications import send_apply_confirmation_email, send_apply_notice_to_superadmin
 
 
@@ -305,3 +320,151 @@ def superadmin_negocios_reinviar(business_id):
             platform_service.invitation_lifetime_hours(),
         )
     return redirect(f"/superadmin/negocios/{business_id}?message=Nueva invitación generada.")
+
+
+def _visual_identity_form_context(business_id, *, message="", error=""):
+    """Contexto común de la vista de identidad visual de un negocio."""
+    business = platform_service.get_business_by_id_platform(business_id)
+    if business is None:
+        abort(404)
+    config, locked = visual_identity_service.load_identity(business_id)
+    return {
+        "business": business,
+        "config": config,
+        "locked_options": locked,
+        "presets": preset_names(),
+        "fonts": list(ALLOWED_FONTS),
+        "color_keys": list(COLOR_KEYS),
+        "media_keys": list(MEDIA_KEYS),
+        "lockable_options": list(LOCKABLE_OPTIONS),
+        "default_preset": DEFAULT_PRESET,
+        "preview_url": f"/b/{business['slug']}",
+        "message": message,
+        "error": error,
+    }
+
+
+def superadmin_visual_identity():
+    """Lista los negocios con su preset y color primario vigente."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    user, _ = _platform_current_user()
+    rows = []
+    for business in platform_service.list_businesses_for_platform():
+        config, locked = visual_identity_service.load_identity(business["id"])
+        rows.append(
+            {
+                "id": business["id"],
+                "name": business["name"],
+                "slug": business["slug"],
+                "preset": config.get("theme_preset", DEFAULT_PRESET),
+                "primary_color": config.get("primary_color", ""),
+                "locked_count": len(locked),
+            }
+        )
+    return render_template(
+        "superadmin.html",
+        superadmin=user,
+        section="visual_identity",
+        identity_rows=rows,
+        message=request.args.get("message", ""),
+        error=request.args.get("error", ""),
+    )
+
+
+def superadmin_visual_identity_detail(business_id):
+    """Formulario de edición de identidad visual de un negocio."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    user, _ = _platform_current_user()
+    context = _visual_identity_form_context(
+        business_id,
+        message=request.args.get("message", ""),
+        error=request.args.get("error", ""),
+    )
+    return render_template(
+        "superadmin.html", superadmin=user, section="visual_identity_detail", **context
+    )
+
+
+def superadmin_visual_identity_save(business_id):
+    """Guarda la config visual completa (el Super Admin no está limitado por locks)."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    config = {key: request.form.get(key, "") for key in CONFIG_KEYS}
+    result = visual_identity_service.save_identity(
+        business_id, config, actor=user["email"], enforce_locks=False
+    )
+    if not result["success"]:
+        detail = result.get("violations") or result.get("errors") or []
+        reason = result["reason"]
+        if detail:
+            reason = f"{reason}: " + "; ".join(detail)
+        return redirect(f"/superadmin/identidad/{business_id}?error={reason}")
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "visual_identity_updated",
+        f"Identidad visual guardada (preset: {result['config'].get('theme_preset')})",
+        get_client_ip(),
+    )
+    return redirect(f"/superadmin/identidad/{business_id}?message=Identidad visual guardada.")
+
+
+def superadmin_visual_identity_preset(business_id):
+    """Aplica un preset completo conservando la media cargada."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    preset = (request.form.get("theme_preset", "") or "").strip().lower()
+    result = visual_identity_service.apply_preset(
+        business_id, preset, actor=user["email"], enforce_locks=False
+    )
+    if not result["success"]:
+        return redirect(
+            f"/superadmin/identidad/{business_id}?error=No se pudo aplicar el preset ({preset})."
+        )
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "visual_identity_preset",
+        f"Preset visual aplicado: {preset}",
+        get_client_ip(),
+    )
+    return redirect(f"/superadmin/identidad/{business_id}?message=Preset aplicado correctamente.")
+
+
+def superadmin_visual_identity_locks(business_id):
+    """Define las opciones que el tenant no podrá editar (locked_options)."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    locked = request.form.getlist("locked_options")
+    result = visual_identity_service.save_locked_options(business_id, locked)
+    if not result["success"]:
+        return redirect(
+            f"/superadmin/identidad/{business_id}?error=No se pudieron guardar los bloqueos."
+        )
+    platform_service.log_platform_action(
+        user["id"],
+        user["email"],
+        business_id,
+        "visual_identity_locks_updated",
+        f"Bloqueos actualizados ({len(result['locked_options'])} opciones)",
+        get_client_ip(),
+    )
+    return redirect(f"/superadmin/identidad/{business_id}?message=Bloqueos actualizados.")

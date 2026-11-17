@@ -243,6 +243,9 @@ def inject_business_settings():
     settings = (
         _load_seam("get_business_settings_scoped")(business_id) if business_id is not None else None
     )
+    from application.media import rewrite_external_logo_url
+
+    raw_logo = _settings_value(settings, "logo_url", "")
     return {
         "business_settings": settings,
         "business_name": _settings_value(settings, "business_name", "Mi negocio"),
@@ -250,7 +253,9 @@ def inject_business_settings():
         "business_initials": _settings_value(settings, "business_initials", ""),
         "business_description": _settings_value(settings, "business_description", ""),
         "timezone": _settings_value(settings, "timezone", "UTC"),
-        "logo_url": _settings_value(settings, "logo_url", ""),
+        "logo_url": raw_logo,
+        # Variante apta para CSP: URLs externas heredadas pasan por el proxy.
+        "logo_url_display": rewrite_external_logo_url(raw_logo) or "",
         "primary_color": _settings_value(settings, "primary_color", ""),
         "secondary_color": _settings_value(settings, "secondary_color", ""),
     }

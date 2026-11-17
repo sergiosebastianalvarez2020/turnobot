@@ -25,6 +25,21 @@ from application.requests import contact_limit_response, register_form_render
 from routes.booking_abuse import enforce_public_booking_abuse_checks
 
 
+def _public_frontend_config_for(business_id):
+    """Config pública del negocio combinando settings legacy + identidad visual."""
+    import app as application
+    from services import visual_identity
+
+    settings = (
+        application.get_business_settings_scoped(business_id)
+        if business_id is not None
+        else application.get_business_settings()
+    )
+    return application.build_public_frontend_config(
+        visual_identity.effective_public_settings(business_id, settings)
+    )
+
+
 def index():
     """Landing comercial de TurnoBot.
 
@@ -37,18 +52,13 @@ def index():
         import app as application
 
         business_id = g.business_id
-        settings = (
-            application.get_business_settings_scoped(business_id)
-            if business_id is not None
-            else application.get_business_settings()
-        )
         services = application.get_active_services_scoped(business_id) if business_id else []
         return render_template(
             "landing.html",
             business=business,
             services=services,
             api_prefix=f"/b/{business['slug']}",
-            public_frontend_config=application.build_public_frontend_config(settings),
+            public_frontend_config=_public_frontend_config_for(business_id),
         )
     return render_template("marketing_home.html")
 
@@ -71,16 +81,10 @@ def business_index(slug):
         abort(404)
 
     business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
-
     return render_template(
         "landing.html",
         business=business,
-        public_frontend_config=application.build_public_frontend_config(settings),
+        public_frontend_config=_public_frontend_config_for(business_id),
         api_prefix=f"/b/{slug}",
     )
 
@@ -101,11 +105,6 @@ def business_reservar_wizard(slug):
         abort(404)
 
     business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
     services = application.get_active_services_scoped(business_id) if business_id else []
 
     return render_template(
@@ -113,7 +112,7 @@ def business_reservar_wizard(slug):
         business=business,
         services=services,
         step=1,
-        public_frontend_config=application.build_public_frontend_config(settings),
+        public_frontend_config=_public_frontend_config_for(business_id),
     )
 
 
@@ -133,12 +132,6 @@ def business_reservar_wizard_fecha(slug):
         abort(404)
 
     business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
-
     # Servicio seleccionado viene como query param
     servicio = request.args.get("servicio", "").strip()
     services = application.get_active_services_scoped(business_id) if business_id else []
@@ -152,7 +145,7 @@ def business_reservar_wizard_fecha(slug):
             services=services,
             step=1,
             error="Seleccioná un servicio para continuar.",
-            public_frontend_config=application.build_public_frontend_config(settings),
+            public_frontend_config=_public_frontend_config_for(business_id),
         )
 
     return render_template(
@@ -161,7 +154,7 @@ def business_reservar_wizard_fecha(slug):
         services=services,
         selected_service=selected_service,
         step=2,
-        public_frontend_config=application.build_public_frontend_config(settings),
+        public_frontend_config=_public_frontend_config_for(business_id),
     )
 
 
@@ -181,12 +174,6 @@ def business_reservar_wizard_datos(slug):
         abort(404)
 
     business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
-
     # Parámetros del paso anterior
     servicio = request.args.get("servicio", "").strip()
     fecha = request.args.get("fecha", "").strip()
@@ -204,7 +191,7 @@ def business_reservar_wizard_datos(slug):
             services=services,
             step=2,
             error="Seleccioná fecha y horario para continuar.",
-            public_frontend_config=application.build_public_frontend_config(settings),
+            public_frontend_config=_public_frontend_config_for(business_id),
         )
 
     # Honeypot: nombre de campo aleatorio por render para evitar detección fácil.
@@ -232,7 +219,7 @@ def business_reservar_wizard_datos(slug):
         idempotency_key=secrets.token_urlsafe(24),
         honeypot_field=honeypot_field,
         form_rendered_at=form_rendered_at,
-        public_frontend_config=application.build_public_frontend_config(settings),
+        public_frontend_config=_public_frontend_config_for(business_id),
     )
 
 
@@ -257,12 +244,6 @@ def business_reservar_wizard_confirmar(slug):
         abort(404)
 
     business_id = application.get_current_business_id()
-    settings = (
-        application.get_business_settings_scoped(business_id)
-        if business_id is not None
-        else application.get_business_settings()
-    )
-
     if request.method == "POST":
         data = json_object()
         if data is None:
@@ -495,5 +476,5 @@ def business_reservar_wizard_confirmar(slug):
         step=4,
         honeypot_field=f"hp_{secrets.token_urlsafe(8)}",
         form_rendered_at=register_form_render(),
-        public_frontend_config=application.build_public_frontend_config(settings),
+        public_frontend_config=_public_frontend_config_for(business_id),
     )

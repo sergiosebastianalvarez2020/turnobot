@@ -31,6 +31,7 @@ EXPECTED_TABLES = {
     "business_settings",
     "business_users",
     "businesses",
+    "business_visual_identity",
     "conversation_analytics",
     "conversation_messages",
     "conversation_sessions",

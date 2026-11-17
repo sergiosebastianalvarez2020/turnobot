@@ -33,15 +33,17 @@ import secrets
 
 from flask import abort, g, jsonify, render_template, request, session
 
+from application.frontend import build_public_frontend_config
 from application.requests import contact_limit_response
 from database.database import (
     ensure_loyalty_settings_scoped,
     get_active_services_scoped,
+    get_business_settings_scoped,
     get_resource_scoped,
     get_resources_scoped,
 )
 from routes.booking_abuse import enforce_public_booking_abuse_checks
-from services import loyalty
+from services import loyalty, visual_identity
 from services.appointments import (
     cancel_appointment,
     create_appointment,
@@ -988,6 +990,11 @@ def public_manage_turno(slug, token):
     if business_id is None:
         abort(404)
 
+    settings = get_business_settings_scoped(business_id)
+    frontend_config = build_public_frontend_config(
+        visual_identity.effective_public_settings(business_id, settings)
+    )
+
     appointment_id = request.args.get("id") or (
         request.form.get("id") or request.view_args.get("id")
     )
@@ -1003,6 +1010,7 @@ def public_manage_turno(slug, token):
             appointment=None,
             error="El enlace no es válido o el turno no existe.",
             message=None,
+            public_frontend_config=frontend_config,
         ), 404
 
     appointment = get_appointment_by_token(appointment_id, business_id, token)
@@ -1015,6 +1023,7 @@ def public_manage_turno(slug, token):
             appointment=None,
             error="El enlace no es válido o el turno no existe.",
             message=None,
+            public_frontend_config=frontend_config,
         ), 404
 
     error = None
@@ -1084,6 +1093,7 @@ def public_manage_turno(slug, token):
         error=error,
         message=message,
         loyalty=_loyalty_public_context(business_id, appointment),
+        public_frontend_config=frontend_config,
     )
 
 

@@ -15,7 +15,19 @@ from flask import abort, g, redirect, render_template, request, session, url_for
 from application.public_urls import public_url
 from extensions import valid_csrf_token
 from services import platform as platform_service
+from services import visual_identity
 from services.notifications import send_staff_invitation_email
+
+
+def _invitation_frontend_config(business_id):
+    """Config pública (branding + identidad visual) para las páginas de invitación."""
+    from application.frontend import build_public_frontend_config
+    from database.database import get_business_settings_scoped
+
+    settings = get_business_settings_scoped(business_id) if business_id is not None else {}
+    return build_public_frontend_config(
+        visual_identity.effective_public_settings(business_id, settings)
+    )
 
 
 def staff_invitation(slug, token):
@@ -27,7 +39,10 @@ def staff_invitation(slug, token):
     invitation = platform_service.get_staff_invitation_for_business(business["id"], token)
     if invitation is None:
         return render_template(
-            "staff_invitation.html", business_name=business["name"], invalid=True
+            "staff_invitation.html",
+            business_name=business["name"],
+            invalid=True,
+            public_frontend_config=_invitation_frontend_config(business["id"]),
         ), 404
 
     if request.method == "GET":
@@ -37,6 +52,7 @@ def staff_invitation(slug, token):
             invitation=invitation,
             error=None,
             invalid=False,
+            public_frontend_config=_invitation_frontend_config(business["id"]),
         )
 
     if not valid_csrf_token(request.form.get("csrf_token")):
@@ -51,6 +67,7 @@ def staff_invitation(slug, token):
             invitation=invitation,
             error="Las contraseñas no coinciden.",
             invalid=False,
+            public_frontend_config=_invitation_frontend_config(business["id"]),
         ), 200
 
     result = platform_service.accept_staff_invitation(business["id"], token, password)
@@ -65,6 +82,7 @@ def staff_invitation(slug, token):
             invitation=invitation,
             error=error,
             invalid=False,
+            public_frontend_config=_invitation_frontend_config(business["id"]),
         ), 200
 
     return redirect(url_for("login_slug", slug=business["slug"]))
@@ -78,11 +96,21 @@ def public_invitation(slug, token):
     business_id = business["id"]
     invitation = platform_service.get_invitation_for_business(business_id, token)
     if invitation is None:
-        return render_template("invitacion.html", business=business, invalid=True), 404
+        return render_template(
+            "invitacion.html",
+            business=business,
+            invalid=True,
+            public_frontend_config=_invitation_frontend_config(business_id),
+        ), 404
 
     if request.method == "GET":
         return render_template(
-            "invitacion.html", business=business, invitation=invitation, error=None, invalid=False
+            "invitacion.html",
+            business=business,
+            invitation=invitation,
+            error=None,
+            invalid=False,
+            public_frontend_config=_invitation_frontend_config(business_id),
         )
 
     # POST: validar token antes que CSRF para que token vencido/usado devuelva 404
@@ -98,6 +126,7 @@ def public_invitation(slug, token):
             business=business,
             invitation=invitation,
             error="Las contraseñas no coinciden.",
+            public_frontend_config=_invitation_frontend_config(business_id),
         ), 200
 
     result = platform_service.accept_invitation(business_id, token, password)
@@ -109,7 +138,11 @@ def public_invitation(slug, token):
         else:
             error = "No se pudo aceptar la invitación."
         return render_template(
-            "invitacion.html", business=business, invitation=invitation, error=error
+            "invitacion.html",
+            business=business,
+            invitation=invitation,
+            error=error,
+            public_frontend_config=_invitation_frontend_config(business_id),
         ), 200
 
     return redirect(f"/b/{business['slug']}/login")

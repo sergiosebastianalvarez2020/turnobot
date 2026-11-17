@@ -4,13 +4,20 @@
 
 
 
+{% set theme = public_frontend_config.get('theme', {}) %}
+{% set allowed_fonts = ['DM Sans', 'Arial', 'Georgia', 'Verdana'] %}
+{% set safe_font = theme.get('font_family', 'DM Sans') %}
+{% if safe_font not in allowed_fonts %}
+    {% set safe_font = 'DM Sans' %}
+{% endif %}
+
 <head>
 
     <meta charset="UTF-8">
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta name="theme-color" content="#1463FF">
+    <meta name="theme-color" content="{{ theme.get('primary', '#1463FF') }}">
 
     <title>{{ public_frontend_config.business.name }} | {{ public_frontend_config.business.type }}</title>
 
@@ -34,18 +41,6 @@
 
 
 
-{% set theme = public_frontend_config.get('theme', {}) %}
-
-{% set allowed_fonts = ['DM Sans', 'Arial', 'Georgia', 'Verdana'] %}
-
-{% set safe_font = theme.get('font_family', 'DM Sans') %}
-
-{% if safe_font not in allowed_fonts %}
-
-    {% set safe_font = 'DM Sans' %}
-
-{% endif %}
-
 <body
 
     data-timezone="{{ public_frontend_config.business.timezone }}"
@@ -54,7 +49,7 @@
 
     data-api-prefix="{{ api_prefix|e }}"
 
-    style="--primary: {{ theme.get('primary', '#1463FF')|e }}; --primary-deep: {{ theme.get('secondary', '#0B1B3A')|e }}; --bg: {{ theme.get('background', '#EAF4FF')|e }}; --text: {{ theme.get('text', '#102A56')|e }}; --font-family: '{{ safe_font|e }}';"
+    style="--primary: {{ theme.get('primary', '#1463FF')|e }}; --primary-dark: {{ theme.get('primary_dark', '#0757E8')|e }}; --primary-hover: {{ theme.get('primary_hover', '#0757E8')|e }}; --primary-light: {{ theme.get('primary_light', '#3B82F6')|e }}; --primary-rgb: {{ theme.get('primary_rgb', '20, 99, 255')|e }}; --primary-deep: {{ theme.get('secondary', '#0B1B3A')|e }}; --bg: {{ theme.get('background', '#EAF4FF')|e }}; --surface: {{ theme.get('surface', '#FFFFFF')|e }}; --text: {{ theme.get('text', '#102A56')|e }}; --text-secondary: {{ theme.get('text_secondary', '#4A6590')|e }}; --border: {{ theme.get('border', '#C9DDF8')|e }}; --blue-border: {{ theme.get('blue_border', '#C9DDF8')|e }}; --font-family: '{{ safe_font|e }}';"
 
 >
 

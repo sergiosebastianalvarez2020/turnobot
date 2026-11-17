@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Vista previa — {{ business_name }}</title><link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}"><style>
+.devices { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+.device { border: 1px solid #d9d9d9; border-radius: 12px; padding: 8px; background: #f5f5f5; }
+.device p { margin: 4px 0 8px; font-size: 12px; font-weight: 600; color: #444; }
+.device iframe { border: 1px solid #ccc; background: #fff; border-radius: 8px; }
+.device--desktop iframe { width: 1280px; max-width: 100%; height: 800px; }
+.device--tablet iframe { width: 768px; max-width: 100%; height: 900px; }
+.device--mobile iframe { width: 375px; max-width: 100%; height: 720px; }
+.preview-back { display: inline-block; margin-bottom: 16px; }
+</style></head>
+<body><main class="main-content" id="main-content">
+<a class="preview-back" href="javascript:history.back()">&larr; Volver al panel</a>
+<h1>Vista previa</h1>
+<p>Estos iframes renderizan la landing del negocio con la config del borrador (no se guardó nada).</p>
+<div class="devices">
+    <div class="device device--desktop"><p>Desktop (1280)</p><iframe src="{{ frame_url }}" title="Vista previa desktop" loading="lazy"></iframe></div>
+    <div class="device device--tablet"><p>Tablet (768)</p><iframe src="{{ frame_url }}" title="Vista previa tablet" loading="lazy"></iframe></div>
+    <div class="device device--mobile"><p>Mobile (375)</p><iframe src="{{ frame_url }}" title="Vista previa mobile" loading="lazy"></iframe></div>
+</div>
+</main></body></html>

@@ -6,10 +6,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ public_frontend_config.business.name }} - Reservar turno</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% set theme = public_frontend_config.get('theme', {}) %}
     <style>
         :root {
-            --primary: {{ public_frontend_config.branding.primary_color }};
-            --primary-deep: {{ public_frontend_config.branding.secondary_color }};
+            --primary: {{ theme.get('primary', '#1463FF')|e }};
+            --primary-dark: {{ theme.get('primary_dark', '#0757E8')|e }};
+            --primary-hover: {{ theme.get('primary_hover', '#0757E8')|e }};
+            --primary-light: {{ theme.get('primary_light', '#3B82F6')|e }};
+            --primary-rgb: {{ theme.get('primary_rgb', '20, 99, 255')|e }};
+            --primary-deep: {{ theme.get('secondary', '#0B1B3A')|e }};
+            --bg: {{ theme.get('background', '#EAF4FF')|e }};
+            --surface: {{ theme.get('surface', '#FFFFFF')|e }};
+            --text: {{ theme.get('text', '#102A56')|e }};
+            --text-secondary: {{ theme.get('text_secondary', '#4A6590')|e }};
+            --border: {{ theme.get('border', '#C9DDF8')|e }};
+            --blue-border: {{ theme.get('blue_border', '#C9DDF8')|e }};
+            --font-family: '{{ (theme.get('font_family', 'DM Sans') if theme.get('font_family', 'DM Sans') in ['DM Sans', 'Arial', 'Georgia', 'Verdana'] else 'DM Sans')|e }}';
         }
 
         .wizard-container {

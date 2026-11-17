@@ -47,6 +47,19 @@ def get_current_business_id():
     return business["id"] if business else None
 
 
+def _login_frontend_config():
+    """Config pública (branding + identidad visual) para la página de login."""
+    from application.frontend import build_public_frontend_config
+    from database.database import get_business_settings_scoped
+    from services import visual_identity
+
+    business_id = get_current_business_id()
+    settings = get_business_settings_scoped(business_id) if business_id is not None else {}
+    return build_public_frontend_config(
+        visual_identity.effective_public_settings(business_id, settings)
+    )
+
+
 def _login_url():
     business_id = get_current_business_id()
     if business_id == 1:
@@ -187,13 +200,21 @@ def login():
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
             return render_template(
-                "login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."
+                "login.html",
+                error=True,
+                error_message="La sesión expiró. Intentá nuevamente.",
+                public_frontend_config=_login_frontend_config(),
             ), 400
         user_id, error = _authenticate_login(
             g.current_business, request.form.get("email", ""), request.form.get("password", "")
         )
         if user_id is None:
-            return render_template("login.html", error=True, error_message=error), (
+            return render_template(
+                "login.html",
+                error=True,
+                error_message=error,
+                public_frontend_config=_login_frontend_config(),
+            ), (
                 429 if error == "Demasiados intentos. Esperá unos minutos." else 200
             )
         _establish_session(user_id)
@@ -201,7 +222,7 @@ def login():
 
     if session.get("user_id"):
         return redirect(url_for("admin"))
-    return render_template("login.html", error=False)
+    return render_template("login.html", error=False, public_frontend_config=_login_frontend_config())
 
 
 def login_slug(slug):
@@ -212,13 +233,21 @@ def login_slug(slug):
     if request.method == "POST":
         if not valid_csrf_token(request.form.get("csrf_token")):
             return render_template(
-                "login.html", error=True, error_message="La sesión expiró. Intentá nuevamente."
+                "login.html",
+                error=True,
+                error_message="La sesión expiró. Intentá nuevamente.",
+                public_frontend_config=_login_frontend_config(),
             ), 400
         user_id, error = _authenticate_login(
             business, request.form.get("email", ""), request.form.get("password", "")
         )
         if user_id is None:
-            return render_template("login.html", error=True, error_message=error), (
+            return render_template(
+                "login.html",
+                error=True,
+                error_message=error,
+                public_frontend_config=_login_frontend_config(),
+            ), (
                 429 if error == "Demasiados intentos. Esperá unos minutos." else 200
             )
         _establish_session(user_id)
@@ -226,7 +255,7 @@ def login_slug(slug):
 
     if session.get("user_id"):
         return redirect(url_for("admin_slug", slug=business["slug"]))
-    return render_template("login.html", error=False)
+    return render_template("login.html", error=False, public_frontend_config=_login_frontend_config())
 
 
 def logout():

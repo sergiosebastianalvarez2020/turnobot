@@ -13,6 +13,11 @@ from routes.superadmin import (
     superadmin_negocios_detalle,
     superadmin_negocios_reinviar,
     superadmin_panel,
+    superadmin_visual_identity,
+    superadmin_visual_identity_detail,
+    superadmin_visual_identity_locks,
+    superadmin_visual_identity_preset,
+    superadmin_visual_identity_save,
 )
 
 
@@ -78,5 +83,35 @@ def register(app):
         "/superadmin/negocios/<int:business_id>/reinviar",
         endpoint="superadmin_negocios_reinviar",
         view_func=superadmin_negocios_reinviar,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/identidad",
+        endpoint="superadmin_visual_identity",
+        view_func=superadmin_visual_identity,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/superadmin/identidad/<int:business_id>",
+        endpoint="superadmin_visual_identity_detail",
+        view_func=superadmin_visual_identity_detail,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/superadmin/identidad/<int:business_id>/guardar",
+        endpoint="superadmin_visual_identity_save",
+        view_func=superadmin_visual_identity_save,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/identidad/<int:business_id>/preset",
+        endpoint="superadmin_visual_identity_preset",
+        view_func=superadmin_visual_identity_preset,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/identidad/<int:business_id>/bloqueos",
+        endpoint="superadmin_visual_identity_locks",
+        view_func=superadmin_visual_identity_locks,
         methods=["POST"],
     )

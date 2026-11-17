@@ -17,6 +17,7 @@ from werkzeug.security import generate_password_hash
 
 from application.requests import _human_reschedule_error
 from application.security import _is_json_request, _json_error
+from application.themes import ALLOWED_FONTS, CONFIG_KEYS, preset_names
 from database.database import (
     create_resource_scoped,
     create_service_scoped,
@@ -48,7 +49,7 @@ from routes.auth import (
     _login_url,
     get_current_business_id,
 )
-from services import loyalty, memberships, metrics, product
+from services import loyalty, memberships, metrics, product, visual_identity
 from services.appointments import (
     create_appointment,
     get_appointment_counts,
@@ -156,6 +157,32 @@ def _business_identity(business_id):
         settings["business_initials"] if settings and settings["business_initials"] else ""
     )
     return business_name, business_initials
+
+
+def _visual_form_config():
+    """Extrae la config visual del formulario (allowlist CONFIG_KEYS)."""
+    return {key: request.form.get(key, "") for key in CONFIG_KEYS}
+
+
+def _get_visual_draft(business_id):
+    """Devuelve la config del draft de vista previa de ESTE negocio o None.
+
+    El draft vive en la sesión del admin y nunca se persiste; además está
+    anclado al business_id del panel actual (aislamiento entre tenants).
+    """
+    draft = session.get("visual_draft")
+    if not isinstance(draft, dict) or draft.get("business_id") != business_id:
+        return None
+    config = draft.get("config")
+    return config if isinstance(config, dict) else None
+
+
+def _identidad_url(endpoint, **kwargs):
+    """URL de un endpoint de identidad visual, con prefijo de slug si aplica."""
+    business = getattr(g, "current_business", None)
+    if business is not None and business.get("id") != 1:
+        return url_for(endpoint, slug=business["slug"], **kwargs)
+    return url_for(endpoint, **kwargs)
 
 
 def _admin_url(**kwargs):
@@ -282,6 +309,7 @@ def _render_admin():
         and memberships.can_manage_memberships(actor_user_id, business_id)
     )
     weekly_schedule = get_all_weekly_schedules_scoped(business_id) if business_id else []
+    visual_config, visual_locked = visual_identity.load_identity(business_id)
     appointments_list = get_appointments(
         status=status,
         appointment_date=appointment_date,
@@ -301,6 +329,13 @@ def _render_admin():
         weekly_schedule=weekly_schedule,
         config_message=request.args.get("config_message", ""),
         config_error=request.args.get("config_error", ""),
+        identidad_message=request.args.get("identidad_message", ""),
+        identidad_error=request.args.get("identidad_error", ""),
+        visual_config=visual_config,
+        visual_locked=visual_locked,
+        visual_presets=preset_names(),
+        visual_fonts=list(ALLOWED_FONTS),
+        visual_has_draft=_get_visual_draft(business_id) is not None,
         services=services,
         resources=get_resources_scoped(business_id),
         resource_message=request.args.get("resource_message", ""),
@@ -485,6 +520,117 @@ def admin_update_business_settings(slug=None):
 
     return redirect(
         _admin_url(config_message="La configuración del negocio se guardó correctamente.")
+    )
+
+
+def admin_visual_identity_save(slug=None):
+    """Guarda la identidad visual del tenant (respeta locks del Super Admin)."""
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    result = visual_identity.save_identity(
+        business_id, _visual_form_config(), enforce_locks=True
+    )
+    if not result["success"]:
+        detail = result.get("violations") or result.get("errors") or []
+        reason = result["reason"]
+        if detail:
+            reason = f"{reason}: " + "; ".join(detail)
+        return redirect(
+            _admin_url(identidad_error=f"No se pudo guardar la identidad visual ({reason}).")
+        )
+    return redirect(_admin_url(identidad_message="La identidad visual se guardó correctamente."))
+
+
+def admin_visual_identity_preset(slug=None):
+    """Aplica un preset conservando media cargada y respetando locks."""
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    preset = (request.form.get("theme_preset", "") or "").strip().lower()
+    result = visual_identity.apply_preset(business_id, preset, enforce_locks=True)
+    if not result["success"]:
+        return redirect(_admin_url(identidad_error=f"No se pudo aplicar el preset ({preset})."))
+    return redirect(_admin_url(identidad_message=f"Preset {preset} aplicado correctamente."))
+
+
+def admin_visual_identity_preview(slug=None):
+    """Crea el draft de vista previa en la sesión (nunca se persiste)."""
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    normalized, errors = visual_identity.validate_config(_visual_form_config())
+    if errors:
+        return redirect(
+            _admin_url(identidad_error="Vista previa no válida: " + "; ".join(errors))
+        )
+    session["visual_draft"] = {"business_id": business_id, "config": normalized}
+    return redirect(_identidad_url("admin_visual_identity_preview_page"))
+
+
+def admin_visual_identity_preview_page(slug=None):
+    """Página de vista previa con iframes desktop / tablet / mobile."""
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+    if _get_visual_draft(business_id) is None:
+        return redirect(
+            _admin_url(
+                identidad_error="No hay vista previa activa. Ajustá los valores y presioná Vista previa."
+            )
+        )
+    frame_url = _identidad_url("admin_visual_identity_preview_frame")
+    return render_template(
+        "admin_visual_preview.html",
+        frame_url=frame_url,
+        business_name=getattr(g, "current_business", {}).get("name", "Mi negocio")
+        if isinstance(getattr(g, "current_business", None), dict)
+        else "Mi negocio",
+    )
+
+
+def admin_visual_identity_preview_frame(slug=None):
+    """Renderiza la landing con la config del draft (solo lectura, sin persistir)."""
+    import app as application
+
+    denied = _require_admin_membership()
+    if denied:
+        return denied
+    business = g.current_business
+    business_id = get_current_business_id()
+    if business is None or business_id is None:
+        abort(404)
+    draft = _get_visual_draft(business_id)
+    if draft is None:
+        return "No hay vista previa activa.", 404
+    settings = get_business_settings_scoped(business_id)
+    merged = visual_identity.effective_public_settings(business_id, settings)
+    for key in CONFIG_KEYS:
+        merged[key] = draft.get(key, merged.get(key, ""))
+    return render_template(
+        "landing.html",
+        business=business,
+        public_frontend_config=application.build_public_frontend_config(merged),
+        api_prefix=f"/b/{business['slug']}",
+        visual_preview=True,
     )
 
 

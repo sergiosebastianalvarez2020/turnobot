@@ -13,7 +13,7 @@ con `sys.executable -c` y verifica, en ese proceso aislado:
     2. `app` NO está en sys.modules en ningún momento (ni antes ni después).
     3. `create_app()` se ejecuta sin errores.
     4. Se obtiene una instancia Flask válida.
-    5. El URL map tiene 136 rules / 103 endpoints.
+    5. El URL map tiene 153 rules / 115 endpoints.
     6. Los endpoints canónicos existen y sus URLs son las esperadas.
     7. Hooks, context processors, CSRF, error handlers y security headers
        siguen enganchados.
@@ -301,8 +301,8 @@ class StandaloneCreateAppTests(unittest.TestCase):
         # Identidad con el mapa de la fachada y con el contrato histórico
         self.assertEqual(payload["rules"], self._expectations["rules"])
         self.assertEqual(payload["endpoints"], self._expectations["endpoints"])
-        self.assertEqual(payload["rules"], 136)
-        self.assertEqual(payload["endpoints"], 103)
+        self.assertEqual(payload["rules"], 153)
+        self.assertEqual(payload["endpoints"], 115)
         # Fingerprint completo del conjunto de rutas
         self.assertTrue(payload["has_rule_fingerprint"])
 

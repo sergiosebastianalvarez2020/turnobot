@@ -19,7 +19,7 @@
 </head>
 
 
-<body{% set bs = business_settings %}{% if bs %} style="{% if bs['primary_color'] %}--tb-primary: {{ bs['primary_color'] }}; --tb-primary-hover: color-mix(in srgb, {{ bs['primary_color'] }} 85%, #000);{% endif %}{% if bs['secondary_color'] %} --tb-secondary: {{ bs['secondary_color'] }};{% endif %}{% if bs['logo_url'] %} --brand-logo-url: url('{{ bs['logo_url'] }}');{% endif %}"{% endif %}>
+<body{% set bs = business_settings %}{% if bs %} style="{% if bs['primary_color'] %}--tb-primary: {{ bs['primary_color'] }}; --tb-primary-hover: color-mix(in srgb, {{ bs['primary_color'] }} 85%, #000);{% endif %}{% if bs['secondary_color'] %} --tb-secondary: {{ bs['secondary_color'] }};{% endif %}{% if logo_url_display %} --brand-logo-url: url('{{ logo_url_display }}');{% endif %}"{% endif %}>
 
     <a class="skip-link" href="#main-content">Saltar al contenido</a>
 
@@ -557,6 +557,117 @@
                         <button type="submit" class="refresh-button">Guardar configuración</button>
                     </div>
                 </form>
+
+            </section>
+
+            <section class="settings-card" id="identidad">
+
+                <div class="section-header">
+                    <div>
+                        <h3>Identidad visual</h3>
+                        <p>Temas, colores, tipografía e imágenes del sitio público.</p>
+                    </div>
+                </div>
+
+                {% if identidad_message %}
+                <div class="settings-feedback settings-success" role="status">{{ identidad_message }}</div>
+                {% endif %}
+
+                {% if identidad_error %}
+                <div class="settings-feedback settings-error" role="alert">{{ identidad_error }}</div>
+                {% endif %}
+
+                {% set identidad_color_labels = {
+                    'primary_color': 'Color primario',
+                    'secondary_color': 'Color secundario',
+                    'page_background_color': 'Fondo de página',
+                    'page_text_color': 'Texto de página',
+                    'button_bg_color': 'Fondo de botón',
+                    'button_text_color': 'Texto de botón'
+                } %}
+                {% set identidad_media_labels = {
+                    'logo_url': 'Logo (URL o /media/...)',
+                    'favicon_url': 'Favicon (URL o /media/...)',
+                    'cover_image_url': 'Imagen de portada (URL o /media/...)',
+                    'header_bg_image_url': 'Fondo de cabecera (URL o /media/...)'
+                } %}
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/preset" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <h4 class="settings-subheading">Preset</h4>
+                    <label>
+                        Tema base
+                        <select name="theme_preset">
+                            {% for preset in visual_presets %}
+                            <option value="{{ preset }}" {% if preset == visual_config.theme_preset %}selected{% endif %}>{{ preset }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <p class="settings-hint">
+                        El preset reemplaza paleta y tipografía; conserva el logo e imágenes ya cargadas.
+                    </p>
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Aplicar preset</button>
+                    </div>
+                </form>
+
+                <hr class="settings-divider">
+
+                <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/guardar" class="settings-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <h4 class="settings-subheading">Colores</h4>
+                    {% for key, label in identidad_color_labels.items() %}
+                    <label>
+                        {{ label }}
+                        <input type="color" name="{{ key }}" value="{{ visual_config[key] }}"
+                               {% if key in visual_locked %}disabled{% endif %}>
+                    </label>
+                    {% if key in visual_locked %}<p class="settings-hint settings-error">Bloqueado por el Super Admin.</p>{% endif %}
+                    {% endfor %}
+
+                    <h4 class="settings-subheading">Tipografía y detalles</h4>
+                    <label>
+                        Tipografía
+                        <select name="font_family" {% if 'font_family' in visual_locked %}disabled{% endif %}>
+                            {% for font in visual_fonts %}
+                            <option value="{{ font }}" {% if font == visual_config.font_family %}selected{% endif %}>{{ font }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label>
+                        Opacidad de overlay (0–1)
+                        <input type="number" name="header_overlay_opacity" min="0" max="1" step="0.05"
+                               value="{{ visual_config.header_overlay_opacity }}"
+                               {% if 'header_overlay_opacity' in visual_locked %}disabled{% endif %}>
+                    </label>
+
+                    <h4 class="settings-subheading">Imágenes</h4>
+                    {% for key, label in identidad_media_labels.items() %}
+                    <label class="settings-wide">
+                        {{ label }}
+                        <input type="text" name="{{ key }}" value="{{ visual_config[key] }}"
+                               placeholder="/media/... o https://..."
+                               {% if key in visual_locked %}disabled{% endif %}>
+                    </label>
+                    {% endfor %}
+
+                    <p class="settings-hint">
+                        El contraste texto/fondo y botón/etiqueta se verifica contra WCAG ≥ 4.5:1 al guardar.
+                    </p>
+
+                    <div class="settings-actions">
+                        <button type="submit" class="refresh-button">Guardar identidad</button>
+                        <button type="submit" class="refresh-button"
+                                formaction="{{ admin_prefix or '' }}/admin/identidad/preview"
+                                formmethod="post">Vista previa</button>
+                    </div>
+                </form>
+
+                {% if visual_has_draft %}
+                <div class="settings-actions" style="margin-top:12px;">
+                    <a class="refresh-button" href="{{ admin_prefix or '' }}/admin/identidad/preview">Abrir vista previa activa</a>
+                </div>
+                {% endif %}
 
             </section>
 

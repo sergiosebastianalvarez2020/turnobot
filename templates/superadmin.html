@@ -210,6 +210,7 @@
 
     <nav class="menu">
         <a class="menu-link {{ 'active' if (section or 'businesses') == 'businesses' else '' }}" href="/superadmin">Negocios</a>
+        <a class="menu-link {{ 'active' if (section or 'businesses') == 'visual_identity' else '' }}" href="/superadmin/identidad">Identidad visual</a>
         <a class="menu-link {{ 'active' if (section or 'businesses') == 'audit' else '' }}" href="/superadmin/auditoria">Auditoría</a>
     </nav>
 
@@ -410,6 +411,144 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+        {% elif section == 'visual_identity' %}
+        <div class="card">
+            <h2 class="card-title">Identidad visual por negocio</h2>
+            <p class="muted">Gestioná el tema, colores y bloqueos de cada negocio.</p>
+            <table style="margin-top:14px;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Slug</th>
+                        <th>Preset</th>
+                        <th>Primario</th>
+                        <th>Bloqueos</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in identity_rows %}
+                    <tr>
+                        <td>{{ row["id"] }}</td>
+                        <td>{{ row["name"] }}</td>
+                        <td>{{ row["slug"] }}</td>
+                        <td>{{ row["preset"] }}</td>
+                        <td>
+                            <span style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;background:{{ row['primary_color'] }};"></span>
+                            {{ row["primary_color"] }}
+                        </td>
+                        <td>{{ row["locked_count"] }}</td>
+                        <td>
+                            <a class="btn btn-light" href="/superadmin/identidad/{{ row['id'] }}">Editar</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="muted">No hay negocios.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif section == 'visual_identity_detail' %}
+        {% set color_labels = {
+            'primary_color': 'Color primario',
+            'secondary_color': 'Color secundario',
+            'page_background_color': 'Fondo de página',
+            'page_text_color': 'Texto de página',
+            'button_bg_color': 'Fondo de botón',
+            'button_text_color': 'Texto de botón'
+        } %}
+        {% set media_labels = {
+            'logo_url': 'Logo (URL o /media/...)',
+            'favicon_url': 'Favicon (URL o /media/...)',
+            'cover_image_url': 'Imagen de portada (URL o /media/...)',
+            'header_bg_image_url': 'Fondo de cabecera (URL o /media/...)'
+        } %}
+        <div class="card">
+            <h2 class="card-title">Identidad visual — {{ business["name"] }} <span class="muted">/b/{{ business["slug"] }}</span></h2>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+                <a class="btn btn-light" href="/b/{{ business['slug'] }}">Ver sitio público</a>
+                <a class="btn btn-light" href="/superadmin/negocios/{{ business['id'] }}">Volver al negocio</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Aplicar preset</h2>
+            <p class="muted">Reemplaza la paleta y tipografía; conserva el logo y las imágenes ya cargadas.</p>
+            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/preset" class="form-inline" style="margin-top:12px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="field">
+                    <label for="theme_preset">Preset</label>
+                    <select id="theme_preset" name="theme_preset">
+                        {% for preset in presets %}
+                        <option value="{{ preset }}" {{ 'selected' if preset == config.get('theme_preset') else '' }}>{{ preset }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Aplicar preset</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Configuración visual</h2>
+            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/guardar">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-inline" style="margin-bottom:14px;">
+                    {% for key in color_keys %}
+                    <div class="field" style="max-width:200px;">
+                        <label for="{{ key }}">{{ color_labels[key] }}</label>
+                        <input type="color" id="{{ key }}" name="{{ key }}" value="{{ config.get(key, '#000000') }}">
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="form-inline" style="margin-bottom:14px;">
+                    <div class="field">
+                        <label for="font_family">Tipografía</label>
+                        <select id="font_family" name="font_family">
+                            {% for font in fonts %}
+                            <option value="{{ font }}" {{ 'selected' if font == config.get('font_family') else '' }}>{{ font }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="field" style="max-width:220px;">
+                        <label for="header_overlay_opacity">Opacidad de overlay (0–1)</label>
+                        <input type="number" id="header_overlay_opacity" name="header_overlay_opacity"
+                               min="0" max="1" step="0.05" value="{{ config.get('header_overlay_opacity', 0.55) }}">
+                    </div>
+                </div>
+                <div class="form-inline" style="margin-bottom:18px;">
+                    {% for key in media_keys %}
+                    <div class="field">
+                        <label for="{{ key }}">{{ media_labels[key] }}</label>
+                        <input type="text" id="{{ key }}" name="{{ key }}" value="{{ config.get(key, '') }}"
+                               placeholder="/media/... o https://...">
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="muted" style="margin-bottom:12px;">
+                    El contraste texto/fondo y botón/etiqueta se verifica contra WCAG ≥ 4.5:1 al guardar.
+                </p>
+                <button type="submit" class="btn btn-primary">Guardar configuración</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Opciones bloqueadas para el negocio</h2>
+            <p class="muted">Los campos bloqueados no podrán ser editados por el tenant.</p>
+            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/bloqueos">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:8px; margin:12px 0 18px;">
+                    {% for option in lockable_options %}
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#EAF4FF;">
+                        <input type="checkbox" name="locked_options" value="{{ option }}"
+                               {{ 'checked' if option in locked_options else '' }}>
+                        {{ option }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="btn btn-primary">Guardar bloqueos</button>
+            </form>
         </div>
         {% elif section == 'audit' %}
         <div class="card">
