@@ -19,7 +19,7 @@ import time
 import pytest
 
 import services.appointments as appointments
-from database.database import acquire_business_write_lock
+from database.database import acquire_business_write_lock, business_lock_key
 from tests_pg._helpers import connect_autocommit, make_pg_proxy, seed_confirmed_appointment
 
 CANCEL_DATE = "2026-10-01"
@@ -63,9 +63,10 @@ def test_advisory_lock_serializa_conexiones_reales(pg_pool, pg_test_database):
             proxy_b.close()
 
     def try_lock() -> bool:
+        combined = business_lock_key(business_id, lock_key)
         with connect_autocommit(pg_test_database) as probe:
             row = probe.execute(
-                "SELECT pg_try_advisory_xact_lock(%s, %s)", (business_id, lock_key)
+                "SELECT pg_try_advisory_xact_lock(%s::bigint)", (combined,)
             ).fetchone()
         return bool(row[0])
 

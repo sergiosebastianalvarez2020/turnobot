@@ -131,6 +131,62 @@ def contact_lock_ordinal(contact_value):
     return _CONTACT_LOCK_NAMESPACE | (int.from_bytes(digest, "big") & _CONTACT_LOCK_MASK)
 
 
+# Espacio de claves del advisory lock de ESCRITURA por negocio (PostgreSQL).
+#
+# `pg_advisory_xact_lock` existe en DOS espacios de claves INDEPENDIENTES que no
+# se solapan:
+#   * `pg_advisory_xact_lock(bigint)`        -> un único entero de 64 bits.
+#   * `pg_advisory_xact_lock(int4, int4)`    -> un par de enteros de 32 bits.
+# La variante de dos argumentos exige que AMBOS valores entren en int4 con
+# signo ([-2^31, 2^31-1]). Un `lock_key` como 3_000_000_001 no tiene promoción
+# implícita a int4 y la resolución de la función falla con
+# "function pg_advisory_xact_lock(integer, bigint) does not exist". Por eso se
+# usa la variante de UN bigint con un empaquetado determinista y SIN hashing.
+#
+# Rango admitido:
+#   business_id in [1, 2^30)     (ids IDENTITY; 2^30 ~ 1.07e9, inalcanzable)
+#   lock_key    in [-2^31, 2^32) (cubre int4 con signo y claves > 2^31)
+#
+# Empaquetado biyectivo sobre ese dominio (por lo tanto SIN colisiones):
+#   lk_code  = lock_key + 2^31                  -> [0, 3*2^31)   (33 bits)
+#   combined = (business_id << 33) | lk_code     -> [0, 2^63)     (int8+)
+# `business_id` ocupa los bits altos y `lk_code` los 33 bits bajos, así que dos
+# pares (business_id, lock_key) distintos NUNCA producen la misma clave. El
+# máximo (2^30-1)<<33 | (3*2^31-1) = 2^63 - 2^31 - 1 entra en bigint con signo.
+#
+# El único otro usuario del espacio de 1 argumento es el lock de bootstrap de
+# schema (``_PG_SCHEMA_BOOTSTRAP_LOCK``, una constante fija de 64 bits). A lo
+# sumo un par (business_id, lock_key) podría coincidir con ella y entonces una
+# escritura esperaría a que termine el bootstrap/migración: agrega serialización
+# durante el arranque, nunca rompe el aislamiento entre negocios.
+_LOCK_KEY_OFFSET = 1 << 31
+_LOCK_KEY_MIN = -(1 << 31)
+_LOCK_KEY_MAX_EXCL = 1 << 32
+_LOCK_KEY_BITS = 33
+_BUSINESS_ID_MAX_EXCL = 1 << 30
+
+
+def business_lock_key(business_id, lock_key):
+    """Empaqueta ``(business_id, lock_key)`` en la clave bigint del advisory lock.
+
+    Determinista, sin hashing y biyectiva sobre el dominio admitido (ver el
+    comentario de ``acquire_business_write_lock``), de modo que no puede haber
+    colisiones entre pares que deban estar aislados. Se expone para que las
+    pruebas y los diagnósticos usen EXACTAMENTE la misma clave que producción.
+    """
+    try:
+        business_id = int(business_id)
+        lock_key = int(lock_key)
+    except (TypeError, ValueError):
+        raise ValueError("business_id y lock_key deben ser enteros") from None
+    if not 1 <= business_id < _BUSINESS_ID_MAX_EXCL:
+        raise ValueError("business_id fuera del rango admitido para el advisory lock")
+    if not _LOCK_KEY_MIN <= lock_key < _LOCK_KEY_MAX_EXCL:
+        raise ValueError("lock_key fuera del rango admitido para el advisory lock")
+    lk_code = lock_key + _LOCK_KEY_OFFSET
+    return (business_id << _LOCK_KEY_BITS) | lk_code
+
+
 def acquire_business_write_lock(connection, business_id, lock_key=0):
     """Serializa escrituras por negocio+clave cuando el backend es PostgreSQL.
 
@@ -139,19 +195,18 @@ def acquire_business_write_lock(connection, business_id, lock_key=0):
     check-then-act (solapamiento de turnos, saldo de puntos, idempotencia).
     Este hook toma un advisory xact lock de PostgreSQL por ``(business_id,
     lock_key)`` sobre la MISMA conexión: las transacciones del mismo negocio y
-    clave se ejecutan en serie SIN bloquear a otros tenants (classid distinto).
-    En SQLite es un no-op.
+    clave se ejecutan en serie SIN bloquear a otros tenants. En SQLite es un
+    no-op.
+
+    Se usa la variante de UN bigint (``pg_advisory_xact_lock(bigint)``) con la
+    clave combinada de :func:`business_lock_key`; así se admite cualquier
+    ``lock_key`` del rango documentado (incluido 3_000_000_001) sin depender de
+    la firma int4 de dos argumentos. El lock se libera en COMMIT/ROLLBACK.
     """
     if get_backend() != "postgresql":
         return
-    try:
-        business_id = int(business_id)
-        lock_key = int(lock_key)
-    except (TypeError, ValueError):
-        raise ValueError("business_id y lock_key deben ser enteros") from None
-    if business_id <= 0:
-        raise ValueError("business_id inválido para lock de escritura por negocio")
-    connection.execute("SELECT pg_advisory_xact_lock(?, ?)", (business_id, lock_key))
+    combined = business_lock_key(business_id, lock_key)
+    connection.execute("SELECT pg_advisory_xact_lock(?::bigint)", (combined,))
 
 
 # ============================================================

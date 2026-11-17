@@ -174,7 +174,36 @@ class TestBusinessWriteLock(unittest.TestCase):
     def test_advisory_lock_se_ejecuta_en_postgresql(self):
         fake_conn = mock.MagicMock()
         database.acquire_business_write_lock(fake_conn, 7, 123)
-        fake_conn.execute.assert_called_once_with("SELECT pg_advisory_xact_lock(?, ?)", (7, 123))
+        expected = database.business_lock_key(7, 123)
+        fake_conn.execute.assert_called_once_with(
+            "SELECT pg_advisory_xact_lock(?::bigint)", (expected,)
+        )
+
+    def test_advisory_lock_admite_lock_key_mayor_a_int4(self):
+        fake_conn = mock.MagicMock()
+        database.acquire_business_write_lock(fake_conn, 7, 3_000_000_001)
+        expected = database.business_lock_key(7, 3_000_000_001)
+        fake_conn.execute.assert_called_once_with(
+            "SELECT pg_advisory_xact_lock(?::bigint)", (expected,)
+        )
+
+    def test_business_lock_key_es_inyectiva(self):
+        claves = [
+            database.business_lock_key(business_id, lock_key)
+            for business_id in (1, 2, 7)
+            for lock_key in (-(1 << 31), -530_001, 0, 739_600, 2_000_000_000, 3_000_000_001)
+        ]
+        self.assertEqual(len(claves), len(set(claves)))
+        for clave in claves:
+            self.assertLess(clave, 1 << 63)
+
+    def test_business_lock_key_rechaza_fuera_de_rango(self):
+        with self.assertRaises(ValueError):
+            database.business_lock_key(0, 1)
+        with self.assertRaises(ValueError):
+            database.business_lock_key(1, 1 << 32)
+        with self.assertRaises(ValueError):
+            database.business_lock_key(1, -(1 << 31) - 1)
 
     def test_advisory_lock_valida_business_id(self):
         with self.assertRaises(ValueError):
@@ -188,10 +217,10 @@ class TestBusinessWriteLock(unittest.TestCase):
 
     def test_adapt_advisory_lock_placeholders(self):
         sql, params = pg_pool.adapt_query_for_postgres(
-            "SELECT pg_advisory_xact_lock(?, ?)", (7, 123)
+            "SELECT pg_advisory_xact_lock(?::bigint)", (7,)
         )
-        self.assertEqual(sql, "SELECT pg_advisory_xact_lock(%s, %s)")
-        self.assertEqual(params, (7, 123))
+        self.assertEqual(sql, "SELECT pg_advisory_xact_lock(%s::bigint)")
+        self.assertEqual(params, (7,))
 
 
 class TestLoyaltyRaceGuards(unittest.TestCase):
