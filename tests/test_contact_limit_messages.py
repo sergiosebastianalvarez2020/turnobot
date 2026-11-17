@@ -60,7 +60,11 @@ class _BaseCupo(PostgreSQLTestCase):
                 slots = appointments.get_available_slots(
                     candidato.isoformat(), self.BUSINESS_ID, service="Corte"
                 )
-                if slots:
+                # Se necesitan MAX_ACTIVE_BOOKINGS_PER_CONTACT slots para llenar el
+                # cupo y al menos uno más para intentar la reserva que debe fallar
+                # (los sábados tienen pocos slots: sin este filtro el test dependía
+                # del día de la semana en que se ejecutara).
+                if len(slots) > appointments.MAX_ACTIVE_BOOKINGS_PER_CONTACT:
                     dias.append((candidato.isoformat(), slots))
                     if len(dias) == cantidad:
                         break
