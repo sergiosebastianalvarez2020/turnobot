@@ -61,6 +61,26 @@ class TestAdminVisualIdentity(unittest.TestCase):
         data.update(extra or {})
         return self.client.post(f"/b/{SLUG}/{path}", data=data)
 
+    def _post_general_config(self, extra=None):
+        page = self._admin_page()
+        data = {
+            "csrf_token": _csrf_from(page),
+            "business_name": "AV Biz",
+            "business_type": "Barbería",
+            "business_initials": "AV",
+            "business_description": "Test",
+            "timezone": "UTC",
+            "slot_duration": "60",
+            "break_between_slots": "0",
+            "notifications_enabled": "1",
+            "notification_email": "",
+            "logo_url": "",
+            "primary_color": "",
+            "secondary_color": "",
+        }
+        data.update(extra or {})
+        return self.client.post(f"/b/{SLUG}/admin/configuracion", data=data)
+
     # ---- editor ------------------------------------------------------------
 
     def test_editor_section_visible(self):
@@ -84,6 +104,51 @@ class TestAdminVisualIdentity(unittest.TestCase):
             f"ningún input primary_color está disabled: {matches}",
         )
 
+    def test_editor_muestra_muestras_grandes_y_hex(self):
+        page = self._admin_page()
+        for key in (
+            "primary_color",
+            "secondary_color",
+            "page_background_color",
+            "page_text_color",
+            "button_bg_color",
+            "button_text_color",
+        ):
+            self.assertIn(f'data-vi-color-field data-key="{key}"', page.text)
+        self.assertEqual(page.text.count("data-vi-color-field"), 6)
+        self.assertEqual(page.text.count('class="vi-color-hex"'), 6)
+        self.assertIn("vi-color-hex", page.text)
+        self.assertIn("vi-swatch", page.text)
+
+    def test_editor_muestra_paleta_completa_y_superficie_derivada(self):
+        page = self._admin_page()
+        for key in (
+            "primary_color",
+            "secondary_color",
+            "page_background_color",
+            "surface",
+            "page_text_color",
+        ):
+            self.assertIn(f'data-vi-palette-item="{key}"', page.text)
+        self.assertIn("Superficie", page.text)
+        self.assertIn("Derivado", page.text)
+
+    def test_presets_muestran_paleta_antes_de_aplicar(self):
+        page = self._admin_page()
+        self.assertEqual(len(re.findall(r'class="vi-preset-card"', page.text)), 8)
+        self.assertIn('data-preset-name="premium"', page.text)
+        self.assertIn('data-primary-color="#4C1D95"', page.text)
+        self.assertIn('data-font-family="Poppins"', page.text)
+        self.assertIn("Aplicar preset", page.text)
+
+    def test_vista_previa_en_vivo_presente_y_sin_autoguardado(self):
+        page = self._admin_page()
+        self.assertIn("data-vi-preview", page.text)
+        self.assertIn("vi-preview-button", page.text)
+        self.assertIn("vi-preview-card", page.text)
+        self.assertIn("vi-preview-highlight", page.text)
+        self.assertIn("Se actualiza en vivo y nunca guarda cambios", page.text)
+
     def test_responsive_css_y_bottom_nav_no_tapan_acciones(self):
         root = Path(__file__).resolve().parent.parent
         identity_css = (root / "static" / "visual_identity.css").read_text(encoding="utf-8")
@@ -97,6 +162,34 @@ class TestAdminVisualIdentity(unittest.TestCase):
         )
         page = self._admin_page()
         self.assertIn('name="viewport"', page.text)
+
+    def test_configuracion_general_no_duplica_controles_de_color(self):
+        page = self._admin_page()
+        config_section = page.text.split('id="configuracion"', 1)[1].split('id="identidad"', 1)[0]
+        self.assertIn('type="hidden" name="primary_color"', config_section)
+        self.assertIn('type="hidden" name="secondary_color"', config_section)
+        self.assertNotIn('type="color" name="primary_color"', config_section)
+        self.assertIn('href="#identidad"', config_section)
+
+    def test_configuracion_general_no_pisa_colores_de_identidad(self):
+        vi.save_identity(
+            self.business_id, {"primary_color": "#0F766E", "secondary_color": "#134E4A"}
+        )
+        resp = self._post_general_config({"primary_color": "#AA0000", "secondary_color": "#111111"})
+        self.assertEqual(resp.status_code, 302)
+        config, _locked = vi.load_identity(self.business_id)
+        self.assertEqual(config["primary_color"], "#0F766E")
+        self.assertEqual(config["secondary_color"], "#134E4A")
+        c = get_connection()
+        try:
+            row = c.execute(
+                "SELECT primary_color, secondary_color FROM business_settings WHERE business_id = ?",
+                (self.business_id,),
+            ).fetchone()
+        finally:
+            c.close()
+        self.assertEqual(row["primary_color"], "#0F766E")
+        self.assertEqual(row["secondary_color"], "#134E4A")
 
     # ---- guardar -----------------------------------------------------------
 
@@ -212,6 +305,14 @@ class TestAdminVisualIdentity(unittest.TestCase):
             sess["visual_draft"] = {"business_id": other_id, "config": {"primary_color": "#123456"}}
         frame = self.client.get(f"/b/{SLUG}/admin/identidad/preview-frame")
         self.assertEqual(frame.status_code, 404)
+
+    def test_colores_aislados_por_negocio(self):
+        vi.save_identity(self.business_id, {"primary_color": "#0F766E"})
+        other_id = _provision(slug="test-av-colors", email="owner3@test-av.com")
+        own, _ = vi.load_identity(self.business_id)
+        other, _ = vi.load_identity(other_id)
+        self.assertEqual(own["primary_color"], "#0F766E")
+        self.assertEqual(other["primary_color"], "#1463FF")
 
     # ---- seguridad ---------------------------------------------------------
 

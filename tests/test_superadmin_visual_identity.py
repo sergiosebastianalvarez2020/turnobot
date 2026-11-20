@@ -94,6 +94,31 @@ class TestSuperadminVisualIdentity(unittest.TestCase):
         self.assertIn('name="locked_options"', resp.text)
         self.assertIn("minimalista", resp.text)
 
+    def test_detalle_muestra_muestras_hex_paleta_y_preview(self):
+        resp = self.client.get(f"/superadmin/identidad/{self.business_id}")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.text.count("data-vi-color-field"), 6)
+        self.assertEqual(resp.text.count('class="vi-color-hex"'), 6)
+        for key in (
+            "primary_color",
+            "secondary_color",
+            "page_background_color",
+            "surface",
+            "page_text_color",
+        ):
+            self.assertIn(f'data-vi-palette-item="{key}"', resp.text)
+        self.assertIn("data-vi-preview", resp.text)
+        self.assertIn("vi-preview-button", resp.text)
+        self.assertIn("visual_identity.css", resp.text)
+        self.assertIn("visual_identity.js", resp.text)
+
+    def test_detalle_muestra_presets_con_paleta_completa(self):
+        resp = self.client.get(f"/superadmin/identidad/{self.business_id}")
+        self.assertEqual(len(re.findall(r'class="vi-preset-card"', resp.text)), 8)
+        self.assertIn('data-preset-name="premium"', resp.text)
+        self.assertIn('data-primary-color="#4C1D95"', resp.text)
+        self.assertIn("Aplicar preset", resp.text)
+
     def test_detalle_404(self):
         resp = self.client.get("/superadmin/identidad/999999")
         self.assertEqual(resp.status_code, 404)
