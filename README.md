@@ -178,10 +178,13 @@ python scripts/backup_postgresql.py
 
 Coverage includes multi-tenant isolation, booking/cancellation/rescheduling with management tokens and contact limits, rate limiting, security, AI tooling, email, knowledge base FTS, loyalty/redemptions/retention, metrics, conversations/handoff, and PostgreSQL backup tooling.
 
+Visual tests also run **axe-core 4.14.1** (MPL-2.0) from the local asset `static/vendor/axe.min.js` (license in `static/vendor/AXE_LICENSE.txt`); no CDN and no extra Python dependency. Reports are written to `tests/visual/results/axe/` (git-ignored) with `axeVersion`, `route`, `viewport`, `timestamp`, `violations`, `incomplete` and `passesCount`. Mode is **WARN**: pre-existing violations are reported but do not fail the suite. CI publishes them as the `axe-reports` artifact.
+
 ```bash
 python -m pytest              # full suite with coverage (default via pyproject.toml)
 python -m pytest tests/test_observability.py tests/test_conversations.py -v
 python -m pytest --no-cov     # faster, no coverage
+python -m pytest tests/visual/ -v --tb=short -m no_pg   # visual + axe (WARN mode)
 ```
 
 **Known pre-existing failures (Windows only):** two symlink tests (`test_admin_panel.py::TestAdminAJAX::test_admin_reschedule_returns_json`, `test_prune_backups.py::...symlink_is_preserved_not_deleted`) — see `AGENTS.md`.

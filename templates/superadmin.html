@@ -6,6 +6,8 @@
     <title>TurnoBot Platform - Superadmin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='visual_identity.css') }}">
+    <script defer src="{{ url_for('static', filename='visual_identity.js') }}"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -72,7 +74,7 @@
         .btn:disabled { opacity: .5; cursor: not-allowed; }
 
         nav.menu {
-            display: flex; gap: 8px;
+            display: flex; gap: 8px; flex-wrap: wrap;
             padding: 20px 32px 0;
         }
 
@@ -188,6 +190,32 @@
         .field input:focus, .field select:focus {
             border-color: #1463FF;
             box-shadow: 0 0 0 3px rgba(20,99,255,.15);
+        }
+
+        @media (max-width: 400px) {
+            .topbar {
+                padding: 14px 16px;
+                gap: 10px;
+            }
+
+            .topbar-right {
+                gap: 8px;
+                min-width: 0;
+            }
+
+            .topbar-email {
+                display: none;
+            }
+
+            .brand {
+                min-width: 0;
+            }
+
+            .brand-name {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
         }
     </style>
 </head>
@@ -473,63 +501,202 @@
             </div>
         </div>
 
-        <div class="card">
-            <h2 class="card-title">Aplicar preset</h2>
-            <p class="muted">Reemplaza la paleta y tipografía; conserva el logo y las imágenes ya cargadas.</p>
-            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/preset" class="form-inline" style="margin-top:12px;">
+        <div class="vi-editor vi-editor--dark vi-editor--embedded" data-vi-editor>
+            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/preset"
+                  class="vi-panel" data-vi-preset-form>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="field">
-                    <label for="theme_preset">Preset</label>
-                    <select id="theme_preset" name="theme_preset">
-                        {% for preset in presets %}
-                        <option value="{{ preset }}" {{ 'selected' if preset == config.get('theme_preset') else '' }}>{{ preset }}</option>
-                        {% endfor %}
-                    </select>
+                <h2 class="vi-heading">Aplicar preset</h2>
+                <p class="vi-help">
+                    Reemplaza la paleta y tipografía; conserva el logo y las imágenes ya cargadas.
+                    Revisá la paleta y la vista previa antes de aplicar.
+                </p>
+                <div class="vi-preset-grid" role="radiogroup" aria-label="Presets disponibles">
+                    {% for preset in presets_catalog %}
+                    <label class="vi-preset-card"
+                           data-vi-preset
+                           data-preset-name="{{ preset.theme_preset }}"
+                           data-primary-color="{{ preset.primary_color }}"
+                           data-secondary-color="{{ preset.secondary_color }}"
+                           data-page-background-color="{{ preset.page_background_color }}"
+                           data-page-text-color="{{ preset.page_text_color }}"
+                           data-button-bg-color="{{ preset.button_bg_color }}"
+                           data-button-text-color="{{ preset.button_text_color }}"
+                           data-font-family="{{ preset.font_family }}">
+                        <input class="vi-preset-radio" type="radio" name="theme_preset"
+                               value="{{ preset.theme_preset }}"
+                               {{ 'checked' if preset.theme_preset == config.get('theme_preset') else '' }}>
+                        <span class="vi-preset-name">{{ preset.theme_preset }}</span>
+                        <span class="vi-preset-swatches" aria-hidden="true">
+                            <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.primary_color }}"></span>
+                            <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.secondary_color }}"></span>
+                            <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.page_background_color }}"></span>
+                            <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.page_text_color }}"></span>
+                            <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.button_bg_color }}"></span>
+                        </span>
+                        <span class="vi-preset-font">{{ preset.font_family }}</span>
+                    </label>
+                    {% endfor %}
                 </div>
-                <button type="submit" class="btn btn-primary">Aplicar preset</button>
+                <p class="vi-preset-note" data-vi-preset-note role="status" aria-live="polite"></p>
+                <div class="vi-actions">
+                    <button type="submit" class="vi-button vi-button--primary">Aplicar preset</button>
+                </div>
             </form>
-        </div>
 
-        <div class="card">
-            <h2 class="card-title">Configuración visual</h2>
-            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/guardar">
+            <form method="POST" action="/superadmin/identidad/{{ business['id'] }}/guardar"
+                  class="vi-panel" data-vi-color-form>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="form-inline" style="margin-bottom:14px;">
+                <h2 class="vi-heading">Configuración visual</h2>
+                <p class="vi-help">
+                    Tocá una muestra para abrir el selector. El HEX y las muestras se actualizan al
+                    instante; el contraste se verifica contra WCAG ≥ 4.5:1 al guardar.
+                </p>
+
+                <div class="vi-color-grid">
                     {% for key in color_keys %}
-                    <div class="field" style="max-width:200px;">
-                        <label for="{{ key }}">{{ color_labels[key] }}</label>
-                        <input type="color" id="{{ key }}" name="{{ key }}" value="{{ config.get(key, '#000000') }}">
+                    <div class="vi-color-field" data-vi-color-field data-key="{{ key }}">
+                        <label class="vi-color-label" for="sa-color-{{ key }}">{{ color_labels[key] }}</label>
+                        <div class="vi-color-control">
+                            <label class="vi-swatch" data-vi-swatch
+                                   style="--vi-swatch: {{ config.get(key, '#000000') }}"
+                                   aria-label="Abrir selector de {{ color_labels[key] }}">
+                                <input type="color"
+                                       id="sa-color-{{ key }}"
+                                       name="{{ key }}"
+                                       value="{{ config.get(key, '#000000') }}"
+                                       class="vi-color-input"
+                                       aria-label="Elegir {{ color_labels[key] }}">
+                            </label>
+                            <input type="text"
+                                   class="vi-color-hex"
+                                   data-vi-hex
+                                   value="{{ config.get(key, '#000000') }}"
+                                   maxlength="7"
+                                   spellcheck="false"
+                                   autocomplete="off"
+                                   pattern="#[0-9A-Fa-f]{6}"
+                                   aria-label="Código HEX de {{ color_labels[key] }}">
+                        </div>
+                        <p class="vi-hex-error" data-vi-hex-error hidden role="alert"></p>
                     </div>
                     {% endfor %}
                 </div>
-                <div class="form-inline" style="margin-bottom:14px;">
-                    <div class="field">
-                        <label for="font_family">Tipografía</label>
-                        <select id="font_family" name="font_family">
+
+                <h2 class="vi-heading">Paleta actual</h2>
+                <p class="vi-help">Todas las muestras de un vistazo, con su código HEX.</p>
+                <div class="vi-palette" data-vi-palette>
+                    <div class="vi-palette-item" data-vi-palette-item="primary_color">
+                        <span class="vi-palette-swatch" data-vi-palette-swatch
+                              style="--vi-swatch: {{ config.get('primary_color', '#1463FF') }}"></span>
+                        <span class="vi-palette-copy">
+                            <strong>Primario</strong>
+                            <code data-vi-palette-hex>{{ config.get('primary_color', '#1463FF') }}</code>
+                        </span>
+                    </div>
+                    <div class="vi-palette-item" data-vi-palette-item="secondary_color">
+                        <span class="vi-palette-swatch" data-vi-palette-swatch
+                              style="--vi-swatch: {{ config.get('secondary_color', '#0B1B3A') }}"></span>
+                        <span class="vi-palette-copy">
+                            <strong>Secundario</strong>
+                            <code data-vi-palette-hex>{{ config.get('secondary_color', '#0B1B3A') }}</code>
+                        </span>
+                    </div>
+                    <div class="vi-palette-item" data-vi-palette-item="page_background_color">
+                        <span class="vi-palette-swatch" data-vi-palette-swatch
+                              style="--vi-swatch: {{ config.get('page_background_color', '#EAF4FF') }}"></span>
+                        <span class="vi-palette-copy">
+                            <strong>Fondo</strong>
+                            <code data-vi-palette-hex>{{ config.get('page_background_color', '#EAF4FF') }}</code>
+                        </span>
+                    </div>
+                    <div class="vi-palette-item" data-vi-palette-item="surface">
+                        <span class="vi-palette-swatch" data-vi-palette-swatch
+                              style="--vi-swatch: {{ palette.surface }}"></span>
+                        <span class="vi-palette-copy">
+                            <strong>Superficie</strong>
+                            <code data-vi-palette-hex>{{ palette.surface }}</code>
+                            <span class="vi-palette-badge">Derivado</span>
+                        </span>
+                    </div>
+                    <div class="vi-palette-item" data-vi-palette-item="page_text_color">
+                        <span class="vi-palette-swatch" data-vi-palette-swatch
+                              style="--vi-swatch: {{ config.get('page_text_color', '#102A56') }}"></span>
+                        <span class="vi-palette-copy">
+                            <strong>Texto</strong>
+                            <code data-vi-palette-hex>{{ config.get('page_text_color', '#102A56') }}</code>
+                        </span>
+                    </div>
+                </div>
+
+                <h2 class="vi-heading">Tipografía y detalles</h2>
+                <div class="vi-options">
+                    <label class="vi-field">
+                        Tipografía
+                        <select id="font_family" name="font_family" data-vi-font>
                             {% for font in fonts %}
                             <option value="{{ font }}" {{ 'selected' if font == config.get('font_family') else '' }}>{{ font }}</option>
                             {% endfor %}
                         </select>
-                    </div>
-                    <div class="field" style="max-width:220px;">
-                        <label for="header_overlay_opacity">Opacidad de overlay (0–1)</label>
+                    </label>
+                    <label class="vi-field">
+                        Opacidad de overlay (0–1)
                         <input type="number" id="header_overlay_opacity" name="header_overlay_opacity"
                                min="0" max="1" step="0.05" value="{{ config.get('header_overlay_opacity', 0.55) }}">
-                    </div>
+                    </label>
                 </div>
-                <div class="form-inline" style="margin-bottom:18px;">
+
+                <h2 class="vi-heading">Imágenes</h2>
+                <div class="vi-media-grid">
                     {% for key in media_keys %}
-                    <div class="field">
-                        <label for="{{ key }}">{{ media_labels[key] }}</label>
+                    <label class="vi-field">
+                        {{ media_labels[key] }}
                         <input type="text" id="{{ key }}" name="{{ key }}" value="{{ config.get(key, '') }}"
                                placeholder="/media/... o https://...">
+                    </label>
+                    {% endfor %}
+                </div>
+
+                <h2 class="vi-heading">Accesibilidad de la paleta</h2>
+                <div class="vi-contrast" aria-live="polite">
+                    {% for pair in contrast_pairs %}
+                    <div class="vi-contrast-item" data-vi-contrast-pair="{{ pair.key }}"
+                         data-state="{{ 'pass' if pair.passes else 'fail' }}">
+                        <span>{{ pair.label }}</span>
+                        <strong data-vi-contrast-value>{{ '%.2f'|format(pair.ratio) }}:1 · {{ 'Cumple' if pair.passes else 'No cumple' }}</strong>
                     </div>
                     {% endfor %}
                 </div>
-                <p class="muted" style="margin-bottom:12px;">
-                    El contraste texto/fondo y botón/etiqueta se verifica contra WCAG ≥ 4.5:1 al guardar.
-                </p>
-                <button type="submit" class="btn btn-primary">Guardar configuración</button>
+
+                <h2 class="vi-heading">Vista previa</h2>
+                <p class="vi-help">Se actualiza en vivo y nunca guarda cambios por sí sola.</p>
+                <div class="vi-preview" data-vi-preview role="img"
+                     aria-label="Vista previa de botones, encabezados, fondos, tarjetas y textos"
+                     style="--vi-primary: {{ config.get('primary_color', '#1463FF') }}; --vi-secondary: {{ config.get('secondary_color', '#0B1B3A') }}; --vi-bg: {{ config.get('page_background_color', '#EAF4FF') }}; --vi-surface: {{ palette.surface }}; --vi-text: {{ config.get('page_text_color', '#102A56') }}; --vi-button-bg: {{ config.get('button_bg_color', '#1463FF') }}; --vi-button-text: {{ config.get('button_text_color', '#FFFFFF') }}; --vi-on-primary: {{ palette.on_primary }}; --vi-on-secondary: {{ palette.on_secondary }}; --vi-font: '{{ config.get('font_family', 'DM Sans') }}', system-ui, sans-serif;">
+                    <div class="vi-preview-top">
+                        <span class="vi-preview-brand">{{ business["name"] }}</span>
+                        <span class="vi-preview-pill">Reserva online</span>
+                    </div>
+                    <div class="vi-preview-body">
+                        <h3 class="vi-preview-title">Reservá tu próximo turno</h3>
+                        <p class="vi-preview-text">
+                            Así se verán el encabezado, el fondo, las tarjetas y los botones
+                            del sitio público.
+                        </p>
+                        <div class="vi-preview-card">
+                            <span class="vi-preview-card-title">Servicio destacado</span>
+                            <p class="vi-preview-text">Elegí día y horario en pocos pasos.</p>
+                            <div class="vi-preview-actions">
+                                <span class="vi-preview-button" aria-hidden="true">Reservar turno</span>
+                                <span class="vi-preview-button vi-preview-button--ghost" aria-hidden="true">Ver horarios</span>
+                            </div>
+                        </div>
+                        <span class="vi-preview-highlight">Elemento destacado</span>
+                    </div>
+                </div>
+
+                <div class="vi-actions">
+                    <button type="submit" class="vi-button vi-button--primary">Guardar configuración</button>
+                </div>
             </form>
         </div>
 

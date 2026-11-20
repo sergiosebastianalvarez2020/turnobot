@@ -183,6 +183,16 @@ def preset_names() -> list[str]:
     return list(THEME_PRESETS.keys())
 
 
+def preset_catalog() -> list[dict]:
+    """Catálogo de presets para la UI (copia de THEME_PRESETS, sin duplicarlos).
+
+    Cada entrada conserva las claves canónicas de configuración para que los
+    templates muestren la paleta completa y el JS previsualice sin mantener
+    una segunda definición de colores.
+    """
+    return [dict(THEME_PRESETS[name]) for name in THEME_PRESETS]
+
+
 def default_config() -> dict:
     """Config visual por defecto de un negocio nuevo (preset moderno)."""
     return get_preset(DEFAULT_PRESET)

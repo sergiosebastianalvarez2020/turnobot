@@ -34,6 +34,7 @@ from application.platform import (
 from application.public_urls import public_url
 from application.rate_limit import is_login_request_allowed
 from application.requests import get_client_ip
+from application.theme_colors import contrast_pairs, palette_summary
 from application.themes import (
     ALLOWED_FONTS,
     COLOR_KEYS,
@@ -41,6 +42,7 @@ from application.themes import (
     DEFAULT_PRESET,
     LOCKABLE_OPTIONS,
     MEDIA_KEYS,
+    preset_catalog,
     preset_names,
 )
 from database.database import (
@@ -333,6 +335,9 @@ def _visual_identity_form_context(business_id, *, message="", error=""):
         "config": config,
         "locked_options": locked,
         "presets": preset_names(),
+        "presets_catalog": preset_catalog(),
+        "palette": palette_summary(config),
+        "contrast_pairs": contrast_pairs(config),
         "fonts": list(ALLOWED_FONTS),
         "color_keys": list(COLOR_KEYS),
         "media_keys": list(MEDIA_KEYS),

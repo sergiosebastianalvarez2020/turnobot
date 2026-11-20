@@ -12,7 +12,7 @@ el import de la factory barato): las rutas se importan dentro de create_app().
 import os
 from datetime import date, datetime
 
-from flask import Flask
+from flask import Flask, send_from_directory
 
 from application.config import build_config
 from application.json_provider import PgAwareJSONProvider
@@ -122,6 +122,11 @@ def create_app():
 
     app.jinja_env.globals["csrf_token"] = csrf_token
     app.jinja_env.globals["fmt_datetime"] = fmt_datetime
+
+    def _favicon():
+        return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
+
+    app.add_url_rule("/favicon.ico", endpoint="favicon", view_func=_favicon, methods=["GET"])
 
     # Registro de blueprints/rutas (import lazy para evitar ciclos)
     from routes import register_blueprints

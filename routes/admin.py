@@ -17,7 +17,8 @@ from werkzeug.security import generate_password_hash
 
 from application.requests import _human_reschedule_error
 from application.security import _is_json_request, _json_error
-from application.themes import ALLOWED_FONTS, CONFIG_KEYS, preset_names
+from application.theme_colors import contrast_pairs, palette_summary
+from application.themes import ALLOWED_FONTS, CONFIG_KEYS, preset_catalog, preset_names
 from database.database import (
     create_resource_scoped,
     create_service_scoped,
@@ -32,6 +33,7 @@ from database.database import (
     get_resource_scoped,
     get_resources_scoped,
     get_user_by_email_scoped,
+    get_visual_identity_scoped,
     list_loyalty_accounts_scoped,
     list_points_ledger_scoped,
     recalculate_all_balances_scoped,
@@ -334,6 +336,9 @@ def _render_admin():
         visual_config=visual_config,
         visual_locked=visual_locked,
         visual_presets=preset_names(),
+        visual_presets_catalog=preset_catalog(),
+        visual_palette=palette_summary(visual_config),
+        visual_contrast_pairs=contrast_pairs(visual_config),
         visual_fonts=list(ALLOWED_FONTS),
         visual_has_draft=_get_visual_draft(business_id) is not None,
         services=services,
@@ -435,6 +440,10 @@ def admin_update_business_settings(slug=None):
     if not valid_csrf_token(request.form.get("csrf_token")):
         return "Solicitud no válida", 400
 
+    business_id = get_current_business_id()
+    if business_id is None:
+        abort(404)
+
     business_name = request.form.get("business_name", "").strip()
     business_type = request.form.get("business_type", "").strip()
     business_initials = request.form.get("business_initials", "").strip()
@@ -445,8 +454,19 @@ def admin_update_business_settings(slug=None):
     slot_duration_raw = request.form.get("slot_duration", "").strip()
     break_between_slots_raw = request.form.get("break_between_slots", "").strip()
     logo_url = request.form.get("logo_url", "").strip()
-    primary_color = request.form.get("primary_color", "").strip()
-    secondary_color = request.form.get("secondary_color", "").strip()
+
+    # La identidad visual es la autoridad de color cuando ya existe una fila.
+    # Ignoramos los valores legacy del formulario general (aunque vengan en
+    # hidden) para que un submit con datos viejos no pise el espejo más
+    # reciente de business_settings. Sin fila de identidad, el formulario
+    # general conserva su comportamiento previo (incluido limpiar con "").
+    submitted_primary = request.form.get("primary_color")
+    submitted_secondary = request.form.get("secondary_color")
+    primary_color = submitted_primary.strip() if submitted_primary is not None else None
+    secondary_color = submitted_secondary.strip() if submitted_secondary is not None else None
+    if get_visual_identity_scoped(business_id) is not None:
+        primary_color = None
+        secondary_color = None
 
     if not business_name or not business_type or not business_initials:
         return redirect(_admin_url(config_error="Nombre, tipo e iniciales son obligatorios."))
@@ -499,9 +519,6 @@ def admin_update_business_settings(slug=None):
         if " " in logo_url:
             return redirect(_admin_url(config_error="El logo no debe contener espacios."))
 
-    business_id = get_current_business_id()
-    if business_id is None:
-        abort(404)
     update_business_settings_scoped(
         business_id,
         business_name,

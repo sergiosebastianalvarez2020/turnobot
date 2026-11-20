@@ -16,6 +16,11 @@
     <link rel="stylesheet"
           href="{{ url_for('static', filename='admin.css') }}">
 
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='visual_identity.css') }}">
+
+    <script defer src="{{ url_for('static', filename='visual_identity.js') }}"></script>
+
 </head>
 
 
@@ -537,20 +542,15 @@
                         URL de la imagen del logo. Se muestra en el sitio público y en los emails.
                     </p>
 
-                    <label>
-                        Color primario
-                        <input type="color" name="primary_color" value="{{ business_settings['primary_color'] if business_settings and business_settings['primary_color'] else '#1463FF' }}">
-                    </label>
-                    <p class="settings-hint">
-                        Color principal de la interfaz y botones.
-                    </p>
+                    <input type="hidden" name="primary_color"
+                           value="{{ business_settings['primary_color'] if business_settings else '' }}">
+                    <input type="hidden" name="secondary_color"
+                           value="{{ business_settings['secondary_color'] if business_settings else '' }}">
 
-                    <label>
-                        Color secundario
-                        <input type="color" name="secondary_color" value="{{ business_settings['secondary_color'] if business_settings and business_settings['secondary_color'] else '#0B1B3A' }}">
-                    </label>
-                    <p class="settings-hint">
-                        Color secundario para acentos y encabezados.
+                    <p class="settings-hint settings-wide">
+                        Los colores y la tipografía se administran en
+                        <a href="#identidad">Identidad visual</a>, la única fuente de
+                        verdad de la paleta del negocio.
                     </p>
 
                     <div class="settings-actions">
@@ -560,11 +560,11 @@
 
             </section>
 
-            <section class="settings-card" id="identidad">
+            <section class="settings-card" id="identidad" aria-labelledby="identidad-title">
 
                 <div class="section-header">
                     <div>
-                        <h3>Identidad visual</h3>
+                        <h3 id="identidad-title">Identidad visual</h3>
                         <p>Temas, colores, tipografía e imágenes del sitio público.</p>
                     </div>
                 </div>
@@ -592,82 +592,227 @@
                     'header_bg_image_url': 'Fondo de cabecera (URL o /media/...)'
                 } %}
 
-                <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/preset" class="settings-form">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <h4 class="settings-subheading">Preset</h4>
-                    <label>
-                        Tema base
-                        <select name="theme_preset">
-                            {% for preset in visual_presets %}
-                            <option value="{{ preset }}" {% if preset == visual_config.theme_preset %}selected{% endif %}>{{ preset }}</option>
+                <div class="vi-editor" data-vi-editor>
+
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/preset"
+                          class="vi-panel" data-vi-preset-form>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <h4 class="vi-heading">Preset</h4>
+                        <p class="vi-help">
+                            Seleccioná una paleta completa y revisala en la vista previa antes de
+                            aplicarla. Al aplicarla se reemplazan colores y tipografía; el logo y las
+                            imágenes cargadas se conservan.
+                        </p>
+                        <div class="vi-preset-grid" role="radiogroup" aria-label="Presets disponibles">
+                            {% for preset in visual_presets_catalog %}
+                            <label class="vi-preset-card"
+                                   data-vi-preset
+                                   data-preset-name="{{ preset.theme_preset }}"
+                                   data-primary-color="{{ preset.primary_color }}"
+                                   data-secondary-color="{{ preset.secondary_color }}"
+                                   data-page-background-color="{{ preset.page_background_color }}"
+                                   data-page-text-color="{{ preset.page_text_color }}"
+                                   data-button-bg-color="{{ preset.button_bg_color }}"
+                                   data-button-text-color="{{ preset.button_text_color }}"
+                                   data-font-family="{{ preset.font_family }}">
+                                <input class="vi-preset-radio" type="radio" name="theme_preset"
+                                       value="{{ preset.theme_preset }}"
+                                       {% if preset.theme_preset == visual_config.theme_preset %}checked{% endif %}>
+                                <span class="vi-preset-name">{{ preset.theme_preset }}</span>
+                                <span class="vi-preset-swatches" aria-hidden="true">
+                                    <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.primary_color }}"></span>
+                                    <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.secondary_color }}"></span>
+                                    <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.page_background_color }}"></span>
+                                    <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.page_text_color }}"></span>
+                                    <span class="vi-preset-swatch" style="--vi-swatch: {{ preset.button_bg_color }}"></span>
+                                </span>
+                                <span class="vi-preset-font">{{ preset.font_family }}</span>
+                            </label>
                             {% endfor %}
-                        </select>
-                    </label>
-                    <p class="settings-hint">
-                        El preset reemplaza paleta y tipografía; conserva el logo e imágenes ya cargadas.
-                    </p>
-                    <div class="settings-actions">
-                        <button type="submit" class="refresh-button">Aplicar preset</button>
-                    </div>
-                </form>
+                        </div>
+                        <p class="vi-preset-note" data-vi-preset-note role="status" aria-live="polite"></p>
+                        <div class="vi-actions">
+                            <button type="submit" class="vi-button vi-button--primary">Aplicar preset</button>
+                        </div>
+                    </form>
 
-                <hr class="settings-divider">
+                    <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/guardar"
+                          class="vi-panel" data-vi-color-form>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <h4 class="vi-heading">Colores</h4>
+                        <p class="vi-help">
+                            Tocá una muestra para abrir el selector. El código HEX y las muestras se
+                            actualizan al instante; los valores se validan antes de guardar.
+                        </p>
 
-                <form method="POST" action="{{ admin_prefix or '' }}/admin/identidad/guardar" class="settings-form">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <h4 class="settings-subheading">Colores</h4>
-                    {% for key, label in identidad_color_labels.items() %}
-                    <label>
-                        {{ label }}
-                        <input type="color" name="{{ key }}" value="{{ visual_config[key] }}"
-                               {% if key in visual_locked %}disabled{% endif %}>
-                    </label>
-                    {% if key in visual_locked %}<p class="settings-hint settings-error">Bloqueado por el Super Admin.</p>{% endif %}
-                    {% endfor %}
-
-                    <h4 class="settings-subheading">Tipografía y detalles</h4>
-                    <label>
-                        Tipografía
-                        <select name="font_family" {% if 'font_family' in visual_locked %}disabled{% endif %}>
-                            {% for font in visual_fonts %}
-                            <option value="{{ font }}" {% if font == visual_config.font_family %}selected{% endif %}>{{ font }}</option>
+                        <div class="vi-color-grid">
+                            {% for key, label in identidad_color_labels.items() %}
+                            <div class="vi-color-field" data-vi-color-field data-key="{{ key }}">
+                                <label class="vi-color-label" for="vi-color-{{ key }}">{{ label }}</label>
+                                <div class="vi-color-control">
+                                    <label class="vi-swatch" data-vi-swatch
+                                           style="--vi-swatch: {{ visual_config[key] }}"
+                                           aria-label="Abrir selector de {{ label }}">
+                                        <input type="color"
+                                               id="vi-color-{{ key }}"
+                                               name="{{ key }}"
+                                               value="{{ visual_config[key] }}"
+                                               class="vi-color-input"
+                                               aria-label="Elegir {{ label }}"
+                                               {% if key in visual_locked %}disabled{% endif %}>
+                                    </label>
+                                    <input type="text"
+                                           class="vi-color-hex"
+                                           data-vi-hex
+                                           value="{{ visual_config[key] }}"
+                                           maxlength="7"
+                                           spellcheck="false"
+                                           autocomplete="off"
+                                           pattern="#[0-9A-Fa-f]{6}"
+                                           aria-label="Código HEX de {{ label }}"
+                                           {% if key in visual_locked %}disabled{% endif %}>
+                                </div>
+                                <p class="vi-hex-error" data-vi-hex-error hidden role="alert"></p>
+                                {% if key in visual_locked %}
+                                <p class="vi-lock-note">Bloqueado por el Super Admin.</p>
+                                {% endif %}
+                            </div>
                             {% endfor %}
-                        </select>
-                    </label>
-                    <label>
-                        Opacidad de overlay (0–1)
-                        <input type="number" name="header_overlay_opacity" min="0" max="1" step="0.05"
-                               value="{{ visual_config.header_overlay_opacity }}"
-                               {% if 'header_overlay_opacity' in visual_locked %}disabled{% endif %}>
-                    </label>
+                        </div>
 
-                    <h4 class="settings-subheading">Imágenes</h4>
-                    {% for key, label in identidad_media_labels.items() %}
-                    <label class="settings-wide">
-                        {{ label }}
-                        <input type="text" name="{{ key }}" value="{{ visual_config[key] }}"
-                               placeholder="/media/... o https://..."
-                               {% if key in visual_locked %}disabled{% endif %}>
-                    </label>
-                    {% endfor %}
+                        <h4 class="vi-heading">Paleta actual</h4>
+                        <p class="vi-help">Todas las muestras de un vistazo, con su código HEX.</p>
+                        <div class="vi-palette" data-vi-palette>
+                            <div class="vi-palette-item" data-vi-palette-item="primary_color">
+                                <span class="vi-palette-swatch" data-vi-palette-swatch
+                                      style="--vi-swatch: {{ visual_config.primary_color }}"></span>
+                                <span class="vi-palette-copy">
+                                    <strong>Primario</strong>
+                                    <code data-vi-palette-hex>{{ visual_config.primary_color }}</code>
+                                </span>
+                            </div>
+                            <div class="vi-palette-item" data-vi-palette-item="secondary_color">
+                                <span class="vi-palette-swatch" data-vi-palette-swatch
+                                      style="--vi-swatch: {{ visual_config.secondary_color }}"></span>
+                                <span class="vi-palette-copy">
+                                    <strong>Secundario</strong>
+                                    <code data-vi-palette-hex>{{ visual_config.secondary_color }}</code>
+                                </span>
+                            </div>
+                            <div class="vi-palette-item" data-vi-palette-item="page_background_color">
+                                <span class="vi-palette-swatch" data-vi-palette-swatch
+                                      style="--vi-swatch: {{ visual_config.page_background_color }}"></span>
+                                <span class="vi-palette-copy">
+                                    <strong>Fondo</strong>
+                                    <code data-vi-palette-hex>{{ visual_config.page_background_color }}</code>
+                                </span>
+                            </div>
+                            <div class="vi-palette-item" data-vi-palette-item="surface">
+                                <span class="vi-palette-swatch" data-vi-palette-swatch
+                                      style="--vi-swatch: {{ visual_palette.surface }}"></span>
+                                <span class="vi-palette-copy">
+                                    <strong>Superficie</strong>
+                                    <code data-vi-palette-hex>{{ visual_palette.surface }}</code>
+                                    <span class="vi-palette-badge">Derivado</span>
+                                </span>
+                            </div>
+                            <div class="vi-palette-item" data-vi-palette-item="page_text_color">
+                                <span class="vi-palette-swatch" data-vi-palette-swatch
+                                      style="--vi-swatch: {{ visual_config.page_text_color }}"></span>
+                                <span class="vi-palette-copy">
+                                    <strong>Texto</strong>
+                                    <code data-vi-palette-hex>{{ visual_config.page_text_color }}</code>
+                                </span>
+                            </div>
+                        </div>
 
-                    <p class="settings-hint">
-                        El contraste texto/fondo y botón/etiqueta se verifica contra WCAG ≥ 4.5:1 al guardar.
-                    </p>
+                        <h4 class="vi-heading">Tipografía y detalles</h4>
+                        <div class="vi-options">
+                            <label class="vi-field">
+                                Tipografía
+                                <select name="font_family" data-vi-font
+                                        {% if 'font_family' in visual_locked %}disabled{% endif %}>
+                                    {% for font in visual_fonts %}
+                                    <option value="{{ font }}" {% if font == visual_config.font_family %}selected{% endif %}>{{ font }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="vi-field">
+                                Opacidad de overlay (0–1)
+                                <input type="number" name="header_overlay_opacity" min="0" max="1" step="0.05"
+                                       value="{{ visual_config.header_overlay_opacity }}"
+                                       {% if 'header_overlay_opacity' in visual_locked %}disabled{% endif %}>
+                            </label>
+                        </div>
 
-                    <div class="settings-actions">
-                        <button type="submit" class="refresh-button">Guardar identidad</button>
-                        <button type="submit" class="refresh-button"
-                                formaction="{{ admin_prefix or '' }}/admin/identidad/preview"
-                                formmethod="post">Vista previa</button>
+                        <h4 class="vi-heading">Imágenes</h4>
+                        <div class="vi-media-grid">
+                            {% for key, label in identidad_media_labels.items() %}
+                            <label class="vi-field">
+                                {{ label }}
+                                <input type="text" name="{{ key }}" value="{{ visual_config[key] }}"
+                                       placeholder="/media/... o https://..."
+                                       {% if key in visual_locked %}disabled{% endif %}>
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <p class="vi-help">
+                            El contraste texto/fondo y botón/etiqueta se verifica contra WCAG ≥ 4.5:1 al guardar.
+                        </p>
+
+                        <h4 class="vi-heading">Accesibilidad de la paleta</h4>
+                        <div class="vi-contrast" aria-live="polite">
+                            {% for pair in visual_contrast_pairs %}
+                            <div class="vi-contrast-item" data-vi-contrast-pair="{{ pair.key }}"
+                                 data-state="{{ 'pass' if pair.passes else 'fail' }}">
+                                <span>{{ pair.label }}</span>
+                                <strong data-vi-contrast-value>{{ '%.2f'|format(pair.ratio) }}:1 · {{ 'Cumple' if pair.passes else 'No cumple' }}</strong>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <h4 class="vi-heading">Vista previa</h4>
+                        <p class="vi-help">Se actualiza en vivo y nunca guarda cambios por sí sola.</p>
+                        <div class="vi-preview" data-vi-preview role="img"
+                             aria-label="Vista previa de botones, encabezados, fondos, tarjetas y textos"
+                             style="--vi-primary: {{ visual_config.primary_color }}; --vi-secondary: {{ visual_config.secondary_color }}; --vi-bg: {{ visual_config.page_background_color }}; --vi-surface: {{ visual_palette.surface }}; --vi-text: {{ visual_config.page_text_color }}; --vi-button-bg: {{ visual_config.button_bg_color }}; --vi-button-text: {{ visual_config.button_text_color }}; --vi-on-primary: {{ visual_palette.on_primary }}; --vi-on-secondary: {{ visual_palette.on_secondary }}; --vi-font: '{{ visual_config.font_family }}', system-ui, sans-serif;">
+                            <div class="vi-preview-top">
+                                <span class="vi-preview-brand">{{ business_name }}</span>
+                                <span class="vi-preview-pill">Reserva online</span>
+                            </div>
+                            <div class="vi-preview-body">
+                                <h5 class="vi-preview-title">Reservá tu próximo turno</h5>
+                                <p class="vi-preview-text">
+                                    Así se verán el encabezado, el fondo, las tarjetas y los botones
+                                    del sitio público.
+                                </p>
+                                <div class="vi-preview-card">
+                                    <span class="vi-preview-card-title">Servicio destacado</span>
+                                    <p class="vi-preview-text">Elegí día y horario en pocos pasos.</p>
+                                    <div class="vi-preview-actions">
+                                        <span class="vi-preview-button" aria-hidden="true">Reservar turno</span>
+                                        <span class="vi-preview-button vi-preview-button--ghost" aria-hidden="true">Ver horarios</span>
+                                    </div>
+                                </div>
+                                <span class="vi-preview-highlight">Elemento destacado</span>
+                            </div>
+                        </div>
+
+                        <div class="vi-actions">
+                            <button type="submit" class="vi-button vi-button--primary">Guardar identidad</button>
+                            <button type="submit" class="vi-button"
+                                    formaction="{{ admin_prefix or '' }}/admin/identidad/preview"
+                                    formmethod="post">Vista previa</button>
+                        </div>
+                    </form>
+
+                    {% if visual_has_draft %}
+                    <div class="vi-actions" style="margin-top:0;">
+                        <a class="vi-button" href="{{ admin_prefix or '' }}/admin/identidad/preview">Abrir vista previa activa</a>
                     </div>
-                </form>
+                    {% endif %}
 
-                {% if visual_has_draft %}
-                <div class="settings-actions" style="margin-top:12px;">
-                    <a class="refresh-button" href="{{ admin_prefix or '' }}/admin/identidad/preview">Abrir vista previa activa</a>
                 </div>
-                {% endif %}
 
             </section>
 

@@ -10,6 +10,7 @@ Cubre:
 
 import re
 import unittest
+from pathlib import Path
 
 import pytest
 
@@ -82,6 +83,20 @@ class TestAdminVisualIdentity(unittest.TestCase):
             any("disabled" in attrs for attrs in matches),
             f"ningún input primary_color está disabled: {matches}",
         )
+
+    def test_responsive_css_y_bottom_nav_no_tapan_acciones(self):
+        root = Path(__file__).resolve().parent.parent
+        identity_css = (root / "static" / "visual_identity.css").read_text(encoding="utf-8")
+        admin_css = (root / "static" / "admin.css").read_text(encoding="utf-8")
+        self.assertIn("flex: 0 0 72px", identity_css)
+        self.assertIn("@media (min-width: 600px)", identity_css)
+        self.assertIn("@media (max-width: 420px)", identity_css)
+        self.assertIn(
+            "padding-bottom: calc(var(--bottom-nav-height) + 16px + env(safe-area-inset-bottom))",
+            admin_css,
+        )
+        page = self._admin_page()
+        self.assertIn('name="viewport"', page.text)
 
     # ---- guardar -----------------------------------------------------------
 

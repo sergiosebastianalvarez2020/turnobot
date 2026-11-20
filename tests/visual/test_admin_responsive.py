@@ -199,17 +199,24 @@ def _capture_browser_issues(page) -> dict:
     issues = {"console": [], "page_errors": [], "request_failures": [], "http_errors": []}
 
     def handle_console(msg):
-        if msg.type() == "error":
-            issues["console"].append({"text": msg.text, "location": msg.location()})
+        if msg.type == "error":
+            # axe.run intenta leer Google Fonts y la CSP (connect-src) lo bloquea;
+            # es ruido de la instrumentación, localizado en el propio axe.min.js.
+            if "fonts.googleapis.com" in msg.text and "Content Security Policy" in msg.text:
+                return
+            issues["console"].append({"text": msg.text, "location": msg.location})
 
     page.on("console", handle_console)
     page.on("pageerror", lambda error: issues["page_errors"].append(str(error)))
-    page.on(
-        "requestfailed",
-        lambda request: issues["request_failures"].append(
-            {"url": request.url, "error": request.failure}
-        ),
-    )
+
+    # axe.run fuerza un recálculo de estilos que puede reintentar Google Fonts;
+    # ese requestfailed por CSP es ruido de la instrumentación, no un fallo de la app.
+    def handle_request_failed(request):
+        if request.failure == "csp" and "fonts.googleapis.com" in request.url:
+            return
+        issues["request_failures"].append({"url": request.url, "error": request.failure})
+
+    page.on("requestfailed", handle_request_failed)
     page.on(
         "response",
         lambda response: (
@@ -450,7 +457,7 @@ def _login_if_needed(page, base_url):
 
 
 @pytest.mark.no_pg
-def test_admin_responsive_visual():
+def test_admin_responsive_visual(axe_scan, axe_asset_available):
     """Test the admin panel responsiveness and visual integrity.
 
     Runs against all three resolutions: desktop, tablet, mobile.
@@ -515,6 +522,9 @@ def test_admin_responsive_visual():
 
                 # Capture screenshot
                 screenshot_path = _capture_screenshot(page, name)
+
+                # axe-core (modo WARN): informe JSON local, sin bloquear el test
+                axe_scan(page, route="/admin", viewport=f"{width}x{height}")
 
                 # Check sidebar is visible (not collapsed off-screen)
                 sidebar_visible = page.evaluate(

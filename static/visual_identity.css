@@ -1,0 +1,661 @@
+/* ============================================================
+   TURNOBOT — CONFIGURADOR DE IDENTIDAD VISUAL
+   Componentes compartidos por admin del negocio y superadmin.
+   ============================================================ */
+
+.vi-editor {
+    --vi-ui-border: #c9ddf8;
+    --vi-ui-panel: #ffffff;
+    --vi-ui-heading: #0b1b3a;
+    --vi-ui-label: #243b63;
+    --vi-ui-help: #3f5c84;
+    --vi-ui-input-bg: #ffffff;
+    --vi-ui-input-text: #0f172a;
+    --vi-ui-focus: #1463ff;
+    --vi-ui-primary-button-bg: #1463ff;
+    --vi-ui-success: #166534;
+    --vi-ui-danger: #b91c1c;
+    --vi-ui-shadow: 0 10px 30px rgba(11, 27, 58, 0.08);
+
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 24px;
+    color: var(--vi-ui-label);
+}
+
+.vi-editor--dark {
+    --vi-ui-border: rgba(148, 163, 184, 0.28);
+    --vi-ui-panel: #0f1c33;
+    --vi-ui-heading: #f1f5f9;
+    --vi-ui-label: #eaf4ff;
+    --vi-ui-help: #a9bcd8;
+    --vi-ui-input-bg: #0b1528;
+    --vi-ui-input-text: #f1f5f9;
+    --vi-ui-focus: #60a5fa;
+    --vi-ui-primary-button-bg: #1d4ed8;
+    --vi-ui-success: #86efac;
+    --vi-ui-danger: #fca5a5;
+    --vi-ui-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
+.vi-editor--embedded {
+    padding: 0;
+    gap: 20px;
+}
+
+.vi-panel {
+    background: var(--vi-ui-panel);
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: var(--vi-ui-shadow);
+    min-width: 0;
+}
+
+.vi-heading {
+    color: var(--vi-ui-heading);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    margin-bottom: 6px;
+}
+
+.vi-help {
+    color: var(--vi-ui-help);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 14px;
+}
+
+.vi-help a {
+    color: var(--vi-ui-focus);
+    font-weight: 700;
+}
+
+.vi-field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    color: var(--vi-ui-label);
+    font-size: 13px;
+    font-weight: 700;
+    min-width: 0;
+}
+
+.vi-field input,
+.vi-field select {
+    width: 100%;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 10px;
+    background: var(--vi-ui-input-bg);
+    color: var(--vi-ui-input-text);
+    font: inherit;
+    font-weight: 500;
+    padding: 11px 12px;
+}
+
+.vi-field input:focus-visible,
+.vi-field select:focus-visible,
+.vi-color-hex:focus-visible {
+    outline: 3px solid var(--vi-ui-focus);
+    outline-offset: 2px;
+}
+
+/* ---- Color pickers ------------------------------------------------ */
+
+.vi-color-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.vi-color-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.vi-color-label {
+    color: var(--vi-ui-label);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.vi-color-control {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    min-width: 0;
+}
+
+.vi-swatch {
+    position: relative;
+    display: block;
+    flex: 0 0 72px;
+    width: 72px;
+    height: 56px;
+    border-radius: 14px;
+    background: var(--vi-swatch, #cccccc);
+    border: 2px solid rgba(15, 23, 42, 0.18);
+    box-shadow:
+        inset 0 0 0 2px rgba(255, 255, 255, 0.55),
+        0 4px 12px rgba(11, 27, 58, 0.12);
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.vi-swatch::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.28), transparent 45%),
+        linear-gradient(0deg, rgba(0, 0, 0, 0.06), transparent 55%);
+    pointer-events: none;
+}
+
+.vi-swatch:focus-within {
+    outline: 3px solid var(--vi-ui-focus);
+    outline-offset: 2px;
+}
+
+.vi-color-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.vi-color-input:disabled {
+    cursor: not-allowed;
+}
+
+.vi-color-field:has(.vi-color-input:disabled) .vi-swatch {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.vi-color-hex {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 10px;
+    background: var(--vi-ui-input-bg);
+    color: var(--vi-ui-input-text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 12px;
+    text-transform: uppercase;
+}
+
+.vi-color-hex[aria-invalid="true"] {
+    border-color: var(--vi-ui-danger);
+    box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.14);
+}
+
+.vi-color-hex:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.vi-hex-error {
+    color: var(--vi-ui-danger);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.vi-lock-note {
+    color: var(--vi-ui-danger);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* ---- Palette overview -------------------------------------------- */
+
+.vi-palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.vi-palette-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 12px;
+    padding: 10px;
+    background: var(--vi-ui-panel);
+}
+
+.vi-palette-swatch {
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--vi-swatch, #cccccc);
+    border: 1px solid rgba(15, 23, 42, 0.18);
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+.vi-palette-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.vi-palette-copy strong {
+    color: var(--vi-ui-label);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.vi-palette-copy code {
+    color: var(--vi-ui-help);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.vi-palette-badge {
+    color: var(--vi-ui-help);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* ---- Presets ------------------------------------------------------ */
+
+.vi-preset-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.vi-preset-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 14px;
+    background: var(--vi-ui-input-bg);
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.vi-preset-card:hover {
+    border-color: var(--vi-ui-focus);
+    transform: translateY(-1px);
+}
+
+.vi-preset-card:has(.vi-preset-radio:checked) {
+    border-color: var(--vi-ui-focus);
+    box-shadow: 0 0 0 3px rgba(20, 99, 255, 0.18);
+}
+
+.vi-preset-card:has(.vi-preset-radio:focus-visible) {
+    outline: 3px solid var(--vi-ui-focus);
+    outline-offset: 2px;
+}
+
+.vi-preset-radio {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.vi-preset-name {
+    color: var(--vi-ui-heading);
+    font-size: 13px;
+    font-weight: 800;
+    text-transform: capitalize;
+}
+
+.vi-preset-swatches {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.vi-preset-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: var(--vi-swatch, #cccccc);
+    border: 1px solid rgba(15, 23, 42, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.vi-preset-font {
+    color: var(--vi-ui-help);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.vi-preset-note {
+    color: var(--vi-ui-help);
+    font-size: 12px;
+    font-weight: 600;
+    min-height: 1.2em;
+    margin-bottom: 12px;
+}
+
+/* ---- Options and actions ----------------------------------------- */
+
+.vi-options,
+.vi-media-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.vi-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.vi-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 10px;
+    background: var(--vi-ui-panel);
+    color: var(--vi-ui-label);
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 16px;
+    text-decoration: none;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.vi-button:hover {
+    border-color: var(--vi-ui-focus);
+    color: var(--vi-ui-focus);
+}
+
+.vi-button--primary {
+    background: var(--vi-ui-primary-button-bg);
+    border-color: var(--vi-ui-primary-button-bg);
+    color: #ffffff;
+}
+
+.vi-button--primary:hover {
+    background: #0b4fd6;
+    border-color: #0b4fd6;
+    color: #ffffff;
+}
+
+.vi-button:focus-visible {
+    outline: 3px solid var(--vi-ui-focus);
+    outline-offset: 2px;
+}
+
+/* ---- Contrast indicators ----------------------------------------- */
+
+.vi-contrast {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin: 4px 0 18px;
+    padding: 12px;
+    border: 1px dashed var(--vi-ui-border);
+    border-radius: 12px;
+}
+
+.vi-contrast-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--vi-ui-help);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.vi-contrast-item strong {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.vi-contrast-item[data-state="pass"] strong {
+    background: rgba(21, 128, 61, 0.12);
+    color: var(--vi-ui-success);
+}
+
+.vi-contrast-item[data-state="fail"] strong {
+    background: rgba(185, 28, 28, 0.12);
+    color: var(--vi-ui-danger);
+}
+
+/* ---- Live preview ------------------------------------------------ */
+
+.vi-preview {
+    --vi-primary: #1463ff;
+    --vi-secondary: #0b1b3a;
+    --vi-bg: #eaf4ff;
+    --vi-surface: #ffffff;
+    --vi-text: #102a56;
+    --vi-button-bg: #1463ff;
+    --vi-button-text: #ffffff;
+    --vi-on-primary: #ffffff;
+    --vi-on-secondary: #ffffff;
+    --vi-font: "DM Sans", system-ui, sans-serif;
+
+    overflow: hidden;
+    border: 1px solid var(--vi-ui-border);
+    border-radius: 18px;
+    background: var(--vi-bg);
+    color: var(--vi-text);
+    font-family: var(--vi-font);
+    box-shadow: var(--vi-ui-shadow);
+}
+
+.vi-preview-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 18px;
+    background: var(--vi-secondary);
+    color: var(--vi-on-secondary);
+}
+
+.vi-preview-brand {
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+
+.vi-preview-pill {
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    opacity: 0.9;
+    padding: 4px 10px;
+}
+
+.vi-preview-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+}
+
+.vi-preview-title {
+    color: var(--vi-text);
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.vi-preview-text {
+    color: var(--vi-text);
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0.85;
+}
+
+.vi-preview-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid color-mix(in srgb, var(--vi-text) 18%, transparent);
+    border-radius: 14px;
+    background: var(--vi-surface);
+    color: var(--vi-text);
+    padding: 14px;
+}
+
+.vi-preview-card-title {
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.vi-preview-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.vi-preview-button {
+    display: inline-block;
+    border: 1px solid var(--vi-button-bg);
+    border-radius: 9px;
+    background: var(--vi-button-bg);
+    color: var(--vi-button-text);
+    cursor: default;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 9px 13px;
+}
+
+.vi-preview-button--ghost {
+    background: transparent;
+    color: var(--vi-primary);
+}
+
+.vi-preview-highlight {
+    align-self: flex-start;
+    border-radius: 999px;
+    background: var(--vi-primary);
+    color: var(--vi-on-primary);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    padding: 6px 11px;
+    text-transform: uppercase;
+}
+
+/* ---- Responsive --------------------------------------------------- */
+
+@media (min-width: 600px) {
+    .vi-color-grid,
+    .vi-options,
+    .vi-media-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .vi-preset-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .vi-contrast {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1024px) {
+    .vi-color-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .vi-preset-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 420px) {
+    .vi-editor {
+        padding: 16px;
+    }
+
+    .vi-swatch {
+        flex-basis: 64px;
+        width: 64px;
+        height: 52px;
+    }
+
+    .vi-palette {
+        grid-template-columns: 1fr;
+    }
+
+    .vi-palette-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    /* --- Mobile: grids inside the editor --- */
+    .vi-color-grid,
+    .vi-options,
+    .vi-media-grid,
+    .vi-preset-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .vi-color-field .vi-swatch {
+        flex-basis: 50px;
+        width: 50px;
+    }
+
+    .vi-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .vi-actions .vi-button {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vi-preset-card,
+    .vi-button,
+    .vi-color-hex {
+        transition: none;
+    }
+}

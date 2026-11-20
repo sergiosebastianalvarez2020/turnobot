@@ -238,3 +238,11 @@ jobs:
       - name: Run visual tests
         run: |
           python -m pytest tests/visual/ -v --tb=short -m no_pg
+      - name: Upload axe accessibility reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axe-reports
+          path: tests/visual/results/axe/
+          retention-days: 7
+          if-no-files-found: warn

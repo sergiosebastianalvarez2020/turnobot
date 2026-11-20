@@ -93,6 +93,68 @@ def contrast_ratio(hex_a: str, hex_b: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def readable_text_color(background: str, *, light: str = "#FFFFFF", dark: str = "#111827") -> str:
+    """Devuelve el color de texto con mayor contraste sobre `background`."""
+    try:
+        light_ratio = contrast_ratio(light, background)
+        dark_ratio = contrast_ratio(dark, background)
+    except ValueError:
+        return dark
+    return light if light_ratio >= dark_ratio else dark
+
+
+def palette_summary(config: dict | None = None) -> dict:
+    """Resumen visual de la paleta efectiva (incluye superficie derivada).
+
+    No agrega claves persistidas: la superficie sigue siendo el token
+    `DEFAULT_SURFACE` que usa la cascada pública.
+    """
+    config = dict(config or {})
+    palette = derive_palette(
+        config.get("primary_color"),
+        config.get("secondary_color"),
+        config.get("page_background_color"),
+        config.get("page_text_color"),
+    )
+    return {
+        "primary": palette["primary"],
+        "secondary": palette["secondary"],
+        "background": palette["background"],
+        "surface": palette["surface"],
+        "text": palette["text"],
+        "on_primary": readable_text_color(palette["primary"]),
+        "on_secondary": readable_text_color(palette["secondary"]),
+    }
+
+
+def contrast_pairs(config: dict | None = None) -> list[dict]:
+    """Pares WCAG que valida el guardado, con ratios listos para la UI."""
+    config = dict(config or {})
+    definitions = (
+        ("text", "page_text_color", "page_background_color", "Texto sobre fondo"),
+        ("button", "button_text_color", "button_bg_color", "Texto de botón sobre fondo"),
+    )
+    results: list[dict] = []
+    for key, fg_key, bg_key, label in definitions:
+        fg = normalize_hex(config.get(fg_key), DEFAULT_PRIMARY)
+        bg = normalize_hex(config.get(bg_key), DEFAULT_BACKGROUND)
+        try:
+            ratio = contrast_ratio(fg, bg)
+        except ValueError:
+            continue
+        results.append(
+            {
+                "key": key,
+                "label": label,
+                "foreground": fg,
+                "background": bg,
+                "ratio": ratio,
+                "passes": ratio >= 4.5,
+            }
+        )
+    return results
+
+
 def derive_palette(
     primary: str | None = None,
     secondary: str | None = None,
