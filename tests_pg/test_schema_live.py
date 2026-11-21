@@ -40,6 +40,7 @@ EXPECTED_TABLES = {
     "loyalty_settings",
     "notification_log",
     "password_reset_tokens",
+    "platform_ai_providers",
     "platform_sessions",
     "platform_users",
     "points_ledger",

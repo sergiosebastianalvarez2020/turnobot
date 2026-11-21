@@ -103,8 +103,8 @@ class FactoryContractTests(_FactoryIsolationMixin, unittest.TestCase):
         rules = list(new_app.url_map.iter_rules())
         endpoints = {rule.endpoint for rule in rules}
 
-        self.assertEqual(len(rules), 153)
-        self.assertEqual(len(endpoints), 115)
+        self.assertEqual(len(rules), 161)
+        self.assertEqual(len(endpoints), 123)
 
         for endpoint in (
             "health",

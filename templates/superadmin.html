@@ -240,6 +240,7 @@
         <a class="menu-link {{ 'active' if (section or 'businesses') == 'businesses' else '' }}" href="/superadmin">Negocios</a>
         <a class="menu-link {{ 'active' if (section or 'businesses') == 'visual_identity' else '' }}" href="/superadmin/identidad">Identidad visual</a>
         <a class="menu-link {{ 'active' if (section or 'businesses') == 'audit' else '' }}" href="/superadmin/auditoria">Auditoría</a>
+        <a class="menu-link {{ 'active' if (section or 'businesses') == 'ia' else '' }}" href="/superadmin/ia">Inteligencia Artificial</a>
     </nav>
 
     <div class="container">
@@ -746,6 +747,137 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+        {% elif section == 'ia' %}
+        <div class="card">
+            <h2 class="card-title">Inteligencia Artificial — Proveedores</h2>
+            <p class="muted">Configuración global de proveedores de IA (administrada exclusivamente desde el Super Admin).</p>
+
+            {% if not encryption_ready %}
+            <div class="error">
+                AI_ENCRYPTION_KEY no está configurada. No se pueden guardar credenciales de proveedores.
+                Definí la variable de entorno AI_ENCRYPTION_KEY (mínimo 32 caracteres) y reiniciá la aplicación.
+            </div>
+            {% endif %}
+
+            {% set ia_edit = editing_provider %}
+            <form method="POST" action="/superadmin/ia/guardar" class="form-inline" style="margin-bottom:20px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% if ia_edit %}
+                <input type="hidden" name="provider_id" value="{{ ia_edit.id }}">
+                {% endif %}
+                <div class="field">
+                    <label for="ia-provider">Proveedor</label>
+                    <select id="ia-provider" name="provider" required>
+                        <option value="gemini" {{ 'selected' if (ia_edit and ia_edit.provider == 'gemini') or (not ia_edit) else '' }}>Google Gemini</option>
+                        <option value="groq" {{ 'selected' if ia_edit and ia_edit.provider == 'groq' else '' }}>Groq</option>
+                        <option value="openrouter" {{ 'selected' if ia_edit and ia_edit.provider == 'openrouter' else '' }}>OpenRouter</option>
+                        <option value="cerebras" {{ 'selected' if ia_edit and ia_edit.provider == 'cerebras' else '' }}>Cerebras</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="ia-model">Modelo</label>
+                    <input type="text" id="ia-model" name="model" required value="{{ ia_edit.model if ia_edit else '' }}" placeholder="Ej: gemini-2.5-flash">
+                </div>
+                <div class="field">
+                    <label for="ia-priority">Prioridad</label>
+                    <input type="number" id="ia-priority" name="priority" value="{{ ia_edit.priority if ia_edit else 1 }}" min="1" max="998">
+                </div>
+                <div class="field" style="display:flex; align-items:end; gap:6px;">
+                    <label style="font-size:11px; font-weight:700; color:#9DB4D6; text-transform:uppercase; letter-spacing:.8px;">Activo</label>
+                    <select name="active" style="padding:11px 14px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 10px; color: #fff; font-family: 'DM Sans', sans-serif; font-size: 14px;">
+                        <option value="1" {{ 'selected' if (not ia_edit) or ia_edit.active else '' }}>Sí</option>
+                        <option value="0" {{ 'selected' if ia_edit and not ia_edit.active else '' }}>No</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="ia-api-key">API Key</label>
+                    <input type="password" id="ia-api-key" name="api_key" placeholder="sk-... (dejar vacío para conservar)">
+                </div>
+                <button type="submit" class="btn btn-primary">{{ 'Actualizar proveedor' if ia_edit else 'Guardar proveedor' }}</button>
+                {% if ia_edit %}
+                <a class="btn btn-light" href="/superadmin/ia">Cancelar edición</a>
+                {% endif %}
+                <p class="muted" style="margin-top:8px;">
+                    La API Key se almacena cifrada (AES-256-GCM). Nunca se expone al frontend ni se registra en logs.
+                </p>
+            </form>
+
+            <div class="card">
+                <h2 class="card-title">Proveedores configurados</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Proveedor</th>
+                            <th>Modelo</th>
+                            <th>Prioridad</th>
+                            <th>Estado</th>
+                            <th>Credenciales</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in providers %}
+                        <tr>
+                            <td>{{ provider_labels.get(p.provider, p.provider) }}</td>
+                            <td>{{ p.model }}</td>
+                            <td>{{ p.priority }}</td>
+                            <td>
+                                {% if p.active %}
+                                <span class="pill pill-active">Activo</span>
+                                {% else %}
+                                <span class="pill pill-inactive">Inactivo</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if p.has_credentials %}
+                                <span class="pill pill-active">Configurado</span>
+                                {% else %}
+                                <span class="pill pill-inactive">Sin credenciales</span>
+                                {% endif %}
+                            </td>
+                            <td style="display:flex; gap:6px; flex-wrap:wrap;">
+                                <a class="btn btn-light" style="font-size:11px; padding:6px 10px;" href="/superadmin/ia?edit={{ p['id'] }}">Editar</a>
+                                {% if p.active %}
+                                <form method="POST" action="/superadmin/ia/{{ p['id'] }}/desactivar" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-danger" style="font-size:11px; padding:6px 10px;">Desactivar</button>
+                                </form>
+                                {% else %}
+                                <form method="POST" action="/superadmin/ia/{{ p['id'] }}/activar" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-success" style="font-size:11px; padding:6px 10px;">Activar</button>
+                                </form>
+                                {% endif %}
+                                <form method="POST" action="/superadmin/ia/{{ p['id'] }}/prioridad" style="margin:0; display:inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="number" name="priority" value="{{ p.priority }}" min="1" max="998" style="width:60px; font-size:11px; padding:4px 6px;">
+                                    <button type="submit" class="btn btn-light" style="font-size:11px; padding:6px 10px;">Guardar prioridad</button>
+                                </form>
+                                <form method="POST" action="/superadmin/ia/{{ p['id'] }}/probar" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-light" style="font-size:11px; padding:6px 10px;">Probar conexión</button>
+                                </form>
+                                <form method="POST" action="/superadmin/ia/{{ p['id'] }}/eliminar" style="margin:0;" onsubmit="return confirm('¿Eliminar este proveedor?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-danger" style="font-size:11px; padding:6px 10px;">Eliminar</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6" class="muted">No hay proveedores configurados.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if not encryption_ready %}
+            <div class="error" style="margin-top:16px;">
+                Para habilitar la gestión de credenciales, definí AI_ENCRYPTION_KEY en el entorno
+                (mínimo 32 caracteres) y reiniciá la aplicación. Ejemplo:
+                <code>set AI_ENCRYPTION_KEY=tu-clave-de-al menos-32-caracteres</code>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
     </div>

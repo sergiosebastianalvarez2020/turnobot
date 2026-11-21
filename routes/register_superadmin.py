@@ -4,6 +4,12 @@ Registro de rutas de superadmin - nivel plataforma.
 
 from routes.superadmin import (
     superadmin_audit,
+    superadmin_ia,
+    superadmin_ia_activar_desactivar,
+    superadmin_ia_eliminar,
+    superadmin_ia_guardar,
+    superadmin_ia_prioridad,
+    superadmin_ia_probar,
     superadmin_login,
     superadmin_logout,
     superadmin_negocios_activar,
@@ -113,5 +119,45 @@ def register(app):
         "/superadmin/identidad/<int:business_id>/bloqueos",
         endpoint="superadmin_visual_identity_locks",
         view_func=superadmin_visual_identity_locks,
+        methods=["POST"],
+    )
+    # Sección: Inteligencia Artificial (configuración global de proveedores)
+    app.add_url_rule(
+        "/superadmin/ia", endpoint="superadmin_ia", view_func=superadmin_ia, methods=["GET"]
+    )
+    app.add_url_rule(
+        "/superadmin/ia/guardar",
+        endpoint="superadmin_ia_guardar",
+        view_func=superadmin_ia_guardar,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/ia/<int:provider_id>/activar",
+        endpoint="superadmin_ia_activar",
+        view_func=lambda provider_id: superadmin_ia_activar_desactivar(provider_id, True),
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/ia/<int:provider_id>/desactivar",
+        endpoint="superadmin_ia_desactivar",
+        view_func=lambda provider_id: superadmin_ia_activar_desactivar(provider_id, False),
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/ia/<int:provider_id>/prioridad",
+        endpoint="superadmin_ia_prioridad",
+        view_func=superadmin_ia_prioridad,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/ia/<int:provider_id>/eliminar",
+        endpoint="superadmin_ia_eliminar",
+        view_func=superadmin_ia_eliminar,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/superadmin/ia/<int:provider_id>/probar",
+        endpoint="superadmin_ia_probar",
+        view_func=superadmin_ia_probar,
         methods=["POST"],
     )

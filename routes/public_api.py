@@ -164,6 +164,7 @@ def chat():
             customer_name=customer_name,
             customer_email=customer_email,
             public_token=visitor_token,
+            idempotency_key=data.get("idempotency_key"),
         )
 
         if not customer_phone and business_key and public_token:

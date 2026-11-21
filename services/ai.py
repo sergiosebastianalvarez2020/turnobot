@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import socket
+import threading
 from datetime import datetime
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -18,6 +19,7 @@ from database.database import (
     get_resources_scoped,
     get_weekly_schedule_scoped,
 )
+from services.ai_router import router as ai_router
 from services.appointments import (
     cancel_appointment,
     create_appointment,
@@ -57,17 +59,62 @@ _CONTACT_LIMIT_MESSAGE = (
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-client = None
+
+# Caché de clientes Gemini aislado por credencial.
+# La clave es un hash SHA-256 de la API Key (nunca se almacena la clave en texto plano).
+_clients: dict[str, genai.Client] = {}
+_clients_lock = threading.Lock()
 
 
-def get_gemini_client():
-    global client
-    if client is None:
-        if not API_KEY:
-            raise RuntimeError("GEMINI_API_KEY no está configurada")
-        timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "15000"))
-        client = genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=timeout_ms))
-    return client
+def _client_cache_key(api_key: str) -> str:
+    """Devuelve un hash SHA-256 de la API Key para usar como clave de caché.
+
+    Nunca almacena la API Key en texto plano ni la registra en logs.
+    """
+    import hashlib
+
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def get_gemini_client(api_key: str | None = None, timeout_ms: int | None = None):
+    """Obtiene un cliente de Gemini aislado por credencial.
+
+    Cada API Key distinta obtiene su propia instancia de cliente.
+    Si se recibe `api_key` explícitamente, tiene prioridad sobre GEMINI_API_KEY.
+    La creación y actualización están protegidas por un lock para evitar
+    condiciones de carrera en entornos concurrentes.
+    """
+    key = api_key or API_KEY
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY no está configurada")
+
+    # La clave de caché incluye el timeout_ms para evitar reutilizar un cliente
+    # con un timeout diferente cuando se solicita un tiempo menor.
+    timeout_ms = timeout_ms or int(os.getenv("GEMINI_TIMEOUT_MS", "8000"))
+    cache_key = _client_cache_key(key) + f":{timeout_ms}"
+
+    with _clients_lock:
+        client = _clients.get(cache_key)
+        if client is None:
+            client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=timeout_ms))
+            _clients[cache_key] = client
+        return client
+
+
+def invalidate_gemini_client(api_key: str | None = None):
+    """Invalida el cliente caché de una API Key específica.
+
+    Útil cuando se rotan credenciales para forzar la creación de un nuevo
+    cliente con la clave actualizada. Si no se recibe api_key, invalida
+    el cliente de la clave legacy (GEMINI_API_KEY).
+    """
+    key = api_key or API_KEY
+    if not key:
+        return
+    timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "8000"))
+    cache_key = _client_cache_key(key) + f":{timeout_ms}"
+    with _clients_lock:
+        _clients.pop(cache_key, None)
 
 
 MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
@@ -85,6 +132,10 @@ RETRY_BACKOFF_BASE = 0.1
 RETRY_BACKOFF_MAX = 1.0
 
 _MUTATING_TOOLS = frozenset({"reservar_turno", "cancelar_turno", "reprogramar_turno"})
+
+# ask_ai() delega en AIProviderRouter (services/ai_router), que gestiona
+# proveedores y fallback automático. El router instancia internamente
+# GeminiProvider, GroqProvider y futuros proveedores.
 
 
 def get_business_identity(business_id):
@@ -140,7 +191,7 @@ def _classify_gemini_error(error):
         if status == "UNAUTHENTICATED" or code == 401:
             return "auth", False, "UNAUTHENTICATED"
         if status == "PERMISSION_DENIED" or code == 403:
-            return "auth", False, "PERMISSION_DENIED"
+            return "permission", False, "PERMISSION_DENIED"
         if status == "INVALID_ARGUMENT" or code == 400:
             return "invalid_argument", False, "INVALID_ARGUMENT"
         if status == "NOT_FOUND" or code == 404:
@@ -179,7 +230,14 @@ def _gemini_error_message(category):
             "Disculpá, el servicio de IA está temporalmente con limitaciones. "
             "Por favor, intentá nuevamente en unos minutos."
         ),
-        "auth": ("Disculpá, en este momento estoy teniendo un problema para procesar tu consulta."),
+        "auth": (
+            "Disculpá, en este momento estoy teniendo un problema para procesar tu consulta. "
+            "Verificá las credenciales configuradas."
+        ),
+        "permission": (
+            "Disculpá, el servicio de IA no tiene permisos para procesar "
+            "esta solicitud. Verificá la configuración del proveedor."
+        ),
         "invalid_argument": (
             "Disculpá, no pude procesar tu consulta. Por favor, intentá formularla de otra manera."
         ),
@@ -193,7 +251,16 @@ def _gemini_error_message(category):
     )
 
 
-def _call_gemini_with_retry(contents, config, request_id=None, business_id=None):
+def _call_gemini_with_retry(
+    contents,
+    config,
+    request_id=None,
+    business_id=None,
+    api_key=None,
+    timeout_s=None,
+    deadline_s=None,
+    idempotency_key=None,
+):
     """Llama a Gemini con retry acotado para errores transitorios.
 
     Registra latencia, intentos, tipo de error y uso de tokens.
@@ -201,12 +268,23 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
     """
     last_error = None
     attempt = 0
+    timeout_ms = None
+    if timeout_s is not None:
+        timeout_ms = int(timeout_s * 1000)
     for attempt in range(1, MAX_RETRIES + 1):
+        # Verificar deadline antes de cada intento.
+        if deadline_s is not None:
+            remaining = deadline_s - monotonic()
+            if remaining <= 0:
+                return None, attempt, ("timeout", "GlobalTimeout")
+            timeout_ms = min(
+                timeout_ms or int(os.getenv("GEMINI_TIMEOUT_MS", "8000")), int(remaining * 1000)
+            )
         start = monotonic()
         try:
-            response = get_gemini_client().models.generate_content(
-                model=MODEL, contents=contents, config=config
-            )
+            response = get_gemini_client(
+                api_key=api_key, timeout_ms=timeout_ms
+            ).models.generate_content(model=MODEL, contents=contents, config=config)
             latency_ms = int((monotonic() - start) * 1000)
 
             prompt_tokens = None
@@ -250,6 +328,11 @@ def _call_gemini_with_retry(contents, config, request_id=None, business_id=None)
             if not is_transient or attempt >= MAX_RETRIES:
                 return None, attempt, (category, error_type)
             delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
+            # Solo hacer backoff si queda tiempo antes del deadline.
+            if deadline_s is not None:
+                remaining = deadline_s - monotonic()
+                if remaining <= delay:
+                    return None, attempt, ("timeout", "GlobalTimeout")
             import time as _time
 
             _time.sleep(delay)
@@ -653,6 +736,14 @@ reservar_turno_declaration = types.FunctionDeclaration(
                     "Debe coincidir con un recurso de 'RECURSOS ACTIVOS'."
                 ),
             },
+            "idempotency_key": {
+                "type": "string",
+                "description": (
+                    "Clave opcional de idempotencia para evitar reservas duplicadas. "
+                    "Si se proporciona la misma clave en reintentos, se devuelve "
+                    "la reserva original en lugar de crear una nueva."
+                ),
+            },
         },
         "required": ["nombre", "telefono", "servicio", "fecha", "hora"],
         "additionalProperties": False,
@@ -809,7 +900,9 @@ solicitar_atencion_humana_declaration = types.FunctionDeclaration(
 )
 
 
-def _execute_solicitar_atencion_humana(arguments, business_id, session_id=None):
+def _execute_solicitar_atencion_humana(
+    arguments, business_id, session_id=None, idempotency_key=None
+):
     """Ejecuta la herramienta de solicitud de atención humana."""
     try:
         # La sesión se marca como needs_human en la capa de persistencia
@@ -846,7 +939,7 @@ BARBERIA_TOOL = types.Tool(
 # ============================================================
 
 
-def _execute_consultar_recursos(arguments, business_id, session_id=None):
+def _execute_consultar_recursos(arguments, business_id, session_id=None, idempotency_key=None):
     try:
         resources = get_resources_scoped(business_id, only_active=True)
         recursos = [{"id": r["id"], "nombre": r["name"]} for r in resources]
@@ -886,7 +979,7 @@ def _reserva_error_response(resultado):
     }
 
 
-def _execute_reservar_turno(arguments, business_id, session_id=None):
+def _execute_reservar_turno(arguments, business_id, session_id=None, idempotency_key=None):
     try:
         active_services_a = get_active_services_scoped(business_id)
 
@@ -922,6 +1015,7 @@ def _execute_reservar_turno(arguments, business_id, session_id=None):
             business_id=business_id,
             email=email or None,
             resource_id=resource_id,
+            idempotency_key=idempotency_key,
         )
 
         if not resultado.get("success"):
@@ -1003,7 +1097,7 @@ def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None):
         return {"success": False, "error": "No se pudieron consultar los turnos."}
 
 
-def _execute_cancelar_turno(arguments, business_id, session_id=None):
+def _execute_cancelar_turno(arguments, business_id, session_id=None, idempotency_key=None):
     try:
         appointment_id = arguments["appointment_id"]
 
@@ -1045,7 +1139,7 @@ def _execute_cancelar_turno(arguments, business_id, session_id=None):
         return {"success": False, "error": "No se pudo cancelar el turno."}
 
 
-def _execute_reprogramar_turno(arguments, business_id, session_id=None):
+def _execute_reprogramar_turno(arguments, business_id, session_id=None, idempotency_key=None):
     try:
         appointment_id = arguments["appointment_id"]
 
@@ -1131,14 +1225,14 @@ _TOOL_HANDLERS = {
 }
 
 
-def execute_tool(name, arguments, business_id=None, session_id=None):
+def execute_tool(name, arguments, business_id=None, session_id=None, idempotency_key=None):
     if business_id is None:
         return {"success": False, "error": "Contexto de negocio inválido."}
 
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
         return None
-    return handler(arguments, business_id, session_id)
+    return handler(arguments, business_id, session_id, idempotency_key)
 
 
 # ============================================================
@@ -1354,6 +1448,7 @@ def ask_ai(
     customer_name=None,
     customer_email=None,
     public_token=None,
+    idempotency_key=None,
 ):
 
     request_id = None
@@ -1523,19 +1618,23 @@ días de la semana y fechas relativas.
     # PRIMERA LLAMADA
     # ========================================================
 
-    response, attempt, error_info = _call_gemini_with_retry(
-        contents, config, request_id=request_id, business_id=business_id
+    response, attempt, error_info = ai_router.generate(
+        contents,
+        config,
+        request_id=request_id,
+        business_id=business_id,
+        idempotency_key=idempotency_key,
     )
 
     if response is None:
         category, error_type = error_info or ("unknown", "UnknownError")
         logger.error(
-            "Gemini falló tras %d intento(s): category=%s error_type=%s",
+            "Router falló tras %d intento(s): category=%s error_type=%s",
             attempt,
             category,
             error_type,
         )
-        return _gemini_error_message(category), session_id, public_token
+        return ai_router.contingency_message(), session_id, public_token
 
     # ========================================================
     # CICLO DE HERRAMIENTAS
@@ -1635,7 +1734,9 @@ días de la semana y fechas relativas.
             # ------------------------------------------------
 
             try:
-                result = execute_tool(tool_name, arguments, business_id, session_id)
+                result = execute_tool(
+                    tool_name, arguments, business_id, session_id, idempotency_key=idempotency_key
+                )
 
             except Exception:
                 logger.exception("Error ejecutando herramienta.")
@@ -1788,19 +1889,38 @@ días de la semana y fechas relativas.
         # CONTINUAR CON GEMINI
         # ====================================================
 
-        response, attempt, error_info = _call_gemini_with_retry(
-            contents, config, request_id=request_id, business_id=business_id
+        # Si se confirmó una mutación (reserva, cancelación, reprogramación)
+        # en alguna iteración previa del ciclo de herramientas, no volver a
+        # llamar al router. Retornar inmediatamente con la confirmación
+        # determinística ya generada. Esto evita que un fallo del router
+        # posterior a una operación exitosa haga que el usuario reciba una
+        # contingencia en lugar de la confirmación de su operación.
+        if confirmed_mutations:
+            return (
+                "Su operación se procesó correctamente. "
+                "Si no recibe la confirmación completa, verifique su estado "
+                "contactando al negocio.",
+                session_id,
+                public_token,
+            )
+
+        response, attempt, error_info = ai_router.generate(
+            contents,
+            config,
+            request_id=request_id,
+            business_id=business_id,
+            idempotency_key=idempotency_key,
         )
 
         if response is None:
             category, error_type = error_info or ("unknown", "UnknownError")
             logger.error(
-                "Gemini falló durante tool-calling loop tras %d intento(s): category=%s error_type=%s",
+                "Router falló durante tool-calling loop tras %d intento(s): category=%s error_type=%s",
                 attempt,
                 category,
                 error_type,
             )
-            return _gemini_error_message(category), session_id, public_token
+            return ai_router.contingency_message(), session_id, public_token
 
 
 def _detect_needs_human(text):
