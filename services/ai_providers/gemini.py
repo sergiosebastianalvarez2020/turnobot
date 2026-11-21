@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from services.ai_providers.base import AIProvider
+from services.ai_providers.base import AIProvider, ProviderError
 
 
 class GeminiProvider(AIProvider):
@@ -49,7 +49,8 @@ class GeminiProvider(AIProvider):
         timeout_s: float | None = None,
         deadline_s: float | None = None,
         idempotency_key: str | None = None,
-    ) -> tuple[Any | None, int, tuple[str, str] | None]:
+        model: str | None = None,
+    ) -> tuple[Any | None, int, ProviderError | None]:
         from services.ai import _call_gemini_with_retry
 
         return _call_gemini_with_retry(
@@ -61,6 +62,7 @@ class GeminiProvider(AIProvider):
             timeout_s=timeout_s,
             deadline_s=deadline_s,
             idempotency_key=idempotency_key,
+            model=model,
         )
 
     def classify_error(self, error: Exception) -> tuple[str, bool, str]:

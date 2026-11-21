@@ -17,6 +17,270 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
+class ProviderError(tuple):
+    """Error normalizado de proveedor compatible con ``(category, code)``."""
+
+    category: str
+    code: str
+    retry_same_provider: bool
+    fallback_next_provider: bool
+
+    def __new__(
+        cls,
+        category: str,
+        code: str,
+        *,
+        retry_same_provider: bool = False,
+        fallback_next_provider: bool = False,
+    ) -> ProviderError:
+        instance = super().__new__(cls, (category, code))
+        instance.category = category
+        instance.code = code
+        instance.retry_same_provider = retry_same_provider
+        instance.fallback_next_provider = fallback_next_provider
+        return instance
+
+    def as_tuple(self) -> tuple[str, str]:
+        return (self.category, self.code)
+
+
+_AUTH_CODES = frozenset(
+    {
+        "HTTP401",
+        "401",
+        "UNAUTHENTICATED",
+        "UNAUTHORIZED",
+        "INVALID_API_KEY",
+        "API_KEY_INVALID",
+        "API_KEY_EXPIRED",
+    }
+)
+_PERMISSION_CODES = frozenset(
+    {
+        "PERMISSION_DENIED",
+        "PERMISSION_DENIED_ERROR",
+        "IAM_PERMISSION_DENIED",
+        "API_KEY_PERMISSION_DENIED",
+        "ACCESS_DENIED",
+        "FORBIDDEN",
+        "INSUFFICIENT_PERMISSIONS",
+    }
+)
+_GENERIC_403_CODES = frozenset({"HTTP403", "403", "POLICY_DENIED", "PERMISSION_DENIED"})
+_INVALID_ARGUMENT_CODES = frozenset(
+    {"HTTP400", "400", "INVALID_ARGUMENT", "BAD_REQUEST", "INVALID_ARGUMENT_ERROR"}
+)
+_MODEL_NOT_FOUND_CODES = frozenset(
+    {"HTTP404", "404", "NOT_FOUND", "MODEL_NOT_FOUND", "MODEL_NOT_FOUND_ERROR"}
+)
+_QUOTA_CODES = frozenset(
+    {
+        "HTTP429",
+        "429",
+        "RATELIMITEXCEEDED",
+        "RATE_LIMIT_EXCEEDED",
+        "RESOURCE_EXHAUSTED",
+        "QUOTA_EXCEEDED",
+        "TOO_MANY_REQUESTS",
+        "RATE_LIMIT",
+        "RATE_LIMIT_ERROR",
+    }
+)
+_TIMEOUT_CODES = frozenset(
+    {
+        "TIMEOUT",
+        "TIMEOUTERROR",
+        "HTTPTIMEOUT",
+        "GLOBALTIMEOUT",
+        "DEADLINEEXCEEDED",
+        "REQUESTTIMEOUT",
+    }
+)
+_SERVER_CODES = frozenset(
+    {
+        "INTERNAL",
+        "INTERNALERROR",
+        "UNAVAILABLE",
+        "SERVICEUNAVAILABLE",
+        "BADGATEWAY",
+        "BAD_GATEWAY",
+        "GATEWAY_TIMEOUT",
+        "SERVER_ERROR",
+        "INTERNAL_SERVER_ERROR",
+        "CONNECTIONERROR",
+        "NETWORKERROR",
+        "CONNECTERROR",
+    }
+)
+_MALFORMED_CODES = frozenset(
+    {
+        "MALFORMEDRESPONSE",
+        "MALFORMEDJSON",
+        "INVALIDJSON",
+        "INVALIDRESPONSE",
+        "EMPTYRESPONSE",
+        "EMPTYCHOICES",
+        "MALFORMEDCHOICE",
+        "MISSINGMESSAGE",
+        "MALFORMEDCONTENT",
+        "MALFORMEDTOOLCALLS",
+        "MALFORMATUSAGE",
+    }
+)
+
+
+def _normalize_code(code: Any) -> str:
+    if code is None:
+        return ""
+    return str(code).strip().upper().replace("-", "_").replace(" ", "_")
+
+
+def _display_code(code: Any, default: str) -> str:
+    text = str(code).strip() if code is not None else ""
+    return text or default
+
+
+def classify_provider_error(error: Any) -> ProviderError:
+    """Convierte errores de proveedor o tuplas legacy en ``ProviderError``."""
+    if isinstance(error, ProviderError):
+        return error
+
+    if isinstance(error, tuple) and len(error) >= 2:
+        raw_category = error[0]
+        raw_code = error[1]
+    elif isinstance(error, dict):
+        raw_category = error.get("category", "unknown")
+        raw_code = error.get("code") or error.get("error_type")
+    else:
+        raw_category = "unknown"
+        raw_code = getattr(error, "__class__", type(None)).__name__
+
+    category = str(raw_category).strip().lower()
+    code = _normalize_code(raw_code)
+    display = _display_code(raw_code, "UnknownError")
+
+    if code in _GENERIC_403_CODES or category in {"permission", "policy_denied", "forbidden"}:
+        if code in _PERMISSION_CODES:
+            return ProviderError(
+                "permission", display, retry_same_provider=False, fallback_next_provider=True
+            )
+        return ProviderError(
+            "policy_denied", display, retry_same_provider=False, fallback_next_provider=False
+        )
+
+    if code in _AUTH_CODES or category in {"auth", "unauthenticated", "unauthorized"}:
+        return ProviderError(
+            "auth", display, retry_same_provider=False, fallback_next_provider=True
+        )
+
+    if code in _MODEL_NOT_FOUND_CODES:
+        return ProviderError(
+            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=True
+        )
+
+    if code in _INVALID_ARGUMENT_CODES or category in {"invalid_argument", "bad_request"}:
+        return ProviderError(
+            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=False
+        )
+
+    if code in _QUOTA_CODES or category in {"quota", "rate_limit", "rate_limited"}:
+        return ProviderError(
+            "quota", display, retry_same_provider=True, fallback_next_provider=True
+        )
+
+    if code in _TIMEOUT_CODES or category in {"timeout", "deadline_exceeded"}:
+        return ProviderError(
+            "timeout", display, retry_same_provider=True, fallback_next_provider=True
+        )
+
+    if code in _SERVER_CODES or category in {"server", "network"}:
+        return ProviderError(
+            "server", display, retry_same_provider=True, fallback_next_provider=True
+        )
+
+    numeric_code = code[4:] if code.startswith("HTTP") and code[4:].isdigit() else code
+    if numeric_code.isdigit() and 500 <= int(numeric_code) < 600:
+        return ProviderError(
+            "server", display, retry_same_provider=True, fallback_next_provider=True
+        )
+
+    if code in _MALFORMED_CODES or category in {"malformed_response", "malformed"}:
+        return ProviderError(
+            "malformed_response", display, retry_same_provider=True, fallback_next_provider=True
+        )
+
+    return ProviderError(
+        "unknown", display, retry_same_provider=False, fallback_next_provider=False
+    )
+
+
+def _status_policy(status_code: int | None, display: str) -> ProviderError:
+    """Devuelve la política mínima garantizada por el status HTTP."""
+    if status_code == 401:
+        return ProviderError(
+            "auth", display, retry_same_provider=False, fallback_next_provider=True
+        )
+    if status_code == 403:
+        return ProviderError(
+            "policy_denied", display, retry_same_provider=False, fallback_next_provider=False
+        )
+    if status_code == 404:
+        return ProviderError(
+            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=True
+        )
+    if status_code == 400:
+        return ProviderError(
+            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=False
+        )
+    if status_code == 429:
+        return ProviderError(
+            "quota", display, retry_same_provider=True, fallback_next_provider=True
+        )
+    if status_code is not None and 500 <= status_code < 600:
+        return ProviderError(
+            "server", display, retry_same_provider=True, fallback_next_provider=True
+        )
+    return ProviderError("unknown", display)
+
+
+def classify_status_code(status_code: int | None, code: Any = None) -> ProviderError:
+    """Clasifica un status HTTP y un código estructurado sin perder la política HTTP.
+
+    Precedencia:
+    1. Un código estructurado reconocido puede refinar la categoría cuando es compatible.
+    2. Un código desconocido nunca anula la política del status HTTP.
+    3. 429 conserva cuota; 5xx conserva servidor; 401 conserva autenticación;
+       403 es `policy_denied` salvo permiso explícito; 400/404 son `invalid_argument`.
+    4. Si el código reconocido contradice al status, gana el status HTTP.
+    """
+    display = _display_code(code, "")
+    if not display and status_code is not None:
+        display = "RateLimitExceeded" if status_code == 429 else f"HTTP{status_code}"
+    if not display:
+        display = "UnknownError"
+
+    structured = classify_provider_error(("status", display))
+    status_error = _status_policy(status_code, display)
+
+    if status_error.category == "unknown":
+        return structured
+    if status_code == 429:
+        return structured if structured.category == "quota" else status_error
+    if status_code is not None and 500 <= status_code < 600:
+        return structured if structured.category in {"server", "timeout"} else status_error
+    if status_code == 401:
+        return structured if structured.category == "auth" else status_error
+    if status_code == 403:
+        return (
+            structured if structured.category in {"permission", "policy_denied"} else status_error
+        )
+    if status_code == 404:
+        return structured if _normalize_code(display) in _MODEL_NOT_FOUND_CODES else status_error
+    if status_code == 400:
+        return structured if _normalize_code(display) in _INVALID_ARGUMENT_CODES else status_error
+    return structured if structured.category != "unknown" else status_error
+
+
 class AIProvider(ABC):
     """Interfaz base para proveedores de IA."""
 
@@ -39,7 +303,8 @@ class AIProvider(ABC):
         timeout_s: float | None = None,
         deadline_s: float | None = None,
         idempotency_key: str | None = None,
-    ) -> tuple[Any | None, int, tuple[str, str] | None]:
+        model: str | None = None,
+    ) -> tuple[Any | None, int, ProviderError | None]:
         """
         Ejecuta una generacion de contenido a través del proveedor.
 
@@ -57,8 +322,9 @@ class AIProvider(ABC):
                        iniciar reintentos ni esperas que lo excedan.
 
         Returns:
-            Tupla (respuesta_o_None, intentos, informacion_de_error_o_None).
-            informacion_de_error es (categoria, tipo_error) o None si tuvo exito.
+            Tupla (respuesta_o_None, solicitudes_http, informacion_de_error_o_None).
+            ``solicitudes_http`` cuenta únicamente peticiones de red realizadas.
+            ``informacion_de_error`` es un ``ProviderError`` o None si tuvo éxito.
         """
 
     @abstractmethod

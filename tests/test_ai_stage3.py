@@ -613,7 +613,7 @@ class TestAuthFallback:
     def test_gemini_403_fallback_to_groq(
         self, mock_decrypt, mock_list, mock_get_by_name, monkeypatch
     ):
-        """T2: Gemini devuelve 403 por credencial y Groq responde correctamente."""
+        """T2: Gemini devuelve 403 conocido por credencial y Groq responde."""
         monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
         mock_decrypt.return_value = "decrypted-key"
 
@@ -648,7 +648,7 @@ class TestAuthFallback:
         router.clear_cache()
 
         with patch("services.ai_providers.gemini.GeminiProvider.generate") as mock_gemini_gen:
-            mock_gemini_gen.return_value = (None, 1, ("auth", "HTTP403"))
+            mock_gemini_gen.return_value = (None, 1, ("permission", "PERMISSION_DENIED"))
 
             with patch("services.ai_providers.groq.GroqProvider.generate") as mock_groq_gen:
                 mock_response = MagicMock()
@@ -716,7 +716,7 @@ class TestAuthFallback:
     def test_gemini_404_model_not_found(
         self, mock_decrypt, mock_list, mock_get_by_name, monkeypatch
     ):
-        """T3: Gemini devuelve 404 por modelo inexistente, clasificación invalid_argument, no fallback."""
+        """T3: Gemini devuelve 404 por modelo configurado inexistente y se clasifica invalid_argument."""
         monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
         mock_decrypt.return_value = "decrypted-key"
 
@@ -989,14 +989,14 @@ class TestErrorClassificationSemantics:
     """A.4: Clasificación semántica de errores de autenticación vs permisos."""
 
     def _make_gemini_error(self, status=None, code=None):
-        """Crea un mock de genai_errors.APIError con status y code."""
+        """Crea un mock de genai_errors.APIError con status y code estructurados."""
         from google.genai import errors as genai_errors
 
         class MockGeminiError(genai_errors.APIError):
             def __init__(self, status=None, code=None):
-                self.status = status
-                self.code = code
-                super().__init__(code=code or 0, response_json={})
+                super().__init__(
+                    code=code or 0, response_json={"status": status, "error": {"code": code}}
+                )
 
         return MockGeminiError(status, code)
 
@@ -1011,7 +1011,7 @@ class TestErrorClassificationSemantics:
         assert error_type == "UNAUTHENTICATED"
 
     def test_gemini_403_permission_denied_is_permission(self):
-        """Gemini 403/PERMISSION_DENIED → categoría permission, sin fallback."""
+        """Gemini 403/PERMISSION_DENIED → permission con fallback, sin reintento."""
         from services.ai import _classify_gemini_error
 
         error = self._make_gemini_error(status="PERMISSION_DENIED", code=403)
@@ -1020,14 +1020,15 @@ class TestErrorClassificationSemantics:
         assert is_transient is False
         assert error_type == "PERMISSION_DENIED"
 
-    def test_gemini_403_code_403_is_permission(self):
-        """Gemini 403 con code=403 → categoría permission."""
+    def test_gemini_403_code_403_is_policy_denied(self):
+        """Gemini 403 sin status conocido → policy_denied, fail-fast."""
         from services.ai import _classify_gemini_error
 
         error = self._make_gemini_error(status=None, code=403)
-        category, is_transient, _ = _classify_gemini_error(error)
-        assert category == "permission"
+        category, is_transient, error_type = _classify_gemini_error(error)
+        assert category == "policy_denied"
         assert is_transient is False
+        assert error_type == "HTTP403"
 
     def test_gemini_401_no_fallback_in_router(self):
         """Gemini 401 no activa fallback (no es transitorio)."""
@@ -1100,13 +1101,13 @@ class TestErrorClassificationSemantics:
         assert is_transient is False
         assert error_type == "HTTP401"
 
-    def test_groq_403_is_permission_no_fallback(self):
-        """Groq 403 → categoría permission, sin fallback."""
+    def test_groq_403_is_policy_denied_fail_fast(self):
+        """Groq 403 sin código conocido → policy_denied, sin fallback ni reintento."""
         from services.ai_providers.groq import GroqProvider
 
         provider = GroqProvider()
         category, is_transient, error_type = provider._classify_http_error(403)
-        assert category == "permission"
+        assert category == "policy_denied"
         assert is_transient is False
         assert error_type == "HTTP403"
 
@@ -1120,7 +1121,7 @@ class TestErrorClassificationSemantics:
         assert is_transient is False
 
     def test_groq_404_is_not_transient(self):
-        """Groq 404 → invalid_argument, no fallback."""
+        """Groq 404 → invalid_argument, sin reintento pero con fallback."""
         from services.ai_providers.groq import GroqProvider
 
         provider = GroqProvider()
@@ -1212,8 +1213,8 @@ class TestErrorClassificationSemantics:
                             mock_gemini.assert_called_once()
                             mock_groq.assert_called_once()
 
-    def test_router_permission_no_fallback(self):
-        """Router: permission (403) NO activa fallback."""
+    def test_router_known_permission_falls_back(self):
+        """Router: permission conocido (403) activa fallback al siguiente proveedor."""
         from services.ai_router import AIProviderRouter
 
         router = AIProviderRouter()
@@ -1264,14 +1265,19 @@ class TestErrorClassificationSemantics:
                         mock_gemini.return_value = (None, 1, ("permission", "PERMISSION_DENIED"))
 
                         with patch("services.ai_providers.groq.GroqProvider.generate") as mock_groq:
+                            mock_resp = MagicMock()
+                            mock_resp.text = "Groq respondió tras 403 conocido de Gemini"
+                            mock_groq.return_value = (mock_resp, 1, None)
+
                             response, attempts, error = router.generate(
                                 contents=[], config=None, business_id=1
                             )
 
-                            assert response is None
-                            assert error == ("permission", "PERMISSION_DENIED")
+                            assert response is not None
+                            assert response.text == "Groq respondió tras 403 conocido de Gemini"
+                            assert error is None
                             mock_gemini.assert_called_once()
-                            mock_groq.assert_not_called()  # No fallback para permission
+                            mock_groq.assert_called_once()
 
 
 # ------------------------------------------------------------------
@@ -1374,7 +1380,8 @@ class TestRouterDeadline:
         from services.ai_providers.groq import GroqProvider
 
         source = inspect.getsource(GroqProvider.generate)
-        assert "min(timeout_s, remaining)" in source
+        assert "configured_timeout" in source
+        assert "min(request_timeout, remaining)" in source
 
 
 # ------------------------------------------------------------------
@@ -1426,3 +1433,116 @@ class TestReservationSecurity:
         source = inspect.getsource(ask_ai)
         assert "for function_call in function_calls:" in source
         assert "result = execute_tool(" in source
+
+
+HTTP_STATUS_POLICY_CASES = [
+    (429, "upstream_unexpected", "quota", True, True),
+    (429, "rate_limit_error", "quota", True, True),
+    (503, "server_error", "server", True, True),
+    (503, "service_unavailable", "server", True, True),
+    (500, "internal_server_error", "server", True, True),
+    (502, "upstream_unexpected", "server", True, True),
+    (504, "upstream_unexpected", "server", True, True),
+    (401, "upstream_unexpected", "auth", False, True),
+    (403, "upstream_unexpected", "policy_denied", False, False),
+    (403, "permission_denied", "permission", False, True),
+    (400, "upstream_unexpected", "invalid_argument", False, False),
+]
+
+
+class TestProviderErrorPolicy:
+    """Etapa 4.1: taxonomía normalizada y política separada."""
+
+    def test_provider_error_keeps_tuple_contract(self):
+        from services.ai_providers.base import ProviderError
+
+        error = ProviderError(
+            "auth", "HTTP401", retry_same_provider=False, fallback_next_provider=True
+        )
+        category, code = error
+
+        assert category == "auth"
+        assert code == "HTTP401"
+        assert error == ("auth", "HTTP401")
+        assert error.as_tuple() == ("auth", "HTTP401")
+        assert error.retry_same_provider is False
+        assert error.fallback_next_provider is True
+
+    @pytest.mark.parametrize(
+        "raw, category, retry, fallback",
+        [
+            (("auth", "HTTP401"), "auth", False, True),
+            (("permission", "PERMISSION_DENIED"), "permission", False, True),
+            (("policy_denied", "HTTP403"), "policy_denied", False, False),
+            (("invalid_argument", "MODEL_NOT_FOUND"), "invalid_argument", False, True),
+            (("invalid_argument", "HTTP400"), "invalid_argument", False, False),
+            (("quota", "RateLimitExceeded"), "quota", True, True),
+            (("server", "HTTP503"), "server", True, True),
+            (("timeout", "TimeoutError"), "timeout", True, True),
+            (("malformed_response", "EmptyChoices"), "malformed_response", True, True),
+            (("unknown", "ValueError"), "unknown", False, False),
+        ],
+    )
+    def test_classify_provider_error_policy(self, raw, category, retry, fallback):
+        from services.ai_providers.base import classify_provider_error
+
+        error = classify_provider_error(raw)
+
+        assert error.category == category
+        assert error.retry_same_provider is retry
+        assert error.fallback_next_provider is fallback
+
+    def test_classify_status_code_http_500_is_server(self):
+        from services.ai_providers.base import classify_status_code
+
+        error = classify_status_code(503)
+
+        assert error.category == "server"
+        assert error.code == "HTTP503"
+        assert error.retry_same_provider is True
+        assert error.fallback_next_provider is True
+
+    @pytest.mark.parametrize(
+        "status_code, structured_code, expected_category, expected_retry, expected_fallback",
+        HTTP_STATUS_POLICY_CASES,
+    )
+    def test_classify_status_code_combines_http_and_structured_code(
+        self, status_code, structured_code, expected_category, expected_retry, expected_fallback
+    ):
+        from services.ai_providers.base import classify_status_code
+
+        error = classify_status_code(status_code, structured_code)
+
+        assert error.category == expected_category
+        assert error.retry_same_provider is expected_retry
+        assert error.fallback_next_provider is expected_fallback
+
+    @pytest.mark.parametrize(
+        "status_code, structured_code, expected_category, expected_retry, expected_fallback",
+        HTTP_STATUS_POLICY_CASES,
+    )
+    def test_openai_compatible_http_error_respects_status_policy(
+        self, status_code, structured_code, expected_category, expected_retry, expected_fallback
+    ):
+        from services.ai_providers.base import classify_provider_error
+        from services.ai_providers.groq import GroqProvider
+
+        category, retry, code = GroqProvider._classify_http_error(
+            status_code, {"error": {"code": structured_code}}
+        )
+        normalized = classify_provider_error((category, code))
+
+        assert normalized.category == expected_category
+        assert retry is expected_retry
+        assert normalized.fallback_next_provider is expected_fallback
+
+    def test_dict_error_uses_structured_code_only(self):
+        from services.ai_providers.base import classify_provider_error
+
+        error = classify_provider_error(
+            {"category": "auth", "code": "API_KEY_EXPIRED", "message": "secret"}
+        )
+
+        assert error.category == "auth"
+        assert error.code == "API_KEY_EXPIRED"
+        assert error.fallback_next_provider is True

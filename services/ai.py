@@ -19,6 +19,7 @@ from database.database import (
     get_resources_scoped,
     get_weekly_schedule_scoped,
 )
+from services.ai_providers.base import ProviderError, classify_status_code
 from services.ai_router import router as ai_router
 from services.appointments import (
     cancel_appointment,
@@ -158,60 +159,129 @@ def get_business_identity(business_id):
 _TRANSIENT_STATUSES = {"DEADLINE_EXCEEDED", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"}
 
 
-def _classify_gemini_error(error):
-    """Clasifica un error de Gemini en una categoría para logging y retry.
-
-    Devuelve (category, is_transient, error_type).
-    - category: 'timeout', 'quota', 'auth', 'invalid_argument', 'server', 'unknown'
-    - is_transient: True si puede reintentarse
-    - error_type: string corto para logging
-    """
+def _classify_gemini_provider_error(error):
+    """Clasifica errores de Gemini en un ProviderError normalizado."""
     if isinstance(error, (TimeoutError, socket.timeout)):
-        return "timeout", True, "TimeoutError"
+        return ProviderError(
+            "timeout", "TimeoutError", retry_same_provider=True, fallback_next_provider=True
+        )
 
     try:
         import httpx
 
         if isinstance(error, httpx.TimeoutException):
-            return "timeout", True, "HttpTimeout"
+            return ProviderError(
+                "timeout", "HttpTimeout", retry_same_provider=True, fallback_next_provider=True
+            )
         if isinstance(error, (httpx.ConnectError, httpx.NetworkError)):
-            return "server", True, error.__class__.__name__
+            return ProviderError(
+                "server",
+                error.__class__.__name__,
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
     except ImportError:
         pass
 
-    if isinstance(error, ConnectionError):
-        return "server", True, "ConnectionError"
+    if isinstance(error, (ConnectionError, OSError)):
+        return ProviderError(
+            "server",
+            error.__class__.__name__,
+            retry_same_provider=True,
+            fallback_next_provider=True,
+        )
 
-    if isinstance(error, OSError):
-        return "server", True, "OSError"
-
-    if isinstance(error, (genai_errors.APIError,)):
+    if isinstance(error, genai_errors.APIError):
         status = getattr(error, "status", None)
         code = getattr(error, "code", None)
-        if status == "UNAUTHENTICATED" or code == 401:
-            return "auth", False, "UNAUTHENTICATED"
-        if status == "PERMISSION_DENIED" or code == 403:
-            return "permission", False, "PERMISSION_DENIED"
-        if status == "INVALID_ARGUMENT" or code == 400:
-            return "invalid_argument", False, "INVALID_ARGUMENT"
-        if status == "NOT_FOUND" or code == 404:
-            return "invalid_argument", False, "NOT_FOUND"
-        if status == "DEADLINE_EXCEEDED":
-            return "timeout", True, "DEADLINE_EXCEEDED"
-        if status == "RESOURCE_EXHAUSTED" or code == 429:
-            return "quota", True, "RESOURCE_EXHAUSTED"
-        if status == "UNAVAILABLE" or code == 503:
-            return "server", True, "UNAVAILABLE"
-        if status == "INTERNAL" or (isinstance(code, int) and 500 <= code < 600):
-            return "server", True, "INTERNAL"
+        error_type = getattr(error, "type", None)
+        status_text = str(status).strip().upper() if status is not None else ""
+        type_text = str(error_type).strip().upper() if error_type is not None else ""
+
+        if status_text == "PERMISSION_DENIED" or type_text in {
+            "PERMISSION_DENIED",
+            "PERMISSION_DENIED_ERROR",
+            "IAM_PERMISSION_DENIED",
+            "ACCESS_DENIED",
+        }:
+            return ProviderError(
+                "permission",
+                status_text or type_text or "PERMISSION_DENIED",
+                retry_same_provider=False,
+                fallback_next_provider=True,
+            )
+        if status_text == "UNAUTHENTICATED" or code == 401:
+            return ProviderError(
+                "auth",
+                status_text or type_text or "UNAUTHENTICATED",
+                retry_same_provider=False,
+                fallback_next_provider=True,
+            )
+        if status_text == "NOT_FOUND" or code == 404:
+            return ProviderError(
+                "invalid_argument",
+                status_text or "NOT_FOUND",
+                retry_same_provider=False,
+                fallback_next_provider=True,
+            )
+        if status_text == "INVALID_ARGUMENT" or code == 400:
+            return ProviderError(
+                "invalid_argument",
+                status_text or "INVALID_ARGUMENT",
+                retry_same_provider=False,
+                fallback_next_provider=False,
+            )
+        if status_text == "DEADLINE_EXCEEDED":
+            return ProviderError(
+                "timeout",
+                "DEADLINE_EXCEEDED",
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+        if status_text == "RESOURCE_EXHAUSTED" or code == 429:
+            return ProviderError(
+                "quota",
+                status_text or "RESOURCE_EXHAUSTED",
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+        if status_text in {"UNAVAILABLE", "INTERNAL"} or (
+            isinstance(code, int) and 500 <= code < 600
+        ):
+            return ProviderError(
+                "server",
+                status_text or f"HTTP{code}",
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+        if code == 403:
+            return classify_status_code(403)
         if status is not None:
-            return "unknown", False, str(status)
-        return "unknown", False, "APIError"
+            return ProviderError(
+                "unknown", str(status), retry_same_provider=False, fallback_next_provider=False
+            )
+        display = str(code) if code is not None else "APIError"
+        return ProviderError(
+            "unknown", display, retry_same_provider=False, fallback_next_provider=False
+        )
 
     if isinstance(error, ValueError):
-        return "invalid_argument", False, "ValueError"
+        return ProviderError(
+            "invalid_argument",
+            "ValueError",
+            retry_same_provider=False,
+            fallback_next_provider=False,
+        )
 
-    return "unknown", False, error.__class__.__name__
+    return ProviderError(
+        "unknown", error.__class__.__name__, retry_same_provider=False, fallback_next_provider=False
+    )
+
+
+def _classify_gemini_error(error):
+    """Clasifica un error de Gemini manteniendo el contrato legacy de 3 valores."""
+    normalized = _classify_gemini_provider_error(error)
+    return normalized.category, normalized.retry_same_provider, normalized.code
 
 
 def _is_transient_error(error):
@@ -241,6 +311,10 @@ def _gemini_error_message(category):
         "invalid_argument": (
             "Disculpá, no pude procesar tu consulta. Por favor, intentá formularla de otra manera."
         ),
+        "policy_denied": (
+            "Disculpá, el proveedor de IA denegó esta solicitud por su política de acceso."
+        ),
+        "malformed_response": ("Disculpá, el proveedor de IA devolvió una respuesta inesperada."),
         "server": (
             "Disculpá, en este momento estoy teniendo un problema para procesar tu consulta."
         ),
@@ -260,87 +334,110 @@ def _call_gemini_with_retry(
     timeout_s=None,
     deadline_s=None,
     idempotency_key=None,
+    model=None,
 ):
-    """Llama a Gemini con retry acotado para errores transitorios.
+    """Llama a Gemini con reintentos acotados y devuelve solicitudes HTTP reales."""
+    configured_timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "8000"))
+    requested_timeout_ms = int(timeout_s * 1000) if timeout_s is not None else configured_timeout_ms
+    base_timeout_ms = min(requested_timeout_ms, configured_timeout_ms)
+    http_attempts = 0
+    last_error: ProviderError | None = None
 
-    Registra latencia, intentos, tipo de error y uso de tokens.
-    Devuelve (response, attempt_count, error_info).
-    """
-    last_error = None
-    attempt = 0
-    timeout_ms = None
-    if timeout_s is not None:
-        timeout_ms = int(timeout_s * 1000)
     for attempt in range(1, MAX_RETRIES + 1):
-        # Verificar deadline antes de cada intento.
         if deadline_s is not None:
             remaining = deadline_s - monotonic()
             if remaining <= 0:
-                return None, attempt, ("timeout", "GlobalTimeout")
-            timeout_ms = min(
-                timeout_ms or int(os.getenv("GEMINI_TIMEOUT_MS", "8000")), int(remaining * 1000)
+                error = last_error or ProviderError(
+                    "timeout",
+                    "GlobalTimeout",
+                    retry_same_provider=True,
+                    fallback_next_provider=True,
+                )
+                return None, http_attempts, error
+            timeout_ms = min(base_timeout_ms, int(remaining * 1000))
+        else:
+            timeout_ms = base_timeout_ms
+        if timeout_ms <= 0:
+            return (
+                None,
+                http_attempts,
+                ProviderError(
+                    "timeout",
+                    "GlobalTimeout",
+                    retry_same_provider=True,
+                    fallback_next_provider=True,
+                ),
             )
+
         start = monotonic()
         try:
-            response = get_gemini_client(
-                api_key=api_key, timeout_ms=timeout_ms
-            ).models.generate_content(model=MODEL, contents=contents, config=config)
-            latency_ms = int((monotonic() - start) * 1000)
-
-            prompt_tokens = None
-            candidate_tokens = None
-            total_tokens = None
-            usage = getattr(response, "usage_metadata", None)
-            if usage is not None:
-                if isinstance(usage, dict):
-                    prompt_tokens = usage.get("prompt_token_count")
-                    candidate_tokens = usage.get("candidates_token_count")
-                    total_tokens = usage.get("total_token_count")
-                else:
-                    prompt_tokens = getattr(usage, "prompt_token_count", None)
-                    candidate_tokens = getattr(usage, "candidates_token_count", None)
-                    total_tokens = getattr(usage, "total_token_count", None)
-
-            _log_gemini_call(
-                request_id=request_id,
-                business_id=business_id,
-                latency_ms=latency_ms,
-                attempt=attempt,
-                status="success",
-                error_type=None,
-                prompt_tokens=prompt_tokens,
-                candidate_tokens=candidate_tokens,
-                total_tokens=total_tokens,
+            client = get_gemini_client(api_key=api_key, timeout_ms=timeout_ms)
+            http_attempts += 1
+            response = client.models.generate_content(
+                model=model or MODEL, contents=contents, config=config
             )
-            return response, attempt, None
         except Exception as error:
             latency_ms = int((monotonic() - start) * 1000)
-            category, is_transient, error_type = _classify_gemini_error(error)
+            normalized = _classify_gemini_provider_error(error)
             _log_gemini_call(
                 request_id=request_id,
                 business_id=business_id,
                 latency_ms=latency_ms,
                 attempt=attempt,
                 status="error",
-                error_type=error_type,
+                error_type=normalized.code,
             )
-            last_error = error
-            if not is_transient or attempt >= MAX_RETRIES:
-                return None, attempt, (category, error_type)
+            last_error = normalized
+            if not normalized.retry_same_provider or attempt >= MAX_RETRIES:
+                return None, http_attempts, normalized
             delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
-            # Solo hacer backoff si queda tiempo antes del deadline.
             if deadline_s is not None:
                 remaining = deadline_s - monotonic()
                 if remaining <= delay:
-                    return None, attempt, ("timeout", "GlobalTimeout")
+                    return (
+                        None,
+                        http_attempts,
+                        ProviderError(
+                            "timeout",
+                            "GlobalTimeout",
+                            retry_same_provider=True,
+                            fallback_next_provider=True,
+                        ),
+                    )
             import time as _time
 
             _time.sleep(delay)
+            continue
 
-    if last_error is not None:
-        cat, _, err_t = _classify_gemini_error(last_error)
-        return None, attempt, (cat, err_t)
-    return None, attempt, ("unknown", "UnknownError")
+        latency_ms = int((monotonic() - start) * 1000)
+        prompt_tokens = None
+        candidate_tokens = None
+        total_tokens = None
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            if isinstance(usage, dict):
+                prompt_tokens = usage.get("prompt_token_count")
+                candidate_tokens = usage.get("candidates_token_count")
+                total_tokens = usage.get("total_token_count")
+            else:
+                prompt_tokens = getattr(usage, "prompt_token_count", None)
+                candidate_tokens = getattr(usage, "candidates_token_count", None)
+                total_tokens = getattr(usage, "total_token_count", None)
+
+        _log_gemini_call(
+            request_id=request_id,
+            business_id=business_id,
+            latency_ms=latency_ms,
+            attempt=attempt,
+            status="success",
+            error_type=None,
+            prompt_tokens=prompt_tokens,
+            candidate_tokens=candidate_tokens,
+            total_tokens=total_tokens,
+        )
+        return response, http_attempts, None
+
+    return None, http_attempts, last_error or ProviderError("unknown", "UnknownError")
 
 
 def _log_gemini_call(
@@ -952,7 +1049,9 @@ def _execute_consultar_recursos(arguments, business_id, session_id=None, idempot
         return {"success": False, "error": "No se pudo consultar los recursos."}
 
 
-def _execute_consultar_disponibilidad(arguments, business_id, session_id=None):
+def _execute_consultar_disponibilidad(
+    arguments, business_id, session_id=None, idempotency_key=None
+):
     fecha = arguments["fecha"]
     servicio = arguments.get("servicio")
     resource_id = arguments.get("resource_id")
@@ -1060,7 +1159,7 @@ def _execute_reservar_turno(arguments, business_id, session_id=None, idempotency
         return {"success": False, "error": "No se pudo crear la reserva."}
 
 
-def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None):
+def _execute_buscar_turnos_cliente(arguments, business_id, session_id=None, idempotency_key=None):
     try:
         nombre = arguments["nombre"]
 

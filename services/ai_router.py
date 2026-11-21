@@ -28,14 +28,11 @@ from typing import Any
 
 from services.ai_config import get_ai_provider_by_name, get_decrypted_api_key, list_ai_providers
 from services.ai_encryption import is_configured as encryption_is_configured
-from services.ai_providers.base import AIProvider
+from services.ai_providers.base import AIProvider, ProviderError, classify_provider_error
 from services.ai_providers.gemini import GeminiProvider
-from services.ai_providers.groq import GroqProvider
+from services.ai_providers.groq import CerebrasProvider, GroqProvider, OpenRouterProvider
 
 logger = logging.getLogger("turnobot.ai.router")
-
-# Intentos máximos por proveedor cuando el error permite reintento.
-_MAX_ATTEMPTS_PER_PROVIDER = 2
 
 # Tiempo máximo global de ejecución en segundos (backoff acotado incluido).
 # Presupuesto total: 20s. Se reserva tiempo suficiente para que cada
@@ -92,15 +89,16 @@ class AIProviderRouter:
     _PROVIDER_CLASSES: dict[str, type[AIProvider]] = {
         "gemini": GeminiProvider,
         "groq": GroqProvider,
+        "openrouter": OpenRouterProvider,
+        "cerebras": CerebrasProvider,
     }
 
     def __init__(self) -> None:
         self._providers_cache: list[dict[str, Any]] | None = None
+        self._all_providers_cache: list[dict[str, Any]] | None = None
 
-    def _instantiate_provider(
-        self, provider_name: str, api_key: str | None = None
-    ) -> AIProvider | None:
-        """Crea una instancia del proveedor con la API Key dada."""
+    def _instantiate_provider(self, provider_name: str) -> AIProvider | None:
+        """Crea una instancia del proveedor; la credencial se pasa a ``generate``."""
         cls = self._PROVIDER_CLASSES.get(provider_name)
         if cls is None:
             logger.error("Proveedor no soportado: %s", provider_name)
@@ -124,10 +122,26 @@ class AIProviderRouter:
         except Exception:  # pragma: no cover - tabla no existe en tests
             logger.warning("platform_ai_providers no disponible; usando modo legacy")
             providers = []
+        self._all_providers_cache = providers
         active = [p for p in providers if p.get("active")]
         active.sort(key=lambda p: p.get("priority", 999))
         self._providers_cache = active
         return active
+
+    def _get_all_providers(self) -> list[dict[str, Any]]:
+        """Obtiene todos los registros, incluidos los inactivos."""
+        if self._all_providers_cache is not None:
+            return self._all_providers_cache
+        try:
+            providers = list_ai_providers()
+        except Exception:  # pragma: no cover - tabla no existe en tests
+            providers = []
+        self._all_providers_cache = providers
+        if self._providers_cache is None:
+            active = [p for p in providers if p.get("active")]
+            active.sort(key=lambda p: p.get("priority", 999))
+            self._providers_cache = active
+        return providers
 
     def _build_provider_list(
         self, contents: Any, config: Any, business_id: int | None
@@ -141,21 +155,22 @@ class AIProviderRouter:
           con prioridad 0 (primero en la lista).
         """
         providers = self._get_active_providers()
+        all_providers = self._get_all_providers()
         result: list[dict[str, Any]] = []
 
-        # Verificar si Gemini tiene registro en la tabla.
-        gemini_in_table = any(p["provider"] == "gemini" for p in providers)
-
-        # Si Gemini no está en la tabla, agregarlo como legacy (prioridad 0).
-        # La API Key se resuelve en el momento de usar (variable de entorno GEMINI_API_KEY).
-        if not gemini_in_table:
+        # Gemini legacy solo cuando no existe ningún registro de Gemini (ni
+        # siquiera inactivo) y hay una credencial de entorno disponible.
+        gemini_registered = any(p["provider"] == "gemini" for p in all_providers)
+        legacy_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_registered and legacy_key:
             result.append(
                 {
                     "provider": "gemini",
                     "id": None,
                     "priority": 0,
                     "legacy": True,
-                    "api_key": os.getenv("GEMINI_API_KEY"),
+                    "api_key": legacy_key,
+                    "model": None,
                 }
             )
 
@@ -168,6 +183,7 @@ class AIProviderRouter:
                     "priority": p["priority"],
                     "legacy": False,
                     "api_key": None,  # Se resuelve justo antes de usar
+                    "model": p.get("model"),
                 }
             )
 
@@ -180,165 +196,152 @@ class AIProviderRouter:
         business_id: int | None = None,
         request_id: str | None = None,
         idempotency_key: str | None = None,
-    ) -> tuple[Any | None, int, tuple[str, str] | None]:
+        model: str | None = None,
+    ) -> tuple[Any | None, int, ProviderError | None]:
         """
         Ejecuta generación con fallback automático.
 
         Returns:
-            Tupla (respuesta_o_None, total_intentos, informacion_de_error_o_None).
+            Tupla (respuesta_o_None, solicitudes_http, ProviderError|None).
+            ``solicitudes_http`` suma los intentos de red reales de cada proveedor.
         """
         provider_list = self._build_provider_list(contents, config, business_id)
         if not provider_list:
-            return None, 0, ("unknown", "NoProvidersAvailable")
+            return None, 0, ProviderError("unknown", "NoProvidersAvailable")
 
         start_global = time.monotonic()
         deadline = start_global + _MAX_GLOBAL_TIMEOUT_S
-        total_attempts = 0
-        last_error_info: tuple[str, str] | None = None
-        responding_provider: str | None = None
+        total_http_attempts = 0
+        last_error: ProviderError | None = None
         any_provider_attempted = False
 
-        # Calcular cuántos proveedores activos hay para distribuir el presupuesto.
         active_count = len(provider_list)
-        if active_count == 0:
-            return None, 0, ("unknown", "NoProvidersAvailable")
-
-        # Tiempo base por proveedor: presupuesto dividido entre proveedores,
-        # con un mínimo de 4s y un máximo de 10s por llamada individual.
         time_per_provider = max(4.0, min(10.0, _MAX_GLOBAL_TIMEOUT_S / active_count))
 
         for provider_entry in provider_list:
             provider_name = provider_entry["provider"]
             is_legacy = provider_entry.get("legacy", False)
 
-            # Calcular tiempo restante antes de iniciar este proveedor.
             remaining = deadline - time.monotonic()
-            if remaining <= 1.0:
+            if remaining <= 0:
                 logger.warning(
                     "router_timeout no_remaining_time provider=%s elapsed=%.1fs",
                     provider_name,
                     time.monotonic() - start_global,
                 )
-                if responding_provider is None:
-                    return None, total_attempts, ("timeout", "GlobalTimeout")
-                break
+                error = last_error or ProviderError(
+                    "timeout",
+                    "GlobalTimeout",
+                    retry_same_provider=True,
+                    fallback_next_provider=True,
+                )
+                return None, total_http_attempts, error
 
-            # El timeout para este proveedor es el menor entre el tiempo por
-            # proveedor asignado y el tiempo restante en el presupuesto global.
             provider_timeout = min(time_per_provider, remaining)
 
-            # Resolver credenciales justo antes de usar el proveedor.
             if is_legacy:
                 api_key = provider_entry["api_key"]
-                # Modo legacy: intentar aunque no haya API Key; el proveedor
-                # manejará el error de autenticación si corresponde.
             else:
                 provider_config = get_ai_provider_by_name(provider_name)
                 if provider_config is None:
+                    logger.warning(
+                        "router_provider_skip provider=%s reason=missing_config", provider_name
+                    )
                     continue
                 api_key = _resolve_provider_credentials(provider_name, provider_config)
                 if api_key is None:
+                    logger.warning(
+                        "router_provider_skip provider=%s reason=undecryptable_credentials",
+                        provider_name,
+                    )
                     continue
 
-            # Instanciar proveedor.
-            provider = self._instantiate_provider(provider_name, api_key)
+            provider = self._instantiate_provider(provider_name)
             if provider is None:
                 continue
 
             any_provider_attempted = True
-
-            # Intentar hasta _MAX_ATTEMPTS_PER_PROVIDER veces.
-            for attempt in range(1, _MAX_ATTEMPTS_PER_PROVIDER + 1):
-                total_attempts += 1
-
-                # Calcular tiempo restante antes de cada intento.
-                remaining = deadline - time.monotonic()
-                if remaining <= 1.0:
-                    logger.warning(
-                        "router_timeout no_remaining_time provider=%s attempt=%d",
-                        provider_name,
-                        attempt,
-                    )
-                    if responding_provider is None:
-                        return None, total_attempts, ("timeout", "GlobalTimeout")
-                    break
-
-                # Timeout para este intento: no exceder el tiempo restante del deadline.
-                attempt_timeout = min(provider_timeout, remaining)
-
-                try:
-                    response, attempt_used, error_info = provider.generate(
-                        contents,
-                        config,
-                        business_id=business_id,
-                        request_id=request_id,
-                        api_key=api_key if not is_legacy else None,
-                        timeout_s=attempt_timeout,
-                        deadline_s=deadline,
-                        idempotency_key=idempotency_key,
-                    )
-                except Exception as exc:  # pragma: no cover - errores inesperados del proveedor
-                    logger.exception("Error inesperado en proveedor %s", provider_name)
-                    error_info = ("unknown", exc.__class__.__name__)
-                    response = None
-
-                if response is not None:
-                    responding_provider = provider_name
-                    logger.info(
-                        "router_success provider=%s attempts=%d responding_provider=%s",
-                        provider_name,
-                        total_attempts,
-                        responding_provider,
-                    )
-                    return response, total_attempts, None
-
-                # Error: clasificar.
-                category, error_type = error_info or ("unknown", "UnknownError")
-                last_error_info = (category, error_type)
-
-                logger.warning(
-                    "router_fallback provider=%s attempt=%d category=%s error_type=%s",
-                    provider_name,
-                    attempt,
-                    category,
-                    error_type,
+            try:
+                response, attempts_used, error_info = provider.generate(
+                    contents,
+                    config,
+                    business_id=business_id,
+                    request_id=request_id,
+                    api_key=api_key,
+                    timeout_s=provider_timeout,
+                    deadline_s=deadline,
+                    idempotency_key=idempotency_key,
+                    model=model or provider_entry.get("model"),
                 )
+            except Exception as exc:
+                logger.error(
+                    "router_provider_exception provider=%s error_type=%s",
+                    provider_name,
+                    exc.__class__.__name__,
+                )
+                response = None
+                attempts_used = 0
+                error_info = ProviderError("unknown", exc.__class__.__name__)
 
-                # Si el error no es transitorio, no cambiar de proveedor (fail fast).
-                # Las categorías transitorias incluyen errores de autenticación
-                # (401/403) para permitir fallback al siguiente proveedor cuando
-                # una credencial es inválida o revocada.
-                _TRANSIENT_CATEGORIES = {"timeout", "quota", "server", "auth"}
-                is_transient = category in _TRANSIENT_CATEGORIES
-                if not is_transient:
-                    logger.info(
-                        "router_no_fallback provider=%s reason=non_transient_error category=%s",
-                        provider_name,
-                        category,
-                    )
-                    return None, total_attempts, last_error_info
+            total_http_attempts += max(0, int(attempts_used or 0))
 
-                # Error transitorio: probar el siguiente proveedor.
-                break
+            if response is not None:
+                logger.info(
+                    "router_success provider=%s total_http_attempts=%d",
+                    provider_name,
+                    total_http_attempts,
+                )
+                return response, total_http_attempts, None
 
-        # Todos los proveedores fallaron.
-        if responding_provider is None:
-            logger.error(
-                "router_all_failed total_attempts=%d last_error=%s", total_attempts, last_error_info
+            normalized = classify_provider_error(
+                error_info or ProviderError("unknown", "UnknownError")
             )
-            if not any_provider_attempted:
-                return None, total_attempts, ("unknown", "NoProvidersAvailable")
-            return None, total_attempts, last_error_info or ("unknown", "AllProvidersFailed")
+            last_error = normalized
+            logger.warning(
+                "router_fallback_decision provider=%s category=%s code=%s retry_same=%s "
+                "fallback_next=%s total_http_attempts=%d",
+                provider_name,
+                normalized.category,
+                normalized.code,
+                normalized.retry_same_provider,
+                normalized.fallback_next_provider,
+                total_http_attempts,
+            )
+            if normalized.fallback_next_provider:
+                continue
 
-        return None, total_attempts, last_error_info
+            logger.info(
+                "router_no_fallback provider=%s category=%s code=%s",
+                provider_name,
+                normalized.category,
+                normalized.code,
+            )
+            return None, total_http_attempts, normalized
+
+        if not any_provider_attempted:
+            error = last_error or ProviderError("unknown", "NoProvidersAvailable")
+            return None, total_http_attempts, error
+
+        logger.error(
+            "router_all_failed total_http_attempts=%d last_error_category=%s last_error_code=%s",
+            total_http_attempts,
+            last_error.category if last_error else "-",
+            last_error.code if last_error else "-",
+        )
+        return (
+            None,
+            total_http_attempts,
+            last_error or ProviderError("unknown", "AllProvidersFailed"),
+        )
 
     def contingency_message(self) -> str:
         """Devuelve el mensaje de contingencia para mostrar al usuario."""
         return _CONTINGENCY_MESSAGE
 
     def clear_cache(self) -> None:
-        """Limpia la caché de proveedores (útil para tests)."""
+        """Limpia la caché de proveedores (útil para tests y mutaciones)."""
         self._providers_cache = None
+        self._all_providers_cache = None
 
 
 # Instancia singleton del router.
