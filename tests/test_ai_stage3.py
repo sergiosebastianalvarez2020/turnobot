@@ -6,6 +6,7 @@ con ask_ai(). No consumen cuotas reales de ningún proveedor.
 """
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -13,6 +14,7 @@ import pytest
 
 from services.ai_providers.groq import GroqProvider
 from services.ai_router import AIProviderRouter, router
+from tests._ai_router_mocks import SimulatedAIProviders, gemini_provider_record
 
 pytestmark = pytest.mark.no_pg
 
@@ -1030,7 +1032,7 @@ class TestErrorClassificationSemantics:
         assert is_transient is False
         assert error_type == "HTTP403"
 
-    def test_gemini_401_no_fallback_in_router(self):
+    def test_gemini_401_no_fallback_in_router(self, monkeypatch):
         """Gemini 401 no activa fallback (no es transitorio)."""
         from services.ai_router import AIProviderRouter
 
@@ -1040,9 +1042,7 @@ class TestErrorClassificationSemantics:
         with patch("services.ai_router.get_ai_provider_by_name") as mock_get_by_name:
             with patch("services.ai_router.list_ai_providers") as mock_list:
                 with patch("services.ai_router.get_decrypted_api_key") as mock_decrypt:
-                    import os
-
-                    os.environ["GEMINI_API_KEY"] = "test-key"
+                    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
                     mock_list.return_value = []
                     mock_get_by_name.return_value = None
                     mock_decrypt.return_value = "key"
@@ -1061,7 +1061,7 @@ class TestErrorClassificationSemantics:
                         # No se intentó fallback porque no hay más proveedores
                         mock_gen.assert_called_once()
 
-    def test_gemini_403_permission_no_fallback(self):
+    def test_gemini_403_permission_no_fallback(self, monkeypatch):
         """Gemini 403/permission no activa fallback."""
         from services.ai_router import AIProviderRouter
 
@@ -1071,9 +1071,7 @@ class TestErrorClassificationSemantics:
         with patch("services.ai_router.get_ai_provider_by_name") as mock_get_by_name:
             with patch("services.ai_router.list_ai_providers") as mock_list:
                 with patch("services.ai_router.get_decrypted_api_key") as mock_decrypt:
-                    import os
-
-                    os.environ["GEMINI_API_KEY"] = "test-key"
+                    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
                     mock_list.return_value = []
                     mock_get_by_name.return_value = None
                     mock_decrypt.return_value = "key"
@@ -1147,7 +1145,7 @@ class TestErrorClassificationSemantics:
         assert category == "server"
         assert is_transient is True
 
-    def test_router_auth_triggers_fallback(self):
+    def test_router_auth_triggers_fallback(self, monkeypatch):
         """Router: auth (401) activa fallback a siguiente proveedor."""
         from services.ai_router import AIProviderRouter
 
@@ -1184,9 +1182,7 @@ class TestErrorClassificationSemantics:
         with patch("services.ai_router.get_ai_provider_by_name") as mock_get_by_name:
             with patch("services.ai_router.list_ai_providers") as mock_list:
                 with patch("services.ai_router.get_decrypted_api_key") as mock_decrypt:
-                    import os
-
-                    os.environ["GEMINI_API_KEY"] = "test-key"
+                    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
                     mock_list.return_value = providers
                     mock_get_by_name.side_effect = providers
                     mock_decrypt.return_value = "key"
@@ -1213,7 +1209,7 @@ class TestErrorClassificationSemantics:
                             mock_gemini.assert_called_once()
                             mock_groq.assert_called_once()
 
-    def test_router_known_permission_falls_back(self):
+    def test_router_known_permission_falls_back(self, monkeypatch):
         """Router: permission conocido (403) activa fallback al siguiente proveedor."""
         from services.ai_router import AIProviderRouter
 
@@ -1250,9 +1246,7 @@ class TestErrorClassificationSemantics:
         with patch("services.ai_router.get_ai_provider_by_name") as mock_get_by_name:
             with patch("services.ai_router.list_ai_providers") as mock_list:
                 with patch("services.ai_router.get_decrypted_api_key") as mock_decrypt:
-                    import os
-
-                    os.environ["GEMINI_API_KEY"] = "test-key"
+                    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
                     mock_list.return_value = providers
                     mock_get_by_name.side_effect = providers
                     mock_decrypt.return_value = "key"
@@ -1546,3 +1540,47 @@ class TestProviderErrorPolicy:
         assert error.category == "auth"
         assert error.code == "API_KEY_EXPIRED"
         assert error.fallback_next_provider is True
+
+
+class TestSimulatedProviderIsolation:
+    def test_simulated_provider_context_restores_environment_and_router_cache(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        router.clear_cache()
+
+        with SimulatedAIProviders(gemini_provider_record()):
+            assert [p["provider"] for p in router._get_active_providers()] == ["gemini"]
+            assert os.getenv("GEMINI_API_KEY") is None
+
+        assert os.getenv("GEMINI_API_KEY") is None
+        assert router._providers_cache is None
+        assert router._all_providers_cache is None
+
+    def test_simulated_provider_context_processes_request(self):
+        mock_response = MagicMock()
+
+        with (
+            SimulatedAIProviders(gemini_provider_record()),
+            patch(
+                "services.ai_providers.gemini.GeminiProvider.generate",
+                return_value=(mock_response, 1, None),
+            ),
+        ):
+            response, attempts, error = router.generate([], None, business_id=1)
+
+        assert response is mock_response
+        assert attempts == 1
+        assert error is None
+
+    def test_router_fails_closed_after_simulated_provider_context(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        with SimulatedAIProviders(gemini_provider_record()):
+            assert router._get_active_providers()
+
+        with patch("services.ai_router.list_ai_providers", return_value=[]):
+            router.clear_cache()
+            response, attempts, error = router.generate([], None, business_id=1)
+
+        assert response is None
+        assert attempts == 0
+        assert error == ("unknown", "NoProvidersAvailable")

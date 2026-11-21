@@ -24,6 +24,7 @@ import database.database as database
 import services.ai as ai
 from services import appointments
 from services.ai import execute_tool
+from tests._ai_router_mocks import simulated_gemini_provider
 from tests._pg_compat import PostgreSQLTestCase
 
 
@@ -250,6 +251,7 @@ class TestGeminiMalformedResponses(BaseAIToolsTest):
     def _run_ask_ai(self, mock_client):
         ai.client = None
         patches = [
+            simulated_gemini_provider(),
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value="Corte: $100 (30 min)"),
             mock.patch.object(ai, "get_business_hours_prompt", return_value="lunes: abierto"),
