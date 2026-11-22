@@ -143,9 +143,7 @@ class AIProviderRouter:
             self._providers_cache = active
         return providers
 
-    def _build_provider_list(
-        self, contents: Any, config: Any, business_id: int | None
-    ) -> list[dict[str, Any]]:
+    def _build_provider_list(self) -> list[dict[str, Any]]:
         """
         Construye la lista ordenada de proveedores a intentar.
 
@@ -189,6 +187,164 @@ class AIProviderRouter:
 
         return result
 
+    def _resolve_table_credentials(self, provider_name: str) -> str | None:
+        """Resuelve la credencial cifrada de la tabla para un proveedor.
+
+        Returns:
+            API key desencriptada, o None si no hay configuración o no se
+            puede desencriptar (el llamador omite el proveedor).
+        """
+        provider_config = get_ai_provider_by_name(provider_name)
+        if provider_config is None:
+            logger.warning("router_provider_skip provider=%s reason=missing_config", provider_name)
+            return None
+        api_key = _resolve_provider_credentials(provider_name, provider_config)
+        if api_key is None:
+            logger.warning(
+                "router_provider_skip provider=%s reason=undecryptable_credentials", provider_name
+            )
+        return api_key
+
+    def _resolve_entry_api_key(self, provider_entry: dict[str, Any]) -> str | None:
+        """Resuelve la API key de una entrada de la lista de proveedores.
+
+        - Entrada legacy (Gemini por variable de entorno): usa la clave ya
+          resuelta al construir la lista.
+        - Entrada de tabla: resuelve y desencripta la credencial registrada.
+
+        Returns:
+            API key, o None si el proveedor debe omitirse.
+        """
+        if provider_entry.get("legacy", False):
+            return provider_entry["api_key"]
+        return self._resolve_table_credentials(provider_entry["provider"])
+
+    @staticmethod
+    def _global_timeout_result(
+        provider_name: str,
+        start_global: float,
+        total_http_attempts: int,
+        last_error: ProviderError | None,
+    ) -> tuple[None, int, ProviderError]:
+        """Construye el resultado cuando se agota el deadline global."""
+        logger.warning(
+            "router_timeout no_remaining_time provider=%s elapsed=%.1fs",
+            provider_name,
+            time.monotonic() - start_global,
+        )
+        error = last_error or ProviderError(
+            "timeout", "GlobalTimeout", retry_same_provider=True, fallback_next_provider=True
+        )
+        return None, total_http_attempts, error
+
+    @staticmethod
+    def _classify_failure(
+        error_info: ProviderError | None, provider_name: str, total_http_attempts: int
+    ) -> tuple[ProviderError, bool]:
+        """Normaliza el error de un proveedor y decide el fallback.
+
+        Returns:
+            Tupla (error_normalizado, continuar_con_siguiente_proveedor).
+        """
+        normalized = classify_provider_error(error_info or ProviderError("unknown", "UnknownError"))
+        logger.warning(
+            "router_fallback_decision provider=%s category=%s code=%s retry_same=%s "
+            "fallback_next=%s total_http_attempts=%d",
+            provider_name,
+            normalized.category,
+            normalized.code,
+            normalized.retry_same_provider,
+            normalized.fallback_next_provider,
+            total_http_attempts,
+        )
+        return normalized, normalized.fallback_next_provider
+
+    @staticmethod
+    def _finalize_failure(
+        any_provider_attempted: bool, total_http_attempts: int, last_error: ProviderError | None
+    ) -> tuple[None, int, ProviderError]:
+        """Construye el resultado final cuando ningún proveedor respondió."""
+        if not any_provider_attempted:
+            error = last_error or ProviderError("unknown", "NoProvidersAvailable")
+            return None, total_http_attempts, error
+
+        logger.error(
+            "router_all_failed total_http_attempts=%d last_error_category=%s last_error_code=%s",
+            total_http_attempts,
+            last_error.category if last_error else "-",
+            last_error.code if last_error else "-",
+        )
+        return (
+            None,
+            total_http_attempts,
+            last_error or ProviderError("unknown", "AllProvidersFailed"),
+        )
+
+    def _prepare_attempt(self, provider_entry, model):
+        """Resuelve credenciales, instancia el proveedor y resuelve el modelo.
+
+        Returns:
+            Tupla (provider, api_key, resolved_model) o None si hay que saltar.
+        """
+        api_key = self._resolve_entry_api_key(provider_entry)
+        if api_key is None:
+            return None
+        provider = self._instantiate_provider(provider_entry["provider"])
+        if provider is None:
+            return None
+        resolved_model = model or provider_entry.get("model")
+        return provider, api_key, resolved_model
+
+    @staticmethod
+    def _provider_exception(exc, provider_name):
+        """Registra la excepción del proveedor (solo tipo, sin payload ni credenciales).
+
+        Returns:
+            Tupla de (response, attempts_used, error_info).
+        """
+        logger.error(
+            "router_provider_exception provider=%s error_type=%s",
+            provider_name,
+            exc.__class__.__name__,
+        )
+        return None, 0, ProviderError("unknown", exc.__class__.__name__)
+
+    def _handle_attempt_result(
+        self, response, error_info, provider_name, total_http_attempts, last_error
+    ):
+        """Procesa el resultado de un intento de proveedor.
+
+        Returns:
+            Tupla (terminal_o_None, last_error_actualizado).
+            ``terminal`` None => continuar con el siguiente proveedor.
+        """
+        if response is not None:
+            logger.info(
+                "router_success provider=%s total_http_attempts=%d",
+                provider_name,
+                total_http_attempts,
+            )
+            return (response, total_http_attempts, None), last_error
+
+        normalized, should_fallback = self._classify_failure(
+            error_info, provider_name, total_http_attempts
+        )
+        if should_fallback:
+            return None, normalized
+
+        logger.info(
+            "router_no_fallback provider=%s category=%s code=%s",
+            provider_name,
+            normalized.category,
+            normalized.code,
+        )
+        return (None, total_http_attempts, normalized), normalized
+
+    @staticmethod
+    def _safe_attempts(attempts_used) -> int:
+        """Normaliza el contador de intentos HTTP usados."""
+        return max(0, int(attempts_used or 0))
+
     def generate(
         self,
         contents: Any,
@@ -205,7 +361,7 @@ class AIProviderRouter:
             Tupla (respuesta_o_None, solicitudes_http, ProviderError|None).
             ``solicitudes_http`` suma los intentos de red reales de cada proveedor.
         """
-        provider_list = self._build_provider_list(contents, config, business_id)
+        provider_list = self._build_provider_list()
         if not provider_list:
             return None, 0, ProviderError("unknown", "NoProvidersAvailable")
 
@@ -220,45 +376,19 @@ class AIProviderRouter:
 
         for provider_entry in provider_list:
             provider_name = provider_entry["provider"]
-            is_legacy = provider_entry.get("legacy", False)
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                logger.warning(
-                    "router_timeout no_remaining_time provider=%s elapsed=%.1fs",
-                    provider_name,
-                    time.monotonic() - start_global,
+                return self._global_timeout_result(
+                    provider_name, start_global, total_http_attempts, last_error
                 )
-                error = last_error or ProviderError(
-                    "timeout",
-                    "GlobalTimeout",
-                    retry_same_provider=True,
-                    fallback_next_provider=True,
-                )
-                return None, total_http_attempts, error
 
             provider_timeout = min(time_per_provider, remaining)
 
-            if is_legacy:
-                api_key = provider_entry["api_key"]
-            else:
-                provider_config = get_ai_provider_by_name(provider_name)
-                if provider_config is None:
-                    logger.warning(
-                        "router_provider_skip provider=%s reason=missing_config", provider_name
-                    )
-                    continue
-                api_key = _resolve_provider_credentials(provider_name, provider_config)
-                if api_key is None:
-                    logger.warning(
-                        "router_provider_skip provider=%s reason=undecryptable_credentials",
-                        provider_name,
-                    )
-                    continue
-
-            provider = self._instantiate_provider(provider_name)
-            if provider is None:
+            prepared = self._prepare_attempt(provider_entry, model)
+            if prepared is None:
                 continue
+            provider, api_key, resolved_model = prepared
 
             any_provider_attempted = True
             try:
@@ -271,68 +401,21 @@ class AIProviderRouter:
                     timeout_s=provider_timeout,
                     deadline_s=deadline,
                     idempotency_key=idempotency_key,
-                    model=model or provider_entry.get("model"),
+                    model=resolved_model,
                 )
             except Exception as exc:
-                logger.error(
-                    "router_provider_exception provider=%s error_type=%s",
-                    provider_name,
-                    exc.__class__.__name__,
-                )
-                response = None
-                attempts_used = 0
-                error_info = ProviderError("unknown", exc.__class__.__name__)
+                response, attempts_used, error_info = self._provider_exception(exc, provider_name)
 
-            total_http_attempts += max(0, int(attempts_used or 0))
+            total_http_attempts += self._safe_attempts(attempts_used)
 
-            if response is not None:
-                logger.info(
-                    "router_success provider=%s total_http_attempts=%d",
-                    provider_name,
-                    total_http_attempts,
-                )
-                return response, total_http_attempts, None
-
-            normalized = classify_provider_error(
-                error_info or ProviderError("unknown", "UnknownError")
+            terminal, last_error = self._handle_attempt_result(
+                response, error_info, provider_name, total_http_attempts, last_error
             )
-            last_error = normalized
-            logger.warning(
-                "router_fallback_decision provider=%s category=%s code=%s retry_same=%s "
-                "fallback_next=%s total_http_attempts=%d",
-                provider_name,
-                normalized.category,
-                normalized.code,
-                normalized.retry_same_provider,
-                normalized.fallback_next_provider,
-                total_http_attempts,
-            )
-            if normalized.fallback_next_provider:
+            if terminal is None:
                 continue
+            return terminal
 
-            logger.info(
-                "router_no_fallback provider=%s category=%s code=%s",
-                provider_name,
-                normalized.category,
-                normalized.code,
-            )
-            return None, total_http_attempts, normalized
-
-        if not any_provider_attempted:
-            error = last_error or ProviderError("unknown", "NoProvidersAvailable")
-            return None, total_http_attempts, error
-
-        logger.error(
-            "router_all_failed total_http_attempts=%d last_error_category=%s last_error_code=%s",
-            total_http_attempts,
-            last_error.category if last_error else "-",
-            last_error.code if last_error else "-",
-        )
-        return (
-            None,
-            total_http_attempts,
-            last_error or ProviderError("unknown", "AllProvidersFailed"),
-        )
+        return self._finalize_failure(any_provider_attempted, total_http_attempts, last_error)
 
     def contingency_message(self) -> str:
         """Devuelve el mensaje de contingencia para mostrar al usuario."""

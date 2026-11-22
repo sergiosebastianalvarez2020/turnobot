@@ -26,6 +26,23 @@ class _MalformedResponse(Exception):
         super().__init__(code)
 
 
+def _global_timeout_error() -> ProviderError:
+    """Error de timeout global (deadline agotado o timeout no positivo)."""
+    return ProviderError(
+        "timeout", "GlobalTimeout", retry_same_provider=True, fallback_next_provider=True
+    )
+
+
+def _deadline_timeout_error(last_error: ProviderError | None) -> ProviderError:
+    """Error de deadline global: conserva el último error si existe."""
+    return last_error or _global_timeout_error()
+
+
+def _exhausted_error(last_error: ProviderError | None) -> ProviderError:
+    """Error final cuando se agotan los reintentos del proveedor."""
+    return last_error or ProviderError("unknown", "UnknownError")
+
+
 class _GeminiCompatibleResponse:
     """Envuelve una respuesta OpenAI-like para que parezca una respuesta Gemini."""
 
@@ -115,62 +132,93 @@ class OpenAICompatibleProvider(AIProvider):
         return getattr(obj, name, default)
 
     @staticmethod
+    def _extract_text_from_part(part: dict) -> str | None:
+        """Extrae el texto de una parte de contenido."""
+        return OpenAICompatibleProvider._field(part, "text")
+
+    @staticmethod
+    def _extract_tool_calls_from_parts(
+        parts: list[dict], call_ids: dict[str, str]
+    ) -> tuple[list[dict], list[dict]]:
+        """Extrae llamadas a herramientas y mensajes de tool_response de las parts."""
+        tool_calls: list[dict] = []
+        tool_messages: list[dict] = []
+        for part in parts:
+            fc = OpenAICompatibleProvider._field(part, "function_call")
+            if fc is not None:
+                call_id = (
+                    OpenAICompatibleProvider._field(fc, "id", None)
+                    or f"call_{uuid.uuid4().hex[:12]}"
+                )
+                name = OpenAICompatibleProvider._field(fc, "name", "") or ""
+                args = OpenAICompatibleProvider._field(fc, "args", {}) or {}
+                tool_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(args)},
+                    }
+                )
+                call_ids[name] = call_id
+                continue
+
+            fr = OpenAICompatibleProvider._field(part, "function_response")
+            if fr is not None:
+                name = OpenAICompatibleProvider._field(fr, "name", "") or ""
+                response = OpenAICompatibleProvider._field(fr, "response", {})
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_ids.get(name, f"call_{uuid.uuid4().hex[:12]}"),
+                        "name": name,
+                        "content": json.dumps(response, default=str),
+                    }
+                )
+        return tool_calls, tool_messages
+
+    @staticmethod
+    def _build_message(role: str, text_parts: list[str], tool_calls: list[dict]) -> dict:
+        """Construye un mensaje dict con role, content y tool_calls."""
+        message: dict[str, Any] = {"role": role}
+        if text_parts:
+            message["content"] = "\n".join(text_parts)
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return message
+
+    @staticmethod
+    def _extract_text_parts(parts: list[dict]) -> list[str]:
+        """Extrae los textos de las parts ignorando function_call/function_response."""
+        text_parts: list[str] = []
+        for part in parts:
+            fc = OpenAICompatibleProvider._field(part, "function_call")
+            if fc is not None:
+                continue
+            fr = OpenAICompatibleProvider._field(part, "function_response")
+            if fr is not None:
+                continue
+            text = OpenAICompatibleProvider._field(part, "text")
+            if text:
+                text_parts.append(str(text))
+        return text_parts
+
+    @staticmethod
     def _contents_to_messages(contents: Any) -> list[dict]:
         """Convierte contenidos Gemini-like a mensajes OpenAI-like."""
         messages: list[dict] = []
-        tool_call_ids: dict[str, str] = {}
+        call_ids: dict[str, str] = {}
         for content in contents or []:
             role = OpenAICompatibleProvider._field(content, "role", "user") or "user"
             if role == "model":
                 role = "assistant"
             parts = OpenAICompatibleProvider._field(content, "parts", []) or []
-            text_parts: list[str] = []
-            tool_calls: list[dict] = []
-            tool_messages: list[dict] = []
-            for part in parts:
-                fc = OpenAICompatibleProvider._field(part, "function_call")
-                if fc is not None:
-                    call_id = (
-                        OpenAICompatibleProvider._field(fc, "id", None)
-                        or f"call_{uuid.uuid4().hex[:12]}"
-                    )
-                    name = OpenAICompatibleProvider._field(fc, "name", "") or ""
-                    args = OpenAICompatibleProvider._field(fc, "args", {}) or {}
-                    tool_calls.append(
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {"name": name, "arguments": json.dumps(args)},
-                        }
-                    )
-                    tool_call_ids[name] = call_id
-                    continue
 
-                fr = OpenAICompatibleProvider._field(part, "function_response")
-                if fr is not None:
-                    name = OpenAICompatibleProvider._field(fr, "name", "") or ""
-                    response = OpenAICompatibleProvider._field(fr, "response", {})
-                    tool_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call_ids.get(
-                                name, f"call_{uuid.uuid4().hex[:12]}"
-                            ),
-                            "name": name,
-                            "content": json.dumps(response, default=str),
-                        }
-                    )
-                    continue
+            text_parts = OpenAICompatibleProvider._extract_text_parts(parts)
+            tool_calls, tool_messages = OpenAICompatibleProvider._extract_tool_calls_from_parts(
+                parts, call_ids
+            )
 
-                text = OpenAICompatibleProvider._field(part, "text")
-                if text:
-                    text_parts.append(str(text))
-
-            message: dict[str, Any] = {"role": role}
-            if text_parts:
-                message["content"] = "\n".join(text_parts)
-            if tool_calls:
-                message["tool_calls"] = tool_calls
+            message = OpenAICompatibleProvider._build_message(role, text_parts, tool_calls)
             messages.append(message)
             messages.extend(tool_messages)
         return messages
@@ -262,9 +310,12 @@ class OpenAICompatibleProvider(AIProvider):
         return error.category, error.retry_same_provider, error.code
 
     @staticmethod
-    def _parse_success_payload(data: Any) -> _GeminiCompatibleResponse:
-        if not isinstance(data, dict):
-            raise _MalformedResponse("MalformedResponse")
+    def _extract_message(data: dict) -> dict:
+        """Extrae y valida el primer message de la respuesta.
+
+        Raises:
+            _MalformedResponse: si choices/message tienen estructura inválida.
+        """
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise _MalformedResponse("EmptyChoices")
@@ -274,10 +325,17 @@ class OpenAICompatibleProvider(AIProvider):
         message = first.get("message")
         if not isinstance(message, dict):
             raise _MalformedResponse("MissingMessage")
-        text = message.get("content")
+        return message
+
+    @staticmethod
+    def _validate_message_content(text, tool_calls) -> None:
+        """Valida el contenido del message.
+
+        Raises:
+            _MalformedResponse: si content/tool_calls son inválidos o vacíos.
+        """
         if text is not None and not isinstance(text, str):
             raise _MalformedResponse("MalformedContent")
-        tool_calls = message.get("tool_calls")
         if tool_calls is not None and (
             not isinstance(tool_calls, list)
             or any(
@@ -288,6 +346,15 @@ class OpenAICompatibleProvider(AIProvider):
             raise _MalformedResponse("MalformedToolCalls")
         if (text is None or not text.strip()) and not tool_calls:
             raise _MalformedResponse("EmptyResponse")
+
+    @staticmethod
+    def _parse_success_payload(data: Any) -> _GeminiCompatibleResponse:
+        if not isinstance(data, dict):
+            raise _MalformedResponse("MalformedResponse")
+        message = OpenAICompatibleProvider._extract_message(data)
+        text = message.get("content")
+        tool_calls = message.get("tool_calls")
+        OpenAICompatibleProvider._validate_message_content(text, tool_calls)
         usage = data.get("usage")
         if usage is not None and not isinstance(usage, dict):
             raise _MalformedResponse("MalformedUsage")
@@ -317,6 +384,231 @@ class OpenAICompatibleProvider(AIProvider):
         base_url = os.getenv(self.base_url_env, self.default_base_url).rstrip("/")
         return f"{base_url}/chat/completions"
 
+    def _resolve_credentials_and_model(
+        self, api_key: str | None, config: Any, model: str | None
+    ) -> tuple[str | None, str]:
+        """Resuelve la API key y el modelo a utilizar.
+
+        Returns:
+            Tupla de (key_resuelta_o_None, model_resuelto).
+        """
+        key = api_key or os.getenv(self.key_env)
+
+        resolved_model = (
+            model
+            or getattr(config, "model", None)
+            or os.getenv(self.model_env)
+            or self.default_model
+        )
+        return key, resolved_model
+
+    @staticmethod
+    def _convert_messages_and_tools(
+        contents: Any, config: Any
+    ) -> tuple[list[dict], list[dict] | None]:
+        """Convierte contenidos Gemini a formato OpenAI y herramientas.
+
+        Returns:
+            Tupla de (messages, tools).
+        """
+        messages = OpenAICompatibleProvider._contents_to_messages(contents)
+        system_instruction = getattr(config, "system_instruction", None) if config else None
+        if system_instruction:
+            messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": OpenAICompatibleProvider._stringify(system_instruction),
+                },
+            )
+
+        tools = OpenAICompatibleProvider._declarations_to_tools(
+            getattr(config, "tools", None) if config else None
+        )
+        return messages, tools
+
+    @staticmethod
+    def _construct_headers(api_key: str) -> dict[str, str]:
+        """Construye los headers de autorización."""
+        return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    @staticmethod
+    def _base_request_timeout(
+        requested_timeout_s: float | None, configured_timeout_s: float
+    ) -> float:
+        """Timeout base de la petición respetando lo pedido y lo configurado."""
+        if requested_timeout_s is not None:
+            return min(requested_timeout_s, configured_timeout_s)
+        return configured_timeout_s
+
+    @staticmethod
+    def _handle_successful_response(
+        normalized: _GeminiCompatibleResponse,
+        log_call,
+        request_id,
+        business_id,
+        latency_ms,
+        attempt,
+        http_attempts,
+    ) -> tuple[_GeminiCompatibleResponse, int, None]:
+        """Registra el éxito con métricas de tokens y devuelve la tupla de retorno.
+
+        Returns:
+            Tupla de (normalized_response, http_attempts, None).
+        """
+        usage = normalized.usage_metadata or {}
+        log_call(
+            request_id=request_id,
+            business_id=business_id,
+            latency_ms=latency_ms,
+            attempt=attempt,
+            status="success",
+            prompt_tokens=usage.get("prompt_tokens"),
+            candidate_tokens=usage.get("completion_tokens"),
+            total_tokens=usage.get("total_tokens"),
+        )
+        return normalized, http_attempts, None
+
+    def _parse_http_response(
+        self, resp
+    ) -> tuple[_GeminiCompatibleResponse | None, ProviderError | None]:
+        """Parsea una respuesta HTTP 200.
+
+        Returns:
+            Tupla de (respuesta_normalizada, None) o (None, error).
+        """
+        try:
+            data = resp.json()
+        except (ValueError, TypeError):
+            return None, ProviderError(
+                "malformed_response",
+                "MalformedJSON",
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+        try:
+            return self._parse_success_payload(data), None
+        except _MalformedResponse as malformed:
+            return None, ProviderError(
+                "malformed_response",
+                malformed.code,
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+
+    def _classify_http_response_error(self, resp) -> ProviderError:
+        """Clasifica una respuesta HTTP con status distinto de 200."""
+        try:
+            error_payload = resp.json()
+        except (ValueError, TypeError):
+            error_payload = None
+        return self._classify_http_provider_error(resp.status_code, error_payload)
+
+    def _error_outcome(
+        self,
+        error: ProviderError,
+        latency_ms: int,
+        attempt: int,
+        max_attempts: int,
+        request_id,
+        business_id,
+        http_attempts: int,
+        deadline_s: float | None,
+    ):
+        """Registra el error de un intento y decide reintentar o retornar.
+
+        Returns:
+            Tupla (retorno_terminal_o_None, error, http_attempts).
+            ``retorno`` None => reintentar (backoff ya aplicado).
+        """
+        self.log_call(
+            request_id=request_id,
+            business_id=business_id,
+            latency_ms=latency_ms,
+            attempt=attempt,
+            status="error",
+            error_type=error.code,
+        )
+        if error.retry_same_provider and attempt < max_attempts:
+            if not self._wait_before_retry(attempt, deadline_s):
+                return (None, http_attempts, _global_timeout_error()), error, http_attempts
+            return None, error, http_attempts
+        return (None, http_attempts, error), error, http_attempts
+
+    def _run_http_attempt(
+        self,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        request_timeout: float,
+        attempt: int,
+        max_attempts: int,
+        request_id,
+        business_id,
+        deadline_s: float | None,
+        http_attempts: int,
+    ):
+        """Ejecuta un intento HTTP completo y clasifica su resultado.
+
+        Returns:
+            Tupla (retorno_terminal_o_None, last_error, http_attempts).
+            ``retorno`` None => reintentar (backoff ya aplicado).
+        """
+        start = time.monotonic()
+        try:
+            with httpx.Client(timeout=request_timeout) as client:
+                http_attempts += 1
+                resp = client.post(self._chat_endpoint, json=payload, headers=headers)
+            latency_ms = int((time.monotonic() - start) * 1000)
+
+            if resp.status_code == 200:
+                normalized, last_error = self._parse_http_response(resp)
+                if normalized is not None:
+                    outcome = self._handle_successful_response(
+                        normalized,
+                        self.log_call,
+                        request_id,
+                        business_id,
+                        latency_ms,
+                        attempt,
+                        http_attempts,
+                    )
+                    return outcome, last_error, http_attempts
+            else:
+                last_error = self._classify_http_response_error(resp)
+
+            return self._error_outcome(
+                last_error,
+                latency_ms,
+                attempt,
+                max_attempts,
+                request_id,
+                business_id,
+                http_attempts,
+                deadline_s,
+            )
+        except httpx.TimeoutException:
+            last_error = ProviderError(
+                "timeout", "TimeoutError", retry_same_provider=True, fallback_next_provider=True
+            )
+        except (httpx.ConnectError, httpx.NetworkError) as exc:
+            last_error = ProviderError(
+                "server",
+                exc.__class__.__name__,
+                retry_same_provider=True,
+                fallback_next_provider=True,
+            )
+        latency_ms = int((time.monotonic() - start) * 1000)
+        return self._error_outcome(
+            last_error,
+            latency_ms,
+            attempt,
+            max_attempts,
+            request_id,
+            business_id,
+            http_attempts,
+            deadline_s,
+        )
+
     def generate(
         self,
         contents: Any,
@@ -329,7 +621,10 @@ class OpenAICompatibleProvider(AIProvider):
         idempotency_key: str | None = None,
         model: str | None = None,
     ) -> tuple[Any | None, int, ProviderError | None]:
-        key = api_key or os.getenv(self.key_env)
+        """Llama al proveedor de IA y devuelve respuesta, intentos y error."""
+
+        # --- 1. Resolución de credenciales y modelo ---
+        key, resolved_model = self._resolve_credentials_and_model(api_key, config, model)
         if not key:
             return (
                 None,
@@ -339,160 +634,48 @@ class OpenAICompatibleProvider(AIProvider):
                 ),
             )
 
-        resolved_model = (
-            model
-            or getattr(config, "model", None)
-            or os.getenv(self.model_env)
-            or self.default_model
-        )
-
-        messages = self._contents_to_messages(contents)
-        system_instruction = getattr(config, "system_instruction", None) if config else None
-        if system_instruction:
-            messages.insert(0, {"role": "system", "content": self._stringify(system_instruction)})
-        tools = self._declarations_to_tools(getattr(config, "tools", None) if config else None)
-
+        # --- 2. Conversión de mensajes, payload y headers ---
+        messages, tools = self._convert_messages_and_tools(contents, config)
         payload: dict[str, Any] = {"model": resolved_model, "messages": messages}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         payload.update(self._config_to_openai(config))
+        headers = self._construct_headers(key)
 
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-
+        # --- 3. Preparación de reintentos ---
         max_attempts = 2
         http_attempts = 0
         last_error: ProviderError | None = None
 
+        # --- 4. Bucle de reintentos ---
         for attempt in range(1, max_attempts + 1):
             configured_timeout = self._configured_timeout_s()
-            request_timeout = (
-                min(timeout_s, configured_timeout) if timeout_s is not None else configured_timeout
-            )
+            request_timeout = self._base_request_timeout(timeout_s, configured_timeout)
             if deadline_s is not None:
                 remaining = deadline_s - time.monotonic()
                 if remaining <= 0:
-                    error = last_error or ProviderError(
-                        "timeout",
-                        "GlobalTimeout",
-                        retry_same_provider=True,
-                        fallback_next_provider=True,
-                    )
-                    return None, http_attempts, error
+                    return None, http_attempts, _deadline_timeout_error(last_error)
                 request_timeout = min(request_timeout, remaining)
-                if request_timeout <= 0:
-                    return (
-                        None,
-                        http_attempts,
-                        ProviderError(
-                            "timeout",
-                            "GlobalTimeout",
-                            retry_same_provider=True,
-                            fallback_next_provider=True,
-                        ),
-                    )
+            if request_timeout <= 0:
+                return None, http_attempts, _global_timeout_error()
 
-            start = time.monotonic()
-            try:
-                with httpx.Client(timeout=request_timeout) as client:
-                    http_attempts += 1
-                    resp = client.post(self._chat_endpoint, json=payload, headers=headers)
-                latency_ms = int((time.monotonic() - start) * 1000)
-
-                if resp.status_code == 200:
-                    try:
-                        data = resp.json()
-                    except (ValueError, TypeError):
-                        last_error = ProviderError(
-                            "malformed_response",
-                            "MalformedJSON",
-                            retry_same_provider=True,
-                            fallback_next_provider=True,
-                        )
-                    else:
-                        try:
-                            normalized = self._parse_success_payload(data)
-                        except _MalformedResponse as malformed:
-                            last_error = ProviderError(
-                                "malformed_response",
-                                malformed.code,
-                                retry_same_provider=True,
-                                fallback_next_provider=True,
-                            )
-                        else:
-                            self.log_call(
-                                request_id=request_id,
-                                business_id=business_id,
-                                latency_ms=latency_ms,
-                                attempt=attempt,
-                                status="success",
-                            )
-                            return normalized, http_attempts, None
-                else:
-                    try:
-                        error_payload = resp.json()
-                    except (ValueError, TypeError):
-                        error_payload = None
-                    last_error = self._classify_http_provider_error(resp.status_code, error_payload)
-
-                self.log_call(
-                    request_id=request_id,
-                    business_id=business_id,
-                    latency_ms=latency_ms,
-                    attempt=attempt,
-                    status="error",
-                    error_type=last_error.code,
-                )
-                if last_error.retry_same_provider and attempt < max_attempts:
-                    if not self._wait_before_retry(attempt, deadline_s):
-                        return (
-                            None,
-                            http_attempts,
-                            ProviderError(
-                                "timeout",
-                                "GlobalTimeout",
-                                retry_same_provider=True,
-                                fallback_next_provider=True,
-                            ),
-                        )
-                    continue
-                return None, http_attempts, last_error
-
-            except httpx.TimeoutException:
-                last_error = ProviderError(
-                    "timeout", "TimeoutError", retry_same_provider=True, fallback_next_provider=True
-                )
-            except (httpx.ConnectError, httpx.NetworkError) as exc:
-                last_error = ProviderError(
-                    "server",
-                    exc.__class__.__name__,
-                    retry_same_provider=True,
-                    fallback_next_provider=True,
-                )
-            self.log_call(
-                request_id=request_id,
-                business_id=business_id,
-                latency_ms=int((time.monotonic() - start) * 1000),
-                attempt=attempt,
-                status="error",
-                error_type=last_error.code,
+            outcome, last_error, http_attempts = self._run_http_attempt(
+                payload,
+                headers,
+                request_timeout,
+                attempt,
+                max_attempts,
+                request_id,
+                business_id,
+                deadline_s,
+                http_attempts,
             )
-            if last_error.retry_same_provider and attempt < max_attempts:
-                if not self._wait_before_retry(attempt, deadline_s):
-                    return (
-                        None,
-                        http_attempts,
-                        ProviderError(
-                            "timeout",
-                            "GlobalTimeout",
-                            retry_same_provider=True,
-                            fallback_next_provider=True,
-                        ),
-                    )
-                continue
-            return None, http_attempts, last_error
+            if outcome is not None:
+                return outcome
 
-        return None, http_attempts, last_error or ProviderError("unknown", "UnknownError")
+        # --- 5. Sin reintentos restantes ---
+        return None, http_attempts, _exhausted_error(last_error)
 
     def classify_error(self, error: Exception) -> tuple[str, bool, str]:
         if isinstance(error, TimeoutError):
@@ -538,7 +721,8 @@ class OpenAICompatibleProvider(AIProvider):
         import logging
 
         logging.getLogger(self.log_name).info(
-            "%s_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s error_type=%s",
+            "%s_call request_id=%s business_id=%s latency_ms=%d attempt=%d status=%s "
+            "error_type=%s prompt_tokens=%s candidate_tokens=%s total_tokens=%s",
             self.provider_key,
             request_id or "-",
             business_id or "-",
@@ -546,6 +730,9 @@ class OpenAICompatibleProvider(AIProvider):
             attempt,
             status,
             error_type or "-",
+            prompt_tokens if prompt_tokens is not None else "-",
+            candidate_tokens if candidate_tokens is not None else "-",
+            total_tokens if total_tokens is not None else "-",
         )
 
 

@@ -28,6 +28,10 @@ Contiene las view functions para la administración de la plataforma:
 Estas rutas operan a nivel de PLATAFORMA (superadmin), no son tenant-scoped.
 """
 
+
+# ============================================================
+# VISTA: Panel superadmin
+
 import logging
 import secrets
 from urllib.parse import quote
@@ -78,6 +82,10 @@ from services.ai_encryption import is_configured as encryption_is_configured
 from services.ai_providers.gemini import GeminiProvider
 from services.ai_providers.groq import CerebrasProvider, GroqProvider, OpenRouterProvider
 from services.notifications import send_apply_confirmation_email, send_apply_notice_to_superadmin
+
+# Mensajes de error reutilizados por las vistas de IA del superadmin.
+ERROR_RATE_LIMIT = "Demasiadas solicitudes. Esperá unos minutos."
+ERROR_PROVIDER_NOT_FOUND = "Proveedor no encontrado."
 
 
 def _superadmin_gate():
@@ -567,6 +575,96 @@ def superadmin_ia():
     )
 
 
+def _validate_superadmin_ia_save_form(
+    provider: str, model: str, priority_raw: str, active_raw: str, provider_id_raw: str
+) -> tuple[bool, str | None, int | None, bool | None, int | None]:
+    """Valida el formulario de superadmin_ia_guardar y devuelve los parámetros procesados.
+
+    Returns:
+        Tuple de (exito, mensaje_error, provider_id, priority, active).
+        Si exito es False, mensaje_error contiene la razón y los demás son None.
+    """
+    if provider not in _PROVIDER_LABELS:
+        return False, "Proveedor no válido.", None, None, None
+    if not model:
+        return False, "El modelo es obligatorio.", None, None, None
+
+    # Resolver prioridad
+    try:
+        priority = int(priority_raw) if priority_raw else None
+    except (TypeError, ValueError):
+        return False, "La prioridad debe ser un número entero.", None, None, None
+
+    # Resolver provider_id y active
+    provider_id = None
+    if provider_id_raw:
+        try:
+            provider_id = int(provider_id_raw)
+        except (TypeError, ValueError):
+            provider_id = None
+
+    active = active_raw == "1" if active_raw is not None else None
+
+    return True, None, provider_id, priority, active
+
+
+def _parse_ia_save_form() -> tuple:
+    """Extrae y normaliza los campos del formulario de guardado de IA."""
+    return (
+        (request.form.get("provider", "") or "").strip().lower(),
+        (request.form.get("model", "") or "").strip(),
+        (request.form.get("priority", "") or "").strip(),
+        (request.form.get("active", "") or "").strip(),
+        request.form.get("api_key", "") or "",
+        (request.form.get("provider_id", "") or "").strip(),
+    )
+
+
+def _save_ia_provider(
+    provider: str,
+    model: str,
+    priority: int | None,
+    active: bool | None,
+    api_key: str,
+    provider_id: int | None,
+    user: dict,
+    ip: str,
+) -> str | None:
+    """Crea o actualiza el proveedor de IA.
+
+    Returns:
+        Mensaje de error o None si la operación fue exitosa.
+    """
+    try:
+        if provider_id is not None:
+            ok = update_ai_provider(
+                provider_id,
+                model=model or None,
+                priority=priority or None,
+                active=active,
+                api_key=api_key.strip() or None,
+                platform_user_id=user["id"],
+                actor_email=user["email"],
+                ip_address=ip,
+            )
+            if not ok:
+                return ERROR_PROVIDER_NOT_FOUND
+        else:
+            create_ai_provider(
+                provider=provider,
+                api_key=api_key.strip(),
+                model=model,
+                priority=priority,
+                active=active,
+                platform_user_id=user["id"],
+                actor_email=user["email"],
+                ip_address=ip,
+            )
+        return None
+    except AIConfigError as exc:
+        return str(exc)
+
+
 def superadmin_ia_guardar():
     """Crea o actualiza un proveedor de IA (credencial cifrada)."""
     denied = _superadmin_gate()
@@ -577,64 +675,29 @@ def superadmin_ia_guardar():
     user, _ = _platform_current_user()
     ip = get_client_ip()
     if not _check_ia_rate_limit(ip, "ia_save"):
-        return _ia_redirect(error="Demasiadas solicitudes. Esperá unos minutos.")
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
 
-    provider = (request.form.get("provider", "") or "").strip().lower()
-    model = (request.form.get("model", "") or "").strip()
-    priority_raw = (request.form.get("priority", "") or "").strip()
-    active_raw = (request.form.get("active", "") or "").strip()
-    api_key = request.form.get("api_key", "") or ""
-    provider_id_raw = (request.form.get("provider_id", "") or "").strip()
+    # 1. Validación de parámetros
+    provider, model, priority_raw, active_raw, api_key, provider_id_raw = _parse_ia_save_form()
 
-    if provider not in _PROVIDER_LABELS:
-        return _ia_redirect(error="Proveedor no válido.")
-    if not model:
-        return _ia_redirect(error="El modelo es obligatorio.")
-    try:
-        existing = list_ai_providers()
-        priority = (
-            int(priority_raw)
-            if priority_raw
-            else (max((p.get("priority", 0) for p in existing), default=0) + 1)
-        )
-    except (TypeError, ValueError):
-        return _ia_redirect(error="La prioridad debe ser un número entero.")
+    success, error_msg, provider_id, priority, active = _validate_superadmin_ia_save_form(
+        provider, model, priority_raw, active_raw, provider_id_raw
+    )
+    if not success:
+        return _ia_redirect(error=error_msg)
 
-    provider_id = None
-    if provider_id_raw:
-        try:
-            provider_id = int(provider_id_raw)
-        except (TypeError, ValueError):
-            provider_id = None
+    # 2. Validación de prioridad y lista existente
+    existing = list_ai_providers()
+    if priority is None:
+        priority = max((p.get("priority", 0) for p in existing), default=0) + 1
 
-    try:
-        if provider_id is not None:
-            ok = update_ai_provider(
-                provider_id,
-                model=model or None,
-                priority=priority or None,
-                active=(active_raw == "1"),
-                api_key=api_key.strip() or None,
-                platform_user_id=user["id"],
-                actor_email=user["email"],
-                ip_address=ip,
-            )
-            if not ok:
-                return _ia_redirect(error="Proveedor no encontrado.")
-        else:
-            create_ai_provider(
-                provider=provider,
-                api_key=api_key.strip(),
-                model=model,
-                priority=priority,
-                active=(active_raw == "1"),
-                platform_user_id=user["id"],
-                actor_email=user["email"],
-                ip_address=ip,
-            )
-        return _ia_redirect(message="Proveedor guardado correctamente.")
-    except AIConfigError as exc:
-        return _ia_redirect(error=str(exc))
+    # 3. Resolución de creación o actualización
+    save_error = _save_ia_provider(
+        provider, model, priority, active, api_key, provider_id, user, ip
+    )
+    if save_error is not None:
+        return _ia_redirect(error=save_error)
+    return _ia_redirect(message="Proveedor guardado correctamente.")
 
 
 def superadmin_ia_activar_desactivar(provider_id, active):
@@ -647,13 +710,13 @@ def superadmin_ia_activar_desactivar(provider_id, active):
     user, _ = _platform_current_user()
     ip = get_client_ip()
     if not _check_ia_rate_limit(ip, "ia_toggle"):
-        return _ia_redirect(error="Demasiadas solicitudes. Esperá unos minutos.")
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
 
     ok = set_ai_provider_active(
         provider_id, active, platform_user_id=user["id"], actor_email=user["email"], ip_address=ip
     )
     if not ok:
-        return _ia_redirect(error="Proveedor no encontrado.")
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
     estado = "activado" if active else "desactivado"
     return _ia_redirect(message=f"Proveedor {estado} correctamente.")
 
@@ -668,7 +731,7 @@ def superadmin_ia_prioridad(provider_id):
     user, _ = _platform_current_user()
     ip = get_client_ip()
     if not _check_ia_rate_limit(ip, "ia_priority"):
-        return _ia_redirect(error="Demasiadas solicitudes. Esperá unos minutos.")
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
 
     priority_raw = (request.form.get("priority", "") or "").strip()
     try:
@@ -687,7 +750,7 @@ def superadmin_ia_prioridad(provider_id):
     except AIConfigError as exc:
         return _ia_redirect(error=str(exc))
     if not ok:
-        return _ia_redirect(error="Proveedor no encontrado.")
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
     return _ia_redirect(message="Prioridad actualizada correctamente.")
 
 
@@ -701,13 +764,13 @@ def superadmin_ia_eliminar(provider_id):
     user, _ = _platform_current_user()
     ip = get_client_ip()
     if not _check_ia_rate_limit(ip, "ia_delete"):
-        return _ia_redirect(error="Demasiadas solicitudes. Esperá unos minutos.")
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
 
     ok = delete_ai_provider(
         provider_id, platform_user_id=user["id"], actor_email=user["email"], ip_address=ip
     )
     if not ok:
-        return _ia_redirect(error="Proveedor no encontrado.")
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
     return _ia_redirect(message="Proveedor eliminado correctamente.")
 
 
@@ -721,11 +784,11 @@ def superadmin_ia_probar(provider_id):
     user, _ = _platform_current_user()
     ip = get_client_ip()
     if not _check_ia_rate_limit(ip, "ia_test"):
-        return _ia_redirect(error="Demasiadas solicitudes. Esperá unos minutos.")
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
 
     provider = get_ai_provider(provider_id)
     if provider is None:
-        return _ia_redirect(error="Proveedor no encontrado.")
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
 
     provider_name = provider["provider"]
     label = _PROVIDER_LABELS.get(provider_name, provider_name)

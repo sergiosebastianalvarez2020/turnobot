@@ -159,13 +159,17 @@ def get_business_identity(business_id):
 _TRANSIENT_STATUSES = {"DEADLINE_EXCEEDED", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"}
 
 
-def _classify_gemini_provider_error(error):
-    """Clasifica errores de Gemini en un ProviderError normalizado."""
-    if isinstance(error, (TimeoutError, socket.timeout)):
-        return ProviderError(
-            "timeout", "TimeoutError", retry_same_provider=True, fallback_next_provider=True
-        )
+_GEMINI_PERMISSION_TYPE_TEXTS = frozenset(
+    {"PERMISSION_DENIED", "PERMISSION_DENIED_ERROR", "IAM_PERMISSION_DENIED", "ACCESS_DENIED"}
+)
 
+
+def _classify_gemini_network_error(error):
+    """Clasifica errores de red/timeout de httpx y del sistema.
+
+    Returns:
+        ProviderError normalizado o None si el error no es de red.
+    """
     try:
         import httpx
 
@@ -190,80 +194,131 @@ def _classify_gemini_provider_error(error):
             retry_same_provider=True,
             fallback_next_provider=True,
         )
+    return None
+
+
+def _gemini_rule_permission(status_text, type_text, code, status):
+    if status_text == "PERMISSION_DENIED" or type_text in _GEMINI_PERMISSION_TYPE_TEXTS:
+        return True, ProviderError(
+            "permission",
+            status_text or type_text or "PERMISSION_DENIED",
+            retry_same_provider=False,
+            fallback_next_provider=True,
+        )
+    return False, None
+
+
+def _gemini_rule_auth(status_text, type_text, code, status):
+    if status_text == "UNAUTHENTICATED" or code == 401:
+        return True, ProviderError(
+            "auth",
+            status_text or type_text or "UNAUTHENTICATED",
+            retry_same_provider=False,
+            fallback_next_provider=True,
+        )
+    return False, None
+
+
+def _gemini_rule_not_found(status_text, type_text, code, status):
+    if status_text == "NOT_FOUND" or code == 404:
+        return True, ProviderError(
+            "invalid_argument",
+            status_text or "NOT_FOUND",
+            retry_same_provider=False,
+            fallback_next_provider=True,
+        )
+    return False, None
+
+
+def _gemini_rule_invalid_argument(status_text, type_text, code, status):
+    if status_text == "INVALID_ARGUMENT" or code == 400:
+        return True, ProviderError(
+            "invalid_argument",
+            status_text or "INVALID_ARGUMENT",
+            retry_same_provider=False,
+            fallback_next_provider=False,
+        )
+    return False, None
+
+
+def _gemini_rule_deadline(status_text, type_text, code, status):
+    if status_text == "DEADLINE_EXCEEDED":
+        return True, ProviderError(
+            "timeout", "DEADLINE_EXCEEDED", retry_same_provider=True, fallback_next_provider=True
+        )
+    return False, None
+
+
+def _gemini_rule_quota(status_text, type_text, code, status):
+    if status_text == "RESOURCE_EXHAUSTED" or code == 429:
+        return True, ProviderError(
+            "quota",
+            status_text or "RESOURCE_EXHAUSTED",
+            retry_same_provider=True,
+            fallback_next_provider=True,
+        )
+    return False, None
+
+
+def _gemini_rule_server(status_text, type_text, code, status):
+    if status_text in {"UNAVAILABLE", "INTERNAL"} or (isinstance(code, int) and 500 <= code < 600):
+        return True, ProviderError(
+            "server",
+            status_text or f"HTTP{code}",
+            retry_same_provider=True,
+            fallback_next_provider=True,
+        )
+    return False, None
+
+
+_GEMINI_API_RULES = (
+    _gemini_rule_permission,
+    _gemini_rule_auth,
+    _gemini_rule_not_found,
+    _gemini_rule_invalid_argument,
+    _gemini_rule_deadline,
+    _gemini_rule_quota,
+    _gemini_rule_server,
+)
+
+
+def _classify_gemini_api_error(error):
+    """Clasifica un genai_errors.APIError con la tabla de reglas de status/code."""
+    status = getattr(error, "status", None)
+    code = getattr(error, "code", None)
+    error_type = getattr(error, "type", None)
+    status_text = str(status).strip().upper() if status is not None else ""
+    type_text = str(error_type).strip().upper() if error_type is not None else ""
+
+    for rule in _GEMINI_API_RULES:
+        matched, result = rule(status_text, type_text, code, status)
+        if matched:
+            return result
+    if code == 403:
+        return classify_status_code(403)
+    if status is not None:
+        return ProviderError(
+            "unknown", str(status), retry_same_provider=False, fallback_next_provider=False
+        )
+    display = str(code) if code is not None else "APIError"
+    return ProviderError(
+        "unknown", display, retry_same_provider=False, fallback_next_provider=False
+    )
+
+
+def _classify_gemini_provider_error(error):
+    """Clasifica errores de Gemini en un ProviderError normalizado."""
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return ProviderError(
+            "timeout", "TimeoutError", retry_same_provider=True, fallback_next_provider=True
+        )
+
+    network_error = _classify_gemini_network_error(error)
+    if network_error is not None:
+        return network_error
 
     if isinstance(error, genai_errors.APIError):
-        status = getattr(error, "status", None)
-        code = getattr(error, "code", None)
-        error_type = getattr(error, "type", None)
-        status_text = str(status).strip().upper() if status is not None else ""
-        type_text = str(error_type).strip().upper() if error_type is not None else ""
-
-        if status_text == "PERMISSION_DENIED" or type_text in {
-            "PERMISSION_DENIED",
-            "PERMISSION_DENIED_ERROR",
-            "IAM_PERMISSION_DENIED",
-            "ACCESS_DENIED",
-        }:
-            return ProviderError(
-                "permission",
-                status_text or type_text or "PERMISSION_DENIED",
-                retry_same_provider=False,
-                fallback_next_provider=True,
-            )
-        if status_text == "UNAUTHENTICATED" or code == 401:
-            return ProviderError(
-                "auth",
-                status_text or type_text or "UNAUTHENTICATED",
-                retry_same_provider=False,
-                fallback_next_provider=True,
-            )
-        if status_text == "NOT_FOUND" or code == 404:
-            return ProviderError(
-                "invalid_argument",
-                status_text or "NOT_FOUND",
-                retry_same_provider=False,
-                fallback_next_provider=True,
-            )
-        if status_text == "INVALID_ARGUMENT" or code == 400:
-            return ProviderError(
-                "invalid_argument",
-                status_text or "INVALID_ARGUMENT",
-                retry_same_provider=False,
-                fallback_next_provider=False,
-            )
-        if status_text == "DEADLINE_EXCEEDED":
-            return ProviderError(
-                "timeout",
-                "DEADLINE_EXCEEDED",
-                retry_same_provider=True,
-                fallback_next_provider=True,
-            )
-        if status_text == "RESOURCE_EXHAUSTED" or code == 429:
-            return ProviderError(
-                "quota",
-                status_text or "RESOURCE_EXHAUSTED",
-                retry_same_provider=True,
-                fallback_next_provider=True,
-            )
-        if status_text in {"UNAVAILABLE", "INTERNAL"} or (
-            isinstance(code, int) and 500 <= code < 600
-        ):
-            return ProviderError(
-                "server",
-                status_text or f"HTTP{code}",
-                retry_same_provider=True,
-                fallback_next_provider=True,
-            )
-        if code == 403:
-            return classify_status_code(403)
-        if status is not None:
-            return ProviderError(
-                "unknown", str(status), retry_same_provider=False, fallback_next_provider=False
-            )
-        display = str(code) if code is not None else "APIError"
-        return ProviderError(
-            "unknown", display, retry_same_provider=False, fallback_next_provider=False
-        )
+        return _classify_gemini_api_error(error)
 
     if isinstance(error, ValueError):
         return ProviderError(
@@ -325,6 +380,119 @@ def _gemini_error_message(category):
     )
 
 
+def _resolve_requested_timeout_ms(timeout_s, configured_timeout_ms: int) -> int:
+    """Convierte timeout_s a ms; si no se pidió, usa el configurado."""
+    return int(timeout_s * 1000) if timeout_s is not None else configured_timeout_ms
+
+
+def _gemini_deadline_error(last_error: ProviderError | None) -> ProviderError:
+    """Error de deadline global: conserva el último error si existe."""
+    return last_error or ProviderError(
+        "timeout", "GlobalTimeout", retry_same_provider=True, fallback_next_provider=True
+    )
+
+
+def _gemini_exhausted_error(last_error: ProviderError | None) -> ProviderError:
+    """Error final cuando se agotan los reintentos de Gemini."""
+    return last_error or ProviderError("unknown", "UnknownError")
+
+
+def _extract_usage_tokens(response) -> dict:
+    """Extrae los conteos de tokens de usage_metadata (si están disponibles)."""
+    tokens = {"prompt_tokens": None, "candidate_tokens": None, "total_tokens": None}
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return tokens
+    if isinstance(usage, dict):
+        tokens["prompt_tokens"] = usage.get("prompt_token_count")
+        tokens["candidate_tokens"] = usage.get("candidates_token_count")
+        tokens["total_tokens"] = usage.get("total_token_count")
+    else:
+        tokens["prompt_tokens"] = getattr(usage, "prompt_token_count", None)
+        tokens["candidate_tokens"] = getattr(usage, "candidates_token_count", None)
+        tokens["total_tokens"] = getattr(usage, "total_token_count", None)
+    return tokens
+
+
+def _classify_and_log_error(
+    error, request_id, business_id, latency_ms, attempt, logger_func
+) -> ProviderError:
+    """Clasifica un error y registra la información.
+
+    Encapsula la normalización y logging de errores.
+    """
+    normalized = _classify_gemini_provider_error(error)
+    logger_func(
+        request_id=request_id,
+        business_id=business_id,
+        latency_ms=latency_ms,
+        attempt=attempt,
+        status="error",
+        error_type=normalized.code,
+    )
+    return normalized
+
+
+def _calculate_backoff_delay(
+    attempt: int, base_backoff: float, max_backoff: float, deadline_remaining: float | None = None
+) -> float:
+    """Calcula el delay de backoff para la próxima iteración.
+
+    Returns el delay en segundos. Si el deadline restante es menor que el delay,
+    retorna el valor que cabría en el deadline.
+    """
+    delay = min(base_backoff * (2 ** (attempt - 1)), max_backoff)
+    if deadline_remaining is not None and deadline_remaining <= delay:
+        return deadline_remaining
+    return delay
+
+
+def _handle_gemini_call_error(
+    error, attempt, http_attempts, request_id, business_id, start, deadline_s
+):
+    """Clasifica un error de Gemini, decide el retry y espera el backoff.
+
+    Returns:
+        Tupla (retorno_a_devolver_o_None, last_error, http_attempts).
+        ``retorno`` None => reintentar (ya se esperó el backoff).
+    """
+    latency_ms = int((monotonic() - start) * 1000)
+    normalized = _classify_and_log_error(
+        error, request_id, business_id, latency_ms, attempt, _log_gemini_call
+    )
+    if not normalized.retry_same_provider or attempt >= MAX_RETRIES:
+        return (None, http_attempts, normalized), normalized, http_attempts
+
+    delay = _calculate_backoff_delay(
+        attempt,
+        RETRY_BACKOFF_BASE,
+        RETRY_BACKOFF_MAX,
+        (deadline_s - monotonic()) if deadline_s else None,
+    )
+    if deadline_s is not None:
+        remaining = deadline_s - monotonic()
+        if remaining <= delay:
+            return (
+                (
+                    None,
+                    http_attempts,
+                    ProviderError(
+                        "timeout",
+                        "GlobalTimeout",
+                        retry_same_provider=True,
+                        fallback_next_provider=True,
+                    ),
+                ),
+                normalized,
+                http_attempts,
+            )
+
+    import time as _time
+
+    _time.sleep(delay)
+    return None, normalized, http_attempts
+
+
 def _call_gemini_with_retry(
     contents,
     config,
@@ -338,8 +506,9 @@ def _call_gemini_with_retry(
 ):
     """Llama a Gemini con reintentos acotados y devuelve solicitudes HTTP reales."""
     configured_timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "8000"))
-    requested_timeout_ms = int(timeout_s * 1000) if timeout_s is not None else configured_timeout_ms
+    requested_timeout_ms = _resolve_requested_timeout_ms(timeout_s, configured_timeout_ms)
     base_timeout_ms = min(requested_timeout_ms, configured_timeout_ms)
+    resolved_model = model or MODEL
     http_attempts = 0
     last_error: ProviderError | None = None
 
@@ -347,16 +516,11 @@ def _call_gemini_with_retry(
         if deadline_s is not None:
             remaining = deadline_s - monotonic()
             if remaining <= 0:
-                error = last_error or ProviderError(
-                    "timeout",
-                    "GlobalTimeout",
-                    retry_same_provider=True,
-                    fallback_next_provider=True,
-                )
-                return None, http_attempts, error
+                return None, http_attempts, _gemini_deadline_error(last_error)
             timeout_ms = min(base_timeout_ms, int(remaining * 1000))
         else:
             timeout_ms = base_timeout_ms
+
         if timeout_ms <= 0:
             return (
                 None,
@@ -374,56 +538,17 @@ def _call_gemini_with_retry(
             client = get_gemini_client(api_key=api_key, timeout_ms=timeout_ms)
             http_attempts += 1
             response = client.models.generate_content(
-                model=model or MODEL, contents=contents, config=config
+                model=resolved_model, contents=contents, config=config
             )
         except Exception as error:
-            latency_ms = int((monotonic() - start) * 1000)
-            normalized = _classify_gemini_provider_error(error)
-            _log_gemini_call(
-                request_id=request_id,
-                business_id=business_id,
-                latency_ms=latency_ms,
-                attempt=attempt,
-                status="error",
-                error_type=normalized.code,
+            outcome, last_error, http_attempts = _handle_gemini_call_error(
+                error, attempt, http_attempts, request_id, business_id, start, deadline_s
             )
-            last_error = normalized
-            if not normalized.retry_same_provider or attempt >= MAX_RETRIES:
-                return None, http_attempts, normalized
-            delay = min(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)), RETRY_BACKOFF_MAX)
-            if deadline_s is not None:
-                remaining = deadline_s - monotonic()
-                if remaining <= delay:
-                    return (
-                        None,
-                        http_attempts,
-                        ProviderError(
-                            "timeout",
-                            "GlobalTimeout",
-                            retry_same_provider=True,
-                            fallback_next_provider=True,
-                        ),
-                    )
-            import time as _time
-
-            _time.sleep(delay)
+            if outcome is not None:
+                return outcome
             continue
 
         latency_ms = int((monotonic() - start) * 1000)
-        prompt_tokens = None
-        candidate_tokens = None
-        total_tokens = None
-        usage = getattr(response, "usage_metadata", None)
-        if usage is not None:
-            if isinstance(usage, dict):
-                prompt_tokens = usage.get("prompt_token_count")
-                candidate_tokens = usage.get("candidates_token_count")
-                total_tokens = usage.get("total_token_count")
-            else:
-                prompt_tokens = getattr(usage, "prompt_token_count", None)
-                candidate_tokens = getattr(usage, "candidates_token_count", None)
-                total_tokens = getattr(usage, "total_token_count", None)
-
         _log_gemini_call(
             request_id=request_id,
             business_id=business_id,
@@ -431,13 +556,11 @@ def _call_gemini_with_retry(
             attempt=attempt,
             status="success",
             error_type=None,
-            prompt_tokens=prompt_tokens,
-            candidate_tokens=candidate_tokens,
-            total_tokens=total_tokens,
+            **_extract_usage_tokens(response),
         )
         return response, http_attempts, None
 
-    return None, http_attempts, last_error or ProviderError("unknown", "UnknownError")
+    return None, http_attempts, _gemini_exhausted_error(last_error)
 
 
 def _log_gemini_call(

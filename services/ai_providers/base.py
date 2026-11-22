@@ -140,6 +140,67 @@ def _display_code(code: Any, default: str) -> str:
     return text or default
 
 
+def _is_permission_category(code: str, category: str) -> bool:
+    """Entrada al bloque de permisos: 403 genéricos o categoría relacionada."""
+    return code in _GENERIC_403_CODES or category in {"permission", "policy_denied", "forbidden"}
+
+
+def _is_auth_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de autenticación."""
+    return code in _AUTH_CODES or category in {"auth", "unauthenticated", "unauthorized"}
+
+
+def _is_model_not_found_category(code: str, category: str) -> bool:
+    """Verifica si el código identifica un modelo inexistente (solo código)."""
+    return code in _MODEL_NOT_FOUND_CODES
+
+
+def _is_invalid_argument_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de argumento inválido."""
+    return code in _INVALID_ARGUMENT_CODES or category in {"invalid_argument", "bad_request"}
+
+
+def _is_quota_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de quota."""
+    return code in _QUOTA_CODES or category in {"quota", "rate_limit", "rate_limited"}
+
+
+def _is_timeout_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de timeout."""
+    return code in _TIMEOUT_CODES or category in {"timeout", "deadline_exceeded"}
+
+
+def _is_server_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de servidor."""
+    return code in _SERVER_CODES or category in {"server", "network"}
+
+
+def _is_server_5xx_code(code: str, category: str) -> bool:
+    """Verifica si el código normalizado representa un HTTP 5xx."""
+    numeric_code = code[4:] if code.startswith("HTTP") and code[4:].isdigit() else code
+    return numeric_code.isdigit() and 500 <= int(numeric_code) < 600
+
+
+def _is_malformed_category(code: str, category: str) -> bool:
+    """Verifica si el error pertenece a la categoría de respuesta malformada."""
+    return code in _MALFORMED_CODES or category in {"malformed_response", "malformed"}
+
+
+# Reglas de clasificación en orden de precedencia. Cada entrada es
+# (predicado, categoría resultante, retry_same_provider, fallback_next_provider).
+# El orden importa: se aplica la primera regla que coincida.
+_ERROR_RULES: tuple[tuple[Any, str, bool, bool], ...] = (
+    (_is_auth_category, "auth", False, True),
+    (_is_model_not_found_category, "invalid_argument", False, True),
+    (_is_invalid_argument_category, "invalid_argument", False, False),
+    (_is_quota_category, "quota", True, True),
+    (_is_timeout_category, "timeout", True, True),
+    (_is_server_category, "server", True, True),
+    (_is_server_5xx_code, "server", True, True),
+    (_is_malformed_category, "malformed_response", True, True),
+)
+
+
 def classify_provider_error(error: Any) -> ProviderError:
     """Convierte errores de proveedor o tuplas legacy en ``ProviderError``."""
     if isinstance(error, ProviderError):
@@ -159,7 +220,7 @@ def classify_provider_error(error: Any) -> ProviderError:
     code = _normalize_code(raw_code)
     display = _display_code(raw_code, "UnknownError")
 
-    if code in _GENERIC_403_CODES or category in {"permission", "policy_denied", "forbidden"}:
+    if _is_permission_category(code, category):
         if code in _PERMISSION_CODES:
             return ProviderError(
                 "permission", display, retry_same_provider=False, fallback_next_provider=True
@@ -168,46 +229,14 @@ def classify_provider_error(error: Any) -> ProviderError:
             "policy_denied", display, retry_same_provider=False, fallback_next_provider=False
         )
 
-    if code in _AUTH_CODES or category in {"auth", "unauthenticated", "unauthorized"}:
-        return ProviderError(
-            "auth", display, retry_same_provider=False, fallback_next_provider=True
-        )
-
-    if code in _MODEL_NOT_FOUND_CODES:
-        return ProviderError(
-            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=True
-        )
-
-    if code in _INVALID_ARGUMENT_CODES or category in {"invalid_argument", "bad_request"}:
-        return ProviderError(
-            "invalid_argument", display, retry_same_provider=False, fallback_next_provider=False
-        )
-
-    if code in _QUOTA_CODES or category in {"quota", "rate_limit", "rate_limited"}:
-        return ProviderError(
-            "quota", display, retry_same_provider=True, fallback_next_provider=True
-        )
-
-    if code in _TIMEOUT_CODES or category in {"timeout", "deadline_exceeded"}:
-        return ProviderError(
-            "timeout", display, retry_same_provider=True, fallback_next_provider=True
-        )
-
-    if code in _SERVER_CODES or category in {"server", "network"}:
-        return ProviderError(
-            "server", display, retry_same_provider=True, fallback_next_provider=True
-        )
-
-    numeric_code = code[4:] if code.startswith("HTTP") and code[4:].isdigit() else code
-    if numeric_code.isdigit() and 500 <= int(numeric_code) < 600:
-        return ProviderError(
-            "server", display, retry_same_provider=True, fallback_next_provider=True
-        )
-
-    if code in _MALFORMED_CODES or category in {"malformed_response", "malformed"}:
-        return ProviderError(
-            "malformed_response", display, retry_same_provider=True, fallback_next_provider=True
-        )
+    for predicate, category_name, retry_same, fallback_next in _ERROR_RULES:
+        if predicate(code, category):
+            return ProviderError(
+                category_name,
+                display,
+                retry_same_provider=retry_same,
+                fallback_next_provider=fallback_next,
+            )
 
     return ProviderError(
         "unknown", display, retry_same_provider=False, fallback_next_provider=False
@@ -243,6 +272,33 @@ def _status_policy(status_code: int | None, display: str) -> ProviderError:
     return ProviderError("unknown", display)
 
 
+def _refining_categories(status_code: int | None, display: str) -> frozenset[str] | None:
+    """Categorías estructuradas admitidas para refinar cada status HTTP.
+
+    Returns:
+        Conjunto de categorías compatibles, vacío si el status descarta al
+        código estructurado, o None si el status no define refinamiento
+        (se usa entonces el código estructurado si no es desconocido).
+    """
+    if status_code == 429:
+        return frozenset({"quota"})
+    if status_code is not None and 500 <= status_code < 600:
+        return frozenset({"server", "timeout"})
+    if status_code == 401:
+        return frozenset({"auth"})
+    if status_code == 403:
+        return frozenset({"permission", "policy_denied"})
+    if status_code == 404:
+        if _normalize_code(display) in _MODEL_NOT_FOUND_CODES:
+            return frozenset({"invalid_argument"})
+        return frozenset()
+    if status_code == 400:
+        if _normalize_code(display) in _INVALID_ARGUMENT_CODES:
+            return frozenset({"invalid_argument"})
+        return frozenset()
+    return None
+
+
 def classify_status_code(status_code: int | None, code: Any = None) -> ProviderError:
     """Clasifica un status HTTP y un código estructurado sin perder la política HTTP.
 
@@ -264,21 +320,12 @@ def classify_status_code(status_code: int | None, code: Any = None) -> ProviderE
 
     if status_error.category == "unknown":
         return structured
-    if status_code == 429:
-        return structured if structured.category == "quota" else status_error
-    if status_code is not None and 500 <= status_code < 600:
-        return structured if structured.category in {"server", "timeout"} else status_error
-    if status_code == 401:
-        return structured if structured.category == "auth" else status_error
-    if status_code == 403:
-        return (
-            structured if structured.category in {"permission", "policy_denied"} else status_error
-        )
-    if status_code == 404:
-        return structured if _normalize_code(display) in _MODEL_NOT_FOUND_CODES else status_error
-    if status_code == 400:
-        return structured if _normalize_code(display) in _INVALID_ARGUMENT_CODES else status_error
-    return structured if structured.category != "unknown" else status_error
+    allowed = _refining_categories(status_code, display)
+    if allowed is None:
+        return structured if structured.category != "unknown" else status_error
+    if structured.category in allowed:
+        return structured
+    return status_error
 
 
 class AIProvider(ABC):

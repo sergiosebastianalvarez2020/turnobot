@@ -162,7 +162,7 @@ def test_router_registers_new_providers_and_skips_inactive_gemini(monkeypatch):
     router.clear_cache()
 
     assert {"openrouter", "cerebras"} <= set(router._PROVIDER_CLASSES)
-    assert router._build_provider_list([], None, None) == []
+    assert router._build_provider_list() == []
 
 
 def test_config_mutation_invalidates_router_cache(sqlite_temp_db, monkeypatch):
@@ -397,3 +397,97 @@ def test_router_shares_deadline_and_counts_http_across_fallback(monkeypatch):
     assert error is None
     assert seen["gemini_deadline"] == seen["groq_deadline"]
     assert seen["gemini_deadline"] > before
+
+
+def test_groq_success_logs_token_metrics(monkeypatch, caplog):
+    """El éxito de Groq registra prompt/candidate/total tokens en el log."""
+    import logging
+
+    from services.ai_providers.groq import GroqProvider
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    captured: dict = {}
+    monkeypatch.setattr(
+        "services.ai_providers.openai_compatible.httpx.Client",
+        _fake_client(
+            captured,
+            {
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
+            },
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="turnobot.ai.groq"):
+        response, attempts, error = GroqProvider().generate(
+            [{"role": "user", "parts": [{"text": "Hola"}]}], None
+        )
+
+    assert error is None
+    records = [r for r in caplog.records if "prompt_tokens=12" in r.getMessage()]
+    assert records, [r.getMessage() for r in caplog.records]
+    msg = records[0].getMessage()
+    assert "candidate_tokens=7" in msg
+    assert "total_tokens=19" in msg
+
+
+@pytest.mark.parametrize("timeout_s", [0, -1])
+def test_openai_compatible_non_positive_timeout_without_deadline_returns_global_timeout(
+    monkeypatch, timeout_s
+):
+    """F2: timeout efectivo <= 0 sin deadline => sin HTTP y error timeout/GlobalTimeout."""
+    from services.ai_providers.groq import GroqProvider
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    with patch("services.ai_providers.openai_compatible.httpx.Client") as client:
+        response, attempts, error = GroqProvider().generate(
+            [{"role": "user", "parts": [{"text": "Hola"}]}], None, timeout_s=timeout_s
+        )
+
+    assert response is None
+    assert attempts == 0
+    assert error == ("timeout", "GlobalTimeout")
+    client.assert_not_called()
+
+
+def test_openai_compatible_configured_timeout_zero_returns_global_timeout(monkeypatch):
+    """F2: timeout configurado por variable de entorno (GROQ_TIMEOUT_S=0) => GlobalTimeout."""
+    from services.ai_providers.groq import GroqProvider
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_TIMEOUT_S", "0")
+    with patch("services.ai_providers.openai_compatible.httpx.Client") as client:
+        response, attempts, error = GroqProvider().generate(
+            [{"role": "user", "parts": [{"text": "Hola"}]}], None
+        )
+
+    assert response is None
+    assert attempts == 0
+    assert error == ("timeout", "GlobalTimeout")
+    client.assert_not_called()
+
+
+def test_openai_compatible_positive_timeout_without_deadline_normal_flow(monkeypatch):
+    """F2: control con timeout positivo sin deadline => flujo normal exitoso."""
+    from services.ai_providers.groq import GroqProvider
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    captured: dict = {}
+    monkeypatch.setattr(
+        "services.ai_providers.openai_compatible.httpx.Client",
+        _fake_client(
+            captured,
+            {
+                "choices": [{"message": {"role": "assistant", "content": "OK"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            },
+        ),
+    )
+
+    response, attempts, error = GroqProvider().generate(
+        [{"role": "user", "parts": [{"text": "Hola"}]}], None, timeout_s=5.0
+    )
+
+    assert error is None
+    assert attempts == 1
+    assert response.text == "OK"

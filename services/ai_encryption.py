@@ -18,7 +18,6 @@ completa al frontend.
 from __future__ import annotations
 
 import base64
-import binascii
 import os
 
 from cryptography.exceptions import InvalidTag
@@ -140,7 +139,7 @@ def decrypt(token: str) -> str:
     """Descifra tokens versionados y legacy (nonce + ciphertext sin byte de versión)."""
     try:
         data = base64.b64decode(token, validate=True)
-    except (binascii.Error, ValueError):
+    except ValueError:
         raise AIEncryptionError("Token corrupto o con formato invalido") from None
 
     errors: list[str] = []
