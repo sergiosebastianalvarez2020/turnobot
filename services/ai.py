@@ -501,7 +501,6 @@ def _call_gemini_with_retry(
     api_key=None,
     timeout_s=None,
     deadline_s=None,
-    idempotency_key=None,
     model=None,
 ):
     """Llama a Gemini con reintentos acotados y devuelve solicitudes HTTP reales."""

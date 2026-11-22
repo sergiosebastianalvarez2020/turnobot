@@ -61,7 +61,6 @@ class GeminiProvider(AIProvider):
             api_key=api_key,
             timeout_s=timeout_s,
             deadline_s=deadline_s,
-            idempotency_key=idempotency_key,
             model=model,
         )
 
