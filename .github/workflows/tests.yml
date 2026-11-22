@@ -219,6 +219,39 @@ jobs:
             "tests/test_multi_tenant_admin.py::TestSesion::test_post_admin_otro_negocio_rechazado_sin_efecto" \
             -v --tb=short -p no:cacheprovider --no-cov
 
+  sonarqube_analysis:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+      - name: Download JUnit report
+        uses: actions/download-artifact@v4
+        with:
+          name: junit-report
+      - name: Organize JUnit report
+        run: |
+          mkdir -p reports
+          mv tests_junit.xml reports/tests_junit.xml
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+      - name: Authenticate with SonarCloud
+        uses: SonarSource/sonarqube-auth-action@v1.2
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v8.5.0
+
   visual-tests:
     runs-on: ubuntu-latest
     steps:
