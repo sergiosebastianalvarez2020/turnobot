@@ -24,6 +24,7 @@ from google.genai import errors as genai_errors
 
 import app as application
 import services.ai as ai
+from tests._ai_router_mocks import simulated_gemini_provider
 
 pytestmark = pytest.mark.no_pg
 
@@ -469,6 +470,7 @@ class TestGeminiMetrics(unittest.TestCase):
         ai.client = None
         mock_client = _MockGenAIClient(responses=[_MockResponse(text="respuesta final")])
         with (
+            simulated_gemini_provider(),
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value="servicio: test"),
             mock.patch.object(ai, "get_business_hours_prompt", return_value="horarios: test"),
@@ -553,6 +555,7 @@ class TestHistoryLimit(unittest.TestCase):
     def test_build_contents_applies_total_limit(self):
         mock_client = _MockGenAIClient(responses=[_MockResponse(text="ok")])
         with (
+            simulated_gemini_provider(),
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value="s"),
             mock.patch.object(ai, "get_business_hours_prompt", return_value="h"),
@@ -586,6 +589,7 @@ class TestHistoryLimit(unittest.TestCase):
 class TestToolResultControl(unittest.TestCase):
     def _common_patches(self, mock_client, tool_result=None):
         patches = [
+            simulated_gemini_provider(),
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value="Corte: $100 (30 min)"),
             mock.patch.object(ai, "get_business_hours_prompt", return_value="lunes: abierto"),
@@ -1355,6 +1359,7 @@ class TestGeminiTechnicalRobustness(unittest.TestCase):
         mock_client.models.generate_content.side_effect = mock_generate
 
         with (
+            simulated_gemini_provider(),
             mock.patch.object(ai, "get_gemini_client", return_value=mock_client),
             mock.patch.object(ai, "get_services_prompt", return_value=""),
             mock.patch.object(ai, "get_business_hours_prompt", return_value=""),

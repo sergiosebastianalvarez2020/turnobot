@@ -301,8 +301,8 @@ class StandaloneCreateAppTests(unittest.TestCase):
         # Identidad con el mapa de la fachada y con el contrato histórico
         self.assertEqual(payload["rules"], self._expectations["rules"])
         self.assertEqual(payload["endpoints"], self._expectations["endpoints"])
-        self.assertEqual(payload["rules"], 153)
-        self.assertEqual(payload["endpoints"], 115)
+        self.assertEqual(payload["rules"], 161)
+        self.assertEqual(payload["endpoints"], 123)
         # Fingerprint completo del conjunto de rutas
         self.assertTrue(payload["has_rule_fingerprint"])
 

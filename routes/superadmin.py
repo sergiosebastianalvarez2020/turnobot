@@ -17,11 +17,24 @@ Contiene las view functions para la administración de la plataforma:
 - /superadmin/identidad/<id>/guardar    -> endpoint: superadmin_visual_identity_save
 - /superadmin/identidad/<id>/bloqueos   -> endpoint: superadmin_visual_identity_locks
 - /superadmin/identidad/<id>/preset     -> endpoint: superadmin_visual_identity_preset
+- /superadmin/ia                        -> endpoint: superadmin_ia
+- /superadmin/ia/guardar                -> endpoint: superadmin_ia_guardar
+- /superadmin/ia/<id>/activar           -> endpoint: superadmin_ia_activar
+- /superadmin/ia/<id>/desactivar        -> endpoint: superadmin_ia_desactivar
+- /superadmin/ia/<id>/prioridad         -> endpoint: superadmin_ia_prioridad
+- /superadmin/ia/<id>/eliminar          -> endpoint: superadmin_ia_eliminar
+- /superadmin/ia/<id>/probar            -> endpoint: superadmin_ia_probar
 
 Estas rutas operan a nivel de PLATAFORMA (superadmin), no son tenant-scoped.
 """
 
+
+# ============================================================
+# VISTA: Panel superadmin
+
+import logging
 import secrets
+from urllib.parse import quote
 
 from flask import abort, redirect, render_template, request, session
 
@@ -32,7 +45,7 @@ from application.platform import (
     _platform_session_expires_at,
 )
 from application.public_urls import public_url
-from application.rate_limit import is_login_request_allowed
+from application.rate_limit import is_api_request_allowed, is_login_request_allowed
 from application.requests import get_client_ip
 from application.theme_colors import contrast_pairs, palette_summary
 from application.themes import (
@@ -53,7 +66,26 @@ from database.database import (
 from extensions import valid_csrf_token
 from services import platform as platform_service
 from services import visual_identity as visual_identity_service
+from services.ai_config import (
+    AIConfigError,
+    create_ai_provider,
+    delete_ai_provider,
+    get_ai_provider,
+    get_decrypted_api_key,
+    list_ai_providers,
+    set_ai_provider_active,
+    set_ai_provider_priority,
+    update_ai_provider,
+)
+from services.ai_encryption import AIEncryptionError
+from services.ai_encryption import is_configured as encryption_is_configured
+from services.ai_providers.gemini import GeminiProvider
+from services.ai_providers.groq import CerebrasProvider, GroqProvider, OpenRouterProvider
 from services.notifications import send_apply_confirmation_email, send_apply_notice_to_superadmin
+
+# Mensajes de error reutilizados por las vistas de IA del superadmin.
+ERROR_RATE_LIMIT = "Demasiadas solicitudes. Esperá unos minutos."
+ERROR_PROVIDER_NOT_FOUND = "Proveedor no encontrado."
 
 
 def _superadmin_gate():
@@ -61,6 +93,14 @@ def _superadmin_gate():
     if not _is_platform_authenticated():
         return redirect("/superadmin/login")
     return None
+
+
+def _check_ia_rate_limit(client_ip: str, endpoint: str) -> bool:
+    """Verifica el rate limiting para rutas administrativas de IA.
+
+    Usa un límite separado del login para evitar acoplamiento innecesario.
+    """
+    return is_api_request_allowed(client_ip, endpoint=endpoint)
 
 
 def superadmin_login():
@@ -471,3 +511,323 @@ def superadmin_visual_identity_locks(business_id):
         get_client_ip(),
     )
     return redirect(f"/superadmin/identidad/{business_id}?message=Bloqueos actualizados.")
+
+
+# ============================================================
+# SECCIÓN: INTELIGENCIA ARTIFICIAL (configuración global de proveedores)
+# ============================================================
+
+_PROVIDER_LABELS = {
+    "gemini": "Google Gemini",
+    "groq": "Groq",
+    "openrouter": "OpenRouter",
+    "cerebras": "Cerebras",
+}
+
+_TEST_PROVIDER_CLASSES = {
+    "gemini": GeminiProvider,
+    "groq": GroqProvider,
+    "openrouter": OpenRouterProvider,
+    "cerebras": CerebrasProvider,
+}
+
+
+def _ia_redirect(*, message: str | None = None, error: str | None = None):
+    """Construye un redirect IA codificando de forma segura mensajes y errores."""
+    params = []
+    if message:
+        params.append(f"message={quote(message, safe='')}")
+    if error:
+        params.append(f"error={quote(error, safe='')}")
+    query = f"?{'&'.join(params)}" if params else ""
+    return redirect(f"/superadmin/ia{query}")
+
+
+def _ia_context(*, message="", error=""):
+    """Contexto común de la vista de proveedores de IA."""
+    user, _ = _platform_current_user()
+    providers = list_ai_providers()
+    encryption_ready = encryption_is_configured()
+    editing_provider = None
+    edit_raw = (request.args.get("edit", "") or "").strip()
+    if edit_raw.isdigit():
+        editing_provider = get_ai_provider(int(edit_raw))
+    return {
+        "superadmin": user,
+        "section": "ia",
+        "providers": providers,
+        "provider_labels": _PROVIDER_LABELS,
+        "encryption_ready": encryption_ready,
+        "editing_provider": editing_provider,
+        "message": message,
+        "error": error,
+    }
+
+
+def superadmin_ia():
+    """Lista los proveedores de IA configurados (sección INTELIGENCIA ARTIFICIAL)."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    return render_template(
+        "superadmin.html",
+        **_ia_context(message=request.args.get("message", ""), error=request.args.get("error", "")),
+    )
+
+
+def _validate_superadmin_ia_save_form(
+    provider: str, model: str, priority_raw: str, active_raw: str, provider_id_raw: str
+) -> tuple[bool, str | None, int | None, bool | None, int | None]:
+    """Valida el formulario de superadmin_ia_guardar y devuelve los parámetros procesados.
+
+    Returns:
+        Tuple de (exito, mensaje_error, provider_id, priority, active).
+        Si exito es False, mensaje_error contiene la razón y los demás son None.
+    """
+    if provider not in _PROVIDER_LABELS:
+        return False, "Proveedor no válido.", None, None, None
+    if not model:
+        return False, "El modelo es obligatorio.", None, None, None
+
+    # Resolver prioridad
+    try:
+        priority = int(priority_raw) if priority_raw else None
+    except (TypeError, ValueError):
+        return False, "La prioridad debe ser un número entero.", None, None, None
+
+    # Resolver provider_id y active
+    provider_id = None
+    if provider_id_raw:
+        try:
+            provider_id = int(provider_id_raw)
+        except (TypeError, ValueError):
+            provider_id = None
+
+    active = active_raw == "1" if active_raw is not None else None
+
+    return True, None, provider_id, priority, active
+
+
+def _parse_ia_save_form() -> tuple:
+    """Extrae y normaliza los campos del formulario de guardado de IA."""
+    return (
+        (request.form.get("provider", "") or "").strip().lower(),
+        (request.form.get("model", "") or "").strip(),
+        (request.form.get("priority", "") or "").strip(),
+        (request.form.get("active", "") or "").strip(),
+        request.form.get("api_key", "") or "",
+        (request.form.get("provider_id", "") or "").strip(),
+    )
+
+
+def _save_ia_provider(
+    provider: str,
+    model: str,
+    priority: int | None,
+    active: bool | None,
+    api_key: str,
+    provider_id: int | None,
+    user: dict,
+    ip: str,
+) -> str | None:
+    """Crea o actualiza el proveedor de IA.
+
+    Returns:
+        Mensaje de error o None si la operación fue exitosa.
+    """
+    try:
+        if provider_id is not None:
+            ok = update_ai_provider(
+                provider_id,
+                model=model or None,
+                priority=priority or None,
+                active=active,
+                api_key=api_key.strip() or None,
+                platform_user_id=user["id"],
+                actor_email=user["email"],
+                ip_address=ip,
+            )
+            if not ok:
+                return ERROR_PROVIDER_NOT_FOUND
+        else:
+            create_ai_provider(
+                provider=provider,
+                api_key=api_key.strip(),
+                model=model,
+                priority=priority,
+                active=active,
+                platform_user_id=user["id"],
+                actor_email=user["email"],
+                ip_address=ip,
+            )
+        return None
+    except AIConfigError as exc:
+        return str(exc)
+
+
+def superadmin_ia_guardar():
+    """Crea o actualiza un proveedor de IA (credencial cifrada)."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ip = get_client_ip()
+    if not _check_ia_rate_limit(ip, "ia_save"):
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
+
+    # 1. Validación de parámetros
+    provider, model, priority_raw, active_raw, api_key, provider_id_raw = _parse_ia_save_form()
+
+    success, error_msg, provider_id, priority, active = _validate_superadmin_ia_save_form(
+        provider, model, priority_raw, active_raw, provider_id_raw
+    )
+    if not success:
+        return _ia_redirect(error=error_msg)
+
+    # 2. Validación de prioridad y lista existente
+    existing = list_ai_providers()
+    if priority is None:
+        priority = max((p.get("priority", 0) for p in existing), default=0) + 1
+
+    # 3. Resolución de creación o actualización
+    save_error = _save_ia_provider(
+        provider, model, priority, active, api_key, provider_id, user, ip
+    )
+    if save_error is not None:
+        return _ia_redirect(error=save_error)
+    return _ia_redirect(message="Proveedor guardado correctamente.")
+
+
+def superadmin_ia_activar_desactivar(provider_id, active):
+    """Activa o desactiva un proveedor de IA."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ip = get_client_ip()
+    if not _check_ia_rate_limit(ip, "ia_toggle"):
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
+
+    ok = set_ai_provider_active(
+        provider_id, active, platform_user_id=user["id"], actor_email=user["email"], ip_address=ip
+    )
+    if not ok:
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
+    estado = "activado" if active else "desactivado"
+    return _ia_redirect(message=f"Proveedor {estado} correctamente.")
+
+
+def superadmin_ia_prioridad(provider_id):
+    """Cambia la prioridad de un proveedor de IA."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ip = get_client_ip()
+    if not _check_ia_rate_limit(ip, "ia_priority"):
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
+
+    priority_raw = (request.form.get("priority", "") or "").strip()
+    try:
+        priority = int(priority_raw)
+    except (TypeError, ValueError):
+        return _ia_redirect(error="La prioridad debe ser un número entero.")
+
+    try:
+        ok = set_ai_provider_priority(
+            provider_id,
+            priority,
+            platform_user_id=user["id"],
+            actor_email=user["email"],
+            ip_address=ip,
+        )
+    except AIConfigError as exc:
+        return _ia_redirect(error=str(exc))
+    if not ok:
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
+    return _ia_redirect(message="Prioridad actualizada correctamente.")
+
+
+def superadmin_ia_eliminar(provider_id):
+    """Elimina un proveedor de IA."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ip = get_client_ip()
+    if not _check_ia_rate_limit(ip, "ia_delete"):
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
+
+    ok = delete_ai_provider(
+        provider_id, platform_user_id=user["id"], actor_email=user["email"], ip_address=ip
+    )
+    if not ok:
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
+    return _ia_redirect(message="Proveedor eliminado correctamente.")
+
+
+def superadmin_ia_probar(provider_id):
+    """Prueba la conexión con un proveedor de IA (sin ejecutar herramientas de reserva)."""
+    denied = _superadmin_gate()
+    if denied:
+        return denied
+    if not valid_csrf_token(request.form.get("csrf_token")):
+        return "Solicitud no válida", 400
+    user, _ = _platform_current_user()
+    ip = get_client_ip()
+    if not _check_ia_rate_limit(ip, "ia_test"):
+        return _ia_redirect(error=ERROR_RATE_LIMIT)
+
+    provider = get_ai_provider(provider_id)
+    if provider is None:
+        return _ia_redirect(error=ERROR_PROVIDER_NOT_FOUND)
+
+    provider_name = provider["provider"]
+    label = _PROVIDER_LABELS.get(provider_name, provider_name)
+    provider_cls = _TEST_PROVIDER_CLASSES.get(provider_name)
+    if provider_cls is None:
+        return _ia_redirect(error=f"Proveedor no soportado: {label}.")
+
+    if not provider["has_credentials"]:
+        return _ia_redirect(error="El proveedor no tiene credenciales configuradas.")
+
+    try:
+        api_key = get_decrypted_api_key(provider_id)
+        if not api_key:
+            return _ia_redirect(error="No se pudo descifrar la credencial del proveedor.")
+
+        instance = provider_cls()
+        contents = [{"role": "user", "parts": [{"text": "Responde únicamente con la palabra OK."}]}]
+        response, _attempt, error_info = instance.generate(
+            contents, None, api_key=api_key, model=provider.get("model") or None, timeout_s=5.0
+        )
+        if response is None:
+            category, error_type = error_info or ("unknown", "UnknownError")
+            return _ia_redirect(error=f"{label} no respondió: {category} ({error_type})")
+
+        platform_service.log_platform_action(
+            user["id"],
+            user["email"],
+            None,
+            "ai_provider_test",
+            f"provider={provider_name}, resultado=exitoso",
+            ip,
+        )
+        return _ia_redirect(message=f"Prueba de conexión exitosa: {label} respondió correctamente.")
+    except AIEncryptionError:
+        return _ia_redirect(
+            error="No se pudo descifrar la credencial (AI_ENCRYPTION_KEY ausente o inválida)."
+        )
+    except Exception:  # pragma: no cover - errores de red/proveedor externo
+        logging.getLogger("turnobot.superadmin.ia").exception(
+            "Prueba de conexión falló para %s", provider_name
+        )
+        return _ia_redirect(error="Prueba de conexión falló. Revisá los registros del servidor.")

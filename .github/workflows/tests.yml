@@ -133,7 +133,20 @@ jobs:
           TURNOBOT_PG_URL: postgresql://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/postgres
         run: |
           set -o pipefail
-          python -m pytest tests --ignore=tests/visual --cov=. --cov-report=term-missing -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+          python -m pytest tests --ignore=tests/visual --cov=. --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+      - name: Upload JUnit artifact (secuencial)
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.parallel == '' || inputs.parallel == 'false') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: /tmp/tests_junit.xml
+      - name: Upload coverage artifact (secuencial)
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.parallel == '' || inputs.parallel == 'false') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 7
       - name: Run general tests (paralelo)
         if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.parallel == '4' || inputs.parallel == '8' }}
         id: tests_parallel
@@ -142,6 +155,12 @@ jobs:
         run: |
           set -o pipefail
           python -m pytest tests --ignore=tests/visual -n ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '8' || inputs.parallel }} --cov=. --cov-append --cov-report=term-missing --cov-report=xml:coverage.xml -p no:cacheprovider --junitxml=/tmp/tests_junit.xml 2>&1 | tee /tmp/tests_output.txt
+      - name: Upload JUnit artifact (paralelo)
+        if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.parallel == '4' || inputs.parallel == '8' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: /tmp/tests_junit.xml
       - name: Upload coverage artifact (paralelo)
         if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || inputs.parallel == '4' || inputs.parallel == '8' }}
         uses: actions/upload-artifact@v4
@@ -218,6 +237,39 @@ jobs:
             "tests/test_multi_tenant_admin.py::TestSesion::test_usuario_miembro_ambos_negocios_accede_a_ambos_admin" \
             "tests/test_multi_tenant_admin.py::TestSesion::test_post_admin_otro_negocio_rechazado_sin_efecto" \
             -v --tb=short -p no:cacheprovider --no-cov
+
+  sonarqube_analysis:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+      - name: Download JUnit report
+        uses: actions/download-artifact@v4
+        with:
+          name: junit-report
+      - name: Organize JUnit report
+        run: |
+          mkdir -p reports
+          mv tests_junit.xml reports/tests_junit.xml
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+      - name: Authenticate with SonarCloud
+        uses: SonarSource/sonarqube-auth-action@v1.2
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v8.5.0
 
   visual-tests:
     runs-on: ubuntu-latest

@@ -12,6 +12,7 @@ from services.conversations import (
     get_conversation_messages_by_public_token_scoped,
     get_or_create_public_conversation_session_scoped,
 )
+from tests._ai_router_mocks import simulated_gemini_provider
 
 
 @pytest.mark.usefixtures("sqlite_temp_db")
@@ -68,6 +69,7 @@ class TestChatRecovery(unittest.TestCase):
             usage_metadata=None,
         )
         with (
+            simulated_gemini_provider(),
             app.app_context(),
             mock.patch("services.ai._call_gemini_with_retry", return_value=(response, 1, None)),
         ):
