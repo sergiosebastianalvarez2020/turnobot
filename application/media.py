@@ -308,6 +308,7 @@ class _SSRFSafeAdapter(HTTPAdapter):
       original, no la IP numérica.
     - El header "Host:" se inyecta explícitamente con el hostname original para
       que el servidor reciba el virtualhost correcto (ya que pool.host es la IP).
+      Se incluye el puerto solo cuando no es el predeterminado del esquema.
     """
 
     def __init__(self, hostname: str, pinned_ip: str, **kwargs):
@@ -326,10 +327,26 @@ class _SSRFSafeAdapter(HTTPAdapter):
             )
         return HTTPConnectionPool(host=self._pinned_ip, port=port, timeout=timeout)
 
+    def _build_host_header(self, request) -> str:
+        """Construye el valor del header Host: hostname + puerto si no es predeterminado."""
+        parsed = urlsplit(request.url)
+        default_port = _DEFAULT_PORTS.get(parsed.scheme)
+        port = parsed.port
+        if port is not None and default_port is not None and port == default_port:
+            port = None
+        host = self._hostname
+        # Los nombres IPv6 requieren corchetes en el header Host.
+        if ":" in host and not (host.startswith("[") and host.endswith("]")):
+            host = f"[{host}]"
+        if port is not None:
+            host = f"{host}:{port}"
+        return host
+
     def send(self, request, *args, **kwargs):
-        # Inyectar Host: con el hostname original; urllib3 usará skip_host=1
-        # al ver este header y no lo sobreescribirá con la IP numérica.
-        request.headers["Host"] = self._hostname
+        # Inyectar Host: con el hostname original y puerto si corresponde.
+        # urllib3 usará skip_host=1 al ver este header y no lo sobreescribirá
+        # con la IP numérica.
+        request.headers["Host"] = self._build_host_header(request)
         return super().send(request, *args, **kwargs)
 
     def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):

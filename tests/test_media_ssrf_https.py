@@ -28,9 +28,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from urllib3.connection import HTTPSConnection
 
 pytestmark = pytest.mark.no_pg
 
@@ -414,6 +416,74 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
         finally:
             srv.close(t)
 
+    def test_https_non_default_port_in_host_header(self):
+        """HTTPS con puerto no predeterminado: el Host incluye el puerto."""
+        ca_pem, srv_crt, srv_key, _ = _get_pki()
+        srv = _LocalHTTPSServer(srv_crt, srv_key)
+        t = srv.handle_one()
+        try:
+            session = self._make_session()
+            resp = session.get(
+                f"https://{_HOSTNAME}:{srv.port}/image.png",
+                verify=ca_pem,
+                allow_redirects=False,
+                timeout=5,
+                proxies={},
+            )
+            self.assertEqual(resp.status_code, 200)
+            host_header = srv.observed.get("host_header", "")
+            self.assertEqual(host_header, f"{_HOSTNAME}:{srv.port}")
+        finally:
+            srv.close(t)
+
+    def test_https_default_port_omitted_from_host_header(self):
+        """HTTPS con puerto 443 explícito: el Host omite el puerto predeterminado."""
+        from requests.adapters import HTTPAdapter
+
+        from application.media import _SSRFSafeAdapter
+
+        adapter = _SSRFSafeAdapter(hostname=_HOSTNAME, pinned_ip="127.0.0.1")
+        prep = requests.Request("GET", f"https://{_HOSTNAME}:443/image.png").prepare()
+
+        with patch.object(HTTPAdapter, "send", return_value=MagicMock()):
+            adapter.send(prep)
+
+        self.assertEqual(prep.headers["Host"], _HOSTNAME)
+
+    def test_client_socket_connects_to_pinned_ip_and_port(self):
+        """El socket del cliente se conecta a la IP pinneada y al puerto destino."""
+        ca_pem, srv_crt, srv_key, _ = _get_pki()
+        srv = _LocalHTTPSServer(srv_crt, srv_key)
+        t = srv.handle_one()
+
+        captured_sockets: list = []
+        original_connect = HTTPSConnection.connect
+
+        def capturing_connect(self):
+            original_connect(self)
+            captured_sockets.append(self.sock)
+
+        HTTPSConnection.connect = capturing_connect
+        try:
+            session = self._make_session()
+            resp = session.get(
+                f"https://{_HOSTNAME}:{srv.port}/image.png",
+                verify=ca_pem,
+                allow_redirects=False,
+                timeout=5,
+                proxies={},
+            )
+        finally:
+            HTTPSConnection.connect = original_connect
+            srv.close(t)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreater(len(captured_sockets), 0)
+        for sock in captured_sockets:
+            peername = sock.getpeername()
+            self.assertEqual(peername[0], "127.0.0.1")
+            self.assertEqual(peername[1], srv.port)
+
 
 class TestSSRFAdapterHTTP(unittest.TestCase):
     """Tests de integración HTTP (sin TLS) para _SSRFSafeAdapter."""
@@ -507,6 +577,55 @@ class TestSSRFAdapterHTTP(unittest.TestCase):
                 os.environ["HTTP_PROXY"] = old
             t.join(timeout=2)
             raw_server.server_close()
+
+    def test_http_non_default_port_in_host_header(self):
+        """HTTP con puerto no predeterminado: el Host incluye el puerto."""
+        HOSTNAME_HTTP = "img.test.local"
+        observed: dict = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                observed["host_header"] = self.headers.get("Host", "")
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", "4")
+                self.end_headers()
+                self.wfile.write(b"fake")
+
+            def log_message(self, *a):
+                pass
+
+        raw_server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        port = raw_server.socket.getsockname()[1]
+        t = threading.Thread(target=raw_server.handle_request, daemon=True)
+        t.start()
+        try:
+            session = self._make_session(hostname=HOSTNAME_HTTP, pinned_ip="127.0.0.1")
+            resp = session.get(
+                f"http://{HOSTNAME_HTTP}:{port}/image.png",
+                allow_redirects=False,
+                timeout=5,
+                proxies={},
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(observed.get("host_header", ""), f"{HOSTNAME_HTTP}:{port}")
+        finally:
+            t.join(timeout=2)
+            raw_server.server_close()
+
+    def test_http_default_port_omitted_from_host_header(self):
+        """HTTP con puerto 80 explícito: el Host omite el puerto predeterminado."""
+        from requests.adapters import HTTPAdapter
+
+        from application.media import _SSRFSafeAdapter
+
+        adapter = _SSRFSafeAdapter(hostname="cdn.test.local", pinned_ip="127.0.0.1")
+        prep = requests.Request("GET", "http://cdn.test.local:80/image.png").prepare()
+
+        with patch.object(HTTPAdapter, "send", return_value=MagicMock()):
+            adapter.send(prep)
+
+        self.assertEqual(prep.headers["Host"], "cdn.test.local")
 
 
 class TestSSRFAdapterNoSecondDNS(unittest.TestCase):
