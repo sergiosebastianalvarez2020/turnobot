@@ -456,12 +456,15 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
         srv = _LocalHTTPSServer(srv_crt, srv_key)
         t = srv.handle_one()
 
-        captured_sockets: list = []
+        captured_peers: list[tuple[str, int]] = []
         original_connect = HTTPSConnection.connect
 
         def capturing_connect(self):
             original_connect(self)
-            captured_sockets.append(self.sock)
+            sock = self.sock
+            if sock is not None:
+                peername = sock.getpeername()
+                captured_peers.append((peername[0], peername[1]))
 
         HTTPSConnection.connect = capturing_connect
         try:
@@ -478,11 +481,10 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
             srv.close(t)
 
         self.assertEqual(resp.status_code, 200)
-        self.assertGreater(len(captured_sockets), 0)
-        for sock in captured_sockets:
-            peername = sock.getpeername()
-            self.assertEqual(peername[0], "127.0.0.1")
-            self.assertEqual(peername[1], srv.port)
+        self.assertGreater(len(captured_peers), 0)
+        for peer_ip, peer_port in captured_peers:
+            self.assertEqual(peer_ip, "127.0.0.1")
+            self.assertEqual(peer_port, srv.port)
 
 
 class TestSSRFAdapterHTTP(unittest.TestCase):
