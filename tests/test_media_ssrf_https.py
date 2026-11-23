@@ -21,7 +21,6 @@ from __future__ import annotations
 import datetime
 import http.server
 import ipaddress
-import os
 import socket
 import ssl
 import tempfile
@@ -371,27 +370,23 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
         ca_pem, srv_crt, srv_key, _ = _get_pki()
         srv = _LocalHTTPSServer(srv_crt, srv_key)
         t = srv.handle_one()
-        old_https = os.environ.get("HTTPS_PROXY")
-        old_http = os.environ.get("HTTP_PROXY")
         try:
-            # Configurar proxies del entorno que apuntan a hosts inexistentes.
-            os.environ["HTTPS_PROXY"] = "http://nonexistent-proxy.invalid:8080"
-            os.environ["HTTP_PROXY"] = "http://nonexistent-proxy.invalid:8080"
-            session = self._make_session()
-            # La conexión debe ir directamente a la IP pinneada, ignorando los proxies.
-            resp = self._get(session, srv.port, verify=ca_pem)
-            self.assertEqual(resp.status_code, 200)
-            # El Host header sigue siendo correcto.
-            self.assertTrue(srv.observed.get("host_header", "").startswith(_HOSTNAME))
+            with pytest.MonkeyPatch().context() as monkeypatch:
+                monkeypatch.setenv(
+                    "HTTPS_PROXY",
+                    "http://nonexistent-proxy.invalid:8080",
+                )
+                monkeypatch.setenv(
+                    "HTTP_PROXY",
+                    "http://nonexistent-proxy.invalid:8080",
+                )
+                session = self._make_session()
+                resp = self._get(session, srv.port, verify=ca_pem)
+                self.assertEqual(resp.status_code, 200)
+                self.assertTrue(
+                    srv.observed.get("host_header", "").startswith(_HOSTNAME)
+                )
         finally:
-            if old_https is None:
-                os.environ.pop("HTTPS_PROXY", None)
-            else:
-                os.environ["HTTPS_PROXY"] = old_https
-            if old_http is None:
-                os.environ.pop("HTTP_PROXY", None)
-            else:
-                os.environ["HTTP_PROXY"] = old_http
             srv.close(t)
 
     # -------------------------------------------------------------------
