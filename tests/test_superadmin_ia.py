@@ -104,3 +104,108 @@ def test_ia_context_prefills_editing_provider(ia_env, monkeypatch):
 
     assert context["editing_provider"] == provider
     assert context["section"] == "ia"
+
+
+def test_guardar_crear_provider_activo(ia_env, monkeypatch):
+    application, superadmin_routes = ia_env
+    create = MagicMock(return_value=10)
+    monkeypatch.setattr(superadmin_routes, "list_ai_providers", lambda: [])
+    monkeypatch.setattr(superadmin_routes, "create_ai_provider", create)
+
+    data = {
+        "csrf_token": "token",
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant",
+        "priority": "1",
+        "active": "1",
+        "api_key": "sk-test-key",
+    }
+    with application.test_request_context("/superadmin/ia/guardar", method="POST", data=data):
+        response = superadmin_routes.superadmin_ia_guardar()
+
+    assert response.status_code == 302
+    assert create.call_args.kwargs["active"] is True
+    assert create.call_args.kwargs["priority"] == 1
+
+
+def test_guardar_crear_provider_desmarcado_inactivo(ia_env, monkeypatch):
+    application, superadmin_routes = ia_env
+    create = MagicMock(return_value=11)
+    monkeypatch.setattr(superadmin_routes, "list_ai_providers", lambda: [])
+    monkeypatch.setattr(superadmin_routes, "create_ai_provider", create)
+
+    data = {
+        "csrf_token": "token",
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant",
+        "priority": "2",
+        "active": "0",
+        "api_key": "sk-test-key",
+    }
+    with application.test_request_context("/superadmin/ia/guardar", method="POST", data=data):
+        response = superadmin_routes.superadmin_ia_guardar()
+
+    assert response.status_code == 302
+    assert create.call_args.kwargs["active"] is False
+
+
+def test_guardar_editar_provider_activo_desmarcado(ia_env, monkeypatch):
+    application, superadmin_routes = ia_env
+    update = MagicMock(return_value=True)
+    monkeypatch.setattr(superadmin_routes, "list_ai_providers", lambda: [{"priority": 1}])
+    monkeypatch.setattr(superadmin_routes, "update_ai_provider", update)
+
+    data = {
+        "csrf_token": "token",
+        "provider_id": "9",
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant",
+        "priority": "1",
+        "active": "0",
+    }
+    with application.test_request_context("/superadmin/ia/guardar", method="POST", data=data):
+        response = superadmin_routes.superadmin_ia_guardar()
+
+    assert response.status_code == 302
+    assert update.call_args.kwargs["active"] is False
+
+
+def test_guardar_editar_provider_inactivo_marcado(ia_env, monkeypatch):
+    application, superadmin_routes = ia_env
+    update = MagicMock(return_value=True)
+    monkeypatch.setattr(superadmin_routes, "list_ai_providers", lambda: [{"priority": 1}])
+    monkeypatch.setattr(superadmin_routes, "update_ai_provider", update)
+
+    data = {
+        "csrf_token": "token",
+        "provider_id": "9",
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant",
+        "priority": "1",
+        "active": "1",
+    }
+    with application.test_request_context("/superadmin/ia/guardar", method="POST", data=data):
+        response = superadmin_routes.superadmin_ia_guardar()
+
+    assert response.status_code == 302
+    assert update.call_args.kwargs["active"] is True
+
+
+def test_guardar_editar_campo_active_ausente_preserva(ia_env, monkeypatch):
+    application, superadmin_routes = ia_env
+    update = MagicMock(return_value=True)
+    monkeypatch.setattr(superadmin_routes, "list_ai_providers", lambda: [{"priority": 1}])
+    monkeypatch.setattr(superadmin_routes, "update_ai_provider", update)
+
+    data = {
+        "csrf_token": "token",
+        "provider_id": "9",
+        "provider": "groq",
+        "model": "llama-3.1-8b-instant",
+        "priority": "1",
+    }
+    with application.test_request_context("/superadmin/ia/guardar", method="POST", data=data):
+        response = superadmin_routes.superadmin_ia_guardar()
+
+    assert response.status_code == 302
+    assert update.call_args.kwargs["active"] is None

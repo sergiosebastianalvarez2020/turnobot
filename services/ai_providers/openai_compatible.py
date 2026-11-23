@@ -561,7 +561,7 @@ class OpenAICompatibleProvider(AIProvider):
             latency_ms = int((time.monotonic() - start) * 1000)
 
             if resp.status_code == 200:
-                normalized, last_error = self._parse_http_response(resp)
+                normalized, parse_error = self._parse_http_response(resp)
                 if normalized is not None:
                     outcome = self._handle_successful_response(
                         normalized,
@@ -572,9 +572,18 @@ class OpenAICompatibleProvider(AIProvider):
                         attempt,
                         http_attempts,
                     )
-                    return outcome, last_error, http_attempts
+                    return outcome, None, http_attempts
+                last_error = parse_error
             else:
                 last_error = self._classify_http_response_error(resp)
+
+            if last_error is None:
+                last_error = ProviderError(
+                    "malformed_response",
+                    "UnknownResponseError",
+                    retry_same_provider=True,
+                    fallback_next_provider=True,
+                )
 
             return self._error_outcome(
                 last_error,

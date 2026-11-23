@@ -576,14 +576,25 @@ def superadmin_ia():
 
 
 def _validate_superadmin_ia_save_form(
-    provider: str, model: str, priority_raw: str, active_raw: str, provider_id_raw: str
-) -> tuple[bool, str | None, int | None, bool | None, int | None]:
-    """Valida el formulario de superadmin_ia_guardar y devuelve los parámetros procesados.
+    provider: str,
+    model: str,
+    priority_raw: str,
+    active_raw: str | None,
+    provider_id_raw: str,
+    active_present: bool,
+) -> tuple[bool, str | None, int | None, int | None, bool | None]:
+    """Valida el formulario de superadmin_ia_guardar y devuelve los par?metros procesados.
+
+
 
     Returns:
+
         Tuple de (exito, mensaje_error, provider_id, priority, active).
-        Si exito es False, mensaje_error contiene la razón y los demás son None.
+
+        Si exito es False, mensaje_error contiene la raz?n y los dem?s son None.
+
     """
+
     if provider not in _PROVIDER_LABELS:
         return False, "Proveedor no válido.", None, None, None
     if not model:
@@ -603,20 +614,30 @@ def _validate_superadmin_ia_save_form(
         except (TypeError, ValueError):
             provider_id = None
 
-    active = active_raw == "1" if active_raw is not None else None
+    if not active_present:
+        active: bool | None = None
+
+    elif active_raw in {"0", "1"}:
+        active = active_raw == "1"
+
+    else:
+        return False, "El valor de activo no es v?lido.", None, None, None
 
     return True, None, provider_id, priority, active
 
 
 def _parse_ia_save_form() -> tuple:
     """Extrae y normaliza los campos del formulario de guardado de IA."""
+    active_present = "active" in request.form
+    active_raw = request.form.get("active")
     return (
         (request.form.get("provider", "") or "").strip().lower(),
         (request.form.get("model", "") or "").strip(),
         (request.form.get("priority", "") or "").strip(),
-        (request.form.get("active", "") or "").strip(),
+        active_raw.strip() if isinstance(active_raw, str) else None,
         request.form.get("api_key", "") or "",
         (request.form.get("provider_id", "") or "").strip(),
+        active_present,
     )
 
 
@@ -654,8 +675,8 @@ def _save_ia_provider(
                 provider=provider,
                 api_key=api_key.strip(),
                 model=model,
-                priority=priority,
-                active=active,
+                priority=priority if priority is not None else 0,
+                active=True if active is None else active,
                 platform_user_id=user["id"],
                 actor_email=user["email"],
                 ip_address=ip,
@@ -678,17 +699,20 @@ def superadmin_ia_guardar():
         return _ia_redirect(error=ERROR_RATE_LIMIT)
 
     # 1. Validación de parámetros
-    provider, model, priority_raw, active_raw, api_key, provider_id_raw = _parse_ia_save_form()
+    provider, model, priority_raw, active_raw, api_key, provider_id_raw, active_present = (
+        _parse_ia_save_form()
+    )
 
     success, error_msg, provider_id, priority, active = _validate_superadmin_ia_save_form(
-        provider, model, priority_raw, active_raw, provider_id_raw
+        provider, model, priority_raw, active_raw, provider_id_raw, active_present
     )
     if not success:
         return _ia_redirect(error=error_msg)
 
     # 2. Validación de prioridad y lista existente
     existing = list_ai_providers()
-    if priority is None:
+    is_update = provider_id is not None
+    if priority is None and not is_update:
         priority = max((p.get("priority", 0) for p in existing), default=0) + 1
 
     # 3. Resolución de creación o actualización
