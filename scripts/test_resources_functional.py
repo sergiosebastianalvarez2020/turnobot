@@ -1,7 +1,7 @@
 """Prueba funcional TurnoBot — Recursos / Pádel.
 
 Ejecuta:
-    python test_resources_functional.py
+    python scripts/test_resources_functional.py
 """
 
 import json
