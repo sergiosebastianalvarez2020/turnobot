@@ -68,8 +68,7 @@ def _build_test_pki(hostname: str, server_ip: str = "127.0.0.1") -> tuple[str, s
             x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False
         )
         .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-            critical=False,
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
         )
         .add_extension(
             x509.KeyUsage(
@@ -101,22 +100,16 @@ def _build_test_pki(hostname: str, server_ip: str = "127.0.0.1") -> tuple[str, s
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(
             x509.SubjectAlternativeName(
-                [
-                    x509.DNSName(hostname),
-                    x509.IPAddress(ipaddress.IPv4Address(server_ip)),
-                ]
+                [x509.DNSName(hostname), x509.IPAddress(ipaddress.IPv4Address(server_ip))]
             ),
             critical=False,
         )
-        .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
-        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(
             x509.SubjectKeyIdentifier.from_public_key(srv_key.public_key()), critical=False
         )
         .add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-            critical=False,
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
         )
         .sign(ca_key, hashes.SHA256())
     )
@@ -189,6 +182,7 @@ class _LocalHTTPSServer:
         bloquee indefinidamente cuando hay contención de TLS entre tests consecutivos.
         """
         import time
+
         self._server.timeout = 8  # evitar bloqueo indefinido en SSL handshake
         self._server.socket.settimeout(8)
         ready = threading.Event()
@@ -200,7 +194,7 @@ class _LocalHTTPSServer:
         t = threading.Thread(target=_serve, daemon=True)
         t.start()
         ready.wait(timeout=2)  # esperar a que el hilo esté listo
-        time.sleep(0.05)       # dar tiempo al SO para que el socket quede en select()
+        time.sleep(0.05)  # dar tiempo al SO para que el socket quede en select()
         return t
 
     def close(self, thread: threading.Thread | None = None):
@@ -555,9 +549,7 @@ class TestSSRFAdapterNoSecondDNS(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             # El hostname original NO debe aparecer en ninguna llamada a getaddrinfo
             # durante la conexión (ya tiene la IP pinneada, no necesita resolver).
-            hostname_resolved_during_connect = any(
-                _HOSTNAME in str(args) for args in dns_calls
-            )
+            hostname_resolved_during_connect = any(_HOSTNAME in str(args) for args in dns_calls)
             self.assertFalse(
                 hostname_resolved_during_connect,
                 f"getaddrinfo was called with the original hostname during connection: {dns_calls}",

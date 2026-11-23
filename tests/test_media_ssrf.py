@@ -64,6 +64,7 @@ class TestFetchExternalImageInputValidation(unittest.TestCase):
 
     def _fetch(self, url):
         from application.media import fetch_external_image
+
         return fetch_external_image(url)
 
     def test_empty_url_rejected(self):
@@ -136,6 +137,7 @@ class TestFetchExternalImageDNSResolution(unittest.TestCase):
 
     def _fetch(self, url):
         from application.media import fetch_external_image
+
         return fetch_external_image(url)
 
     def _make_addrinfo(self, ip: str):
@@ -199,8 +201,7 @@ class TestFetchExternalImageRedirects(unittest.TestCase):
 
         # Mockear _resolve_and_validate_host para devolver una IP pública.
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=mock_response) as mock_get:
                 result = fetch_external_image(url)
@@ -209,9 +210,7 @@ class TestFetchExternalImageRedirects(unittest.TestCase):
     def test_redirect_301_to_loopback_blocked(self):
         """301 → 127.0.0.1 rechazado; solo UNA petición HTTP."""
         resp = _make_response(
-            status_code=301,
-            headers={"Location": "http://127.0.0.1/secret"},
-            body=b"",
+            status_code=301, headers={"Location": "http://127.0.0.1/secret"}, body=b""
         )
         (data, error), mock_get = self._fetch_with_mock_session(
             "http://public.example.com/img.png", resp
@@ -226,9 +225,7 @@ class TestFetchExternalImageRedirects(unittest.TestCase):
     def test_redirect_302_to_private_network_blocked(self):
         """302 → 10.0.0.1 rechazado."""
         resp = _make_response(
-            status_code=302,
-            headers={"Location": "http://10.0.0.1/data"},
-            body=b"",
+            status_code=302, headers={"Location": "http://10.0.0.1/data"}, body=b""
         )
         (data, error), mock_get = self._fetch_with_mock_session(
             "http://public.example.com/img.png", resp
@@ -256,9 +253,7 @@ class TestFetchExternalImageRedirects(unittest.TestCase):
     def test_redirect_308_to_ipv6_private_blocked(self):
         """308 → dirección IPv6 ULA rechazado."""
         resp = _make_response(
-            status_code=308,
-            headers={"Location": "http://[fc00::1]/internal"},
-            body=b"",
+            status_code=308, headers={"Location": "http://[fc00::1]/internal"}, body=b""
         )
         (data, error), mock_get = self._fetch_with_mock_session(
             "http://public.example.com/img.png", resp
@@ -271,9 +266,7 @@ class TestFetchExternalImageRedirects(unittest.TestCase):
     def test_no_second_request_on_redirect(self):
         """Verificar que no se realiza una segunda solicitud HTTP al seguir una redirección."""
         resp = _make_response(
-            status_code=302,
-            headers={"Location": "http://127.0.0.1/secret"},
-            body=b"",
+            status_code=302, headers={"Location": "http://127.0.0.1/secret"}, body=b""
         )
         (data, error), mock_get = self._fetch_with_mock_session(
             "http://public.example.com/img.png", resp
@@ -290,8 +283,7 @@ class TestFetchExternalImageResponseValidation(unittest.TestCase):
         from application.media import fetch_external_image
 
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=response):
                 return fetch_external_image(url)
@@ -306,9 +298,7 @@ class TestFetchExternalImageResponseValidation(unittest.TestCase):
 
     def test_non_image_content_type_rejected(self):
         """Content-Type text/html → rechazado."""
-        resp = _make_response(
-            status_code=200, content_type="text/html", body=b"<html></html>"
-        )
+        resp = _make_response(status_code=200, content_type="text/html", body=b"<html></html>")
         data, error = self._fetch_with_response("http://cdn.example.com/page.html", resp)
         self.assertIsNone(data)
         self.assertIsNotNone(error)
@@ -329,9 +319,7 @@ class TestFetchExternalImageResponseValidation(unittest.TestCase):
         from application.media import _EXTERNAL_PROXY_MAX_BYTES
 
         oversized_body = b"X" * (_EXTERNAL_PROXY_MAX_BYTES + 1)
-        resp = _make_response(
-            status_code=200, content_type="image/jpeg", body=oversized_body
-        )
+        resp = _make_response(status_code=200, content_type="image/jpeg", body=oversized_body)
         data, error = self._fetch_with_response("http://cdn.example.com/huge.jpg", resp)
         self.assertIsNone(data)
         self.assertIsNotNone(error)
@@ -347,9 +335,7 @@ class TestFetchExternalImageResponseValidation(unittest.TestCase):
 
     def test_response_closed_on_rejection(self):
         """Verificar que response.close() se llama incluso al rechazar una respuesta."""
-        resp = _make_response(
-            status_code=200, content_type="text/plain", body=b"not an image"
-        )
+        resp = _make_response(status_code=200, content_type="text/plain", body=b"not an image")
         data, error = self._fetch_with_response("http://cdn.example.com/text.txt", resp)
         self.assertIsNone(data)
         # La respuesta debe estar cerrada aunque sea rechazada.
@@ -363,8 +349,7 @@ class TestFetchExternalImageNetworkErrors(unittest.TestCase):
         from application.media import fetch_external_image
 
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", side_effect=exception):
                 return fetch_external_image(url)
@@ -372,8 +357,7 @@ class TestFetchExternalImageNetworkErrors(unittest.TestCase):
     def test_connection_error_rejected(self):
         """Error de conexión TCP → rechazado con mensaje apropiado."""
         data, error = self._fetch_with_error(
-            "http://cdn.example.com/img.png",
-            ConnectionError("Connection refused"),
+            "http://cdn.example.com/img.png", ConnectionError("Connection refused")
         )
         self.assertIsNone(data)
         self.assertIsNotNone(error)
@@ -381,8 +365,7 @@ class TestFetchExternalImageNetworkErrors(unittest.TestCase):
     def test_timeout_rejected(self):
         """Timeout → rechazado."""
         data, error = self._fetch_with_error(
-            "http://cdn.example.com/img.png",
-            Timeout("Read timeout"),
+            "http://cdn.example.com/img.png", Timeout("Read timeout")
         )
         self.assertIsNone(data)
         self.assertIsNotNone(error)
@@ -393,6 +376,7 @@ class TestIsPrivateHost(unittest.TestCase):
 
     def _check(self, hostname):
         from application.media import is_private_host
+
         return is_private_host(hostname)
 
     def test_loopback_ipv4(self):
@@ -469,6 +453,7 @@ class TestResolveAndValidateHost(unittest.TestCase):
 
     def _resolve(self, hostname):
         from application.media import _resolve_and_validate_host
+
         return _resolve_and_validate_host(hostname)
 
     def _make_addrinfo(self, ip: str):
@@ -524,6 +509,7 @@ class TestIsPrivateHostEdgeCases(unittest.TestCase):
 
     def _check(self, hostname, infos=None):
         from application.media import is_private_host
+
         if infos is not None:
             with patch("socket.getaddrinfo", return_value=infos):
                 return is_private_host(hostname)
@@ -558,8 +544,7 @@ class TestFetchExternalImageFullFlow(unittest.TestCase):
         resp = _make_response(status_code=200, content_type="image/png", body=_TINY_PNG)
 
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=resp) as mock_get:
                 data, error = fetch_external_image("http://cdn.example.com/logo.png")
@@ -580,8 +565,7 @@ class TestFetchExternalImageFullFlow(unittest.TestCase):
         resp = _make_response(status_code=200, content_type="image/png", body=_TINY_PNG)
 
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=resp) as mock_get:
                 fetch_external_image("https://cdn.example.com/logo.png")
@@ -600,8 +584,7 @@ class TestProxyBypass(unittest.TestCase):
         from application.media import fetch_external_image
 
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=response) as mock_get:
                 result = fetch_external_image(url)
@@ -653,8 +636,7 @@ class TestProxyBypass(unittest.TestCase):
 
         resp = _make_response(200, "image/png", self._TINY_PNG)
         with patch(
-            "application.media._resolve_and_validate_host",
-            return_value=([(4, "1.2.3.4")], None),
+            "application.media._resolve_and_validate_host", return_value=([(4, "1.2.3.4")], None)
         ):
             with patch("requests.Session.get", return_value=resp) as mock_get:
                 fetch_external_image("https://cdn.example.com/logo.png")
@@ -673,15 +655,15 @@ class TestProxyBypass(unittest.TestCase):
 
         # Simular una prepared request
         import requests as req_lib
+
         prep = req_lib.Request("GET", "https://cdn.example.com/img.png").prepare()
 
         # Pasar un proxy explícito — el adaptador debe ignorarlo
         proxy_dict = {"https": "http://proxy.evil.com:3128"}
-        pool = adapter.get_connection_with_tls_context(
-            prep, verify=True, proxies=proxy_dict
-        )
+        pool = adapter.get_connection_with_tls_context(prep, verify=True, proxies=proxy_dict)
         # El pool debe ser un _PinnedHTTPSConnectionPool, no un ProxyManager
         from application.media import _PinnedHTTPSConnectionPool
+
         self.assertIsInstance(pool, _PinnedHTTPSConnectionPool)
         # El host del pool es la IP pinneada
         self.assertEqual(pool.host, "1.2.3.4")

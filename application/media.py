@@ -202,7 +202,9 @@ def is_private_host(hostname: str) -> bool:
     return False
 
 
-def _resolve_and_validate_host(hostname: str) -> tuple[list[tuple[socket.AddressFamily, str]], str | None]:
+def _resolve_and_validate_host(
+    hostname: str,
+) -> tuple[list[tuple[socket.AddressFamily, str]], str | None]:
     """Resuelve el hostname y valida que ninguna IP sea privada/interna.
 
     Devuelve (lista de (family, ip_str), None) si todas las IPs son públicas,
@@ -316,21 +318,13 @@ class _SSRFSafeAdapter(HTTPAdapter):
     def _build_pool(self, scheme: str, url_parts) -> HTTPConnectionPool:
         port = url_parts.port or _DEFAULT_PORTS.get(scheme, 80)
         timeout = urllib3.util.timeout.Timeout(
-            connect=_EXTERNAL_PROXY_TIMEOUT,
-            read=_EXTERNAL_PROXY_TIMEOUT,
+            connect=_EXTERNAL_PROXY_TIMEOUT, read=_EXTERNAL_PROXY_TIMEOUT
         )
         if scheme == "https":
             return _PinnedHTTPSConnectionPool(
-                hostname=self._hostname,
-                host=self._pinned_ip,
-                port=port,
-                timeout=timeout,
+                hostname=self._hostname, host=self._pinned_ip, port=port, timeout=timeout
             )
-        return HTTPConnectionPool(
-            host=self._pinned_ip,
-            port=port,
-            timeout=timeout,
-        )
+        return HTTPConnectionPool(host=self._pinned_ip, port=port, timeout=timeout)
 
     def send(self, request, *args, **kwargs):
         # Inyectar Host: con el hostname original; urllib3 usará skip_host=1
@@ -428,9 +422,7 @@ def fetch_external_image(url: str) -> tuple[bytes | None, str | None]:
     try:
         # Redirecciones (3xx) se rechazan explícitamente para evitar SSRF via
         # open redirect hacia direcciones internas (127.0.0.1, 169.254.169.254, etc.).
-        if response.is_redirect or response.status_code in {
-            301, 302, 303, 307, 308
-        }:
+        if response.is_redirect or response.status_code in {301, 302, 303, 307, 308}:
             return None, "Redirección no permitida."
         if response.status_code != 200:
             return None, "La imagen remota no está disponible."
