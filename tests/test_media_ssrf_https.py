@@ -372,20 +372,12 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
         t = srv.handle_one()
         try:
             with pytest.MonkeyPatch().context() as monkeypatch:
-                monkeypatch.setenv(
-                    "HTTPS_PROXY",
-                    "http://nonexistent-proxy.invalid:8080",
-                )
-                monkeypatch.setenv(
-                    "HTTP_PROXY",
-                    "http://nonexistent-proxy.invalid:8080",
-                )
+                monkeypatch.setenv("HTTPS_PROXY", "http://nonexistent-proxy.invalid:8080")
+                monkeypatch.setenv("HTTP_PROXY", "http://nonexistent-proxy.invalid:8080")
                 session = self._make_session()
                 resp = self._get(session, srv.port, verify=ca_pem)
                 self.assertEqual(resp.status_code, 200)
-                self.assertTrue(
-                    srv.observed.get("host_header", "").startswith(_HOSTNAME)
-                )
+                self.assertTrue(srv.observed.get("host_header", "").startswith(_HOSTNAME))
         finally:
             srv.close(t)
 
