@@ -371,7 +371,7 @@ class TestFetchExternalImageNetworkErrors(unittest.TestCase):
         self.assertIsNotNone(error)
 
 
-class TestIsPrivateHost(unittest.TestCase):
+class TestIsPrivateHost:
     """Tests unitarios de is_private_host."""
 
     def _check(self, hostname):
@@ -432,7 +432,7 @@ class TestIsPrivateHost(unittest.TestCase):
                 result = is_private_host(hostname)
         else:
             result = is_private_host(hostname)
-        self.assertEqual(result, expected)
+        assert result == expected
 
 
 class TestResolveAndValidateHost(unittest.TestCase):
