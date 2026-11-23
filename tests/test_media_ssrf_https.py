@@ -466,19 +466,20 @@ class TestSSRFAdapterHTTPS(unittest.TestCase):
                 peername = sock.getpeername()
                 captured_peers.append((peername[0], peername[1]))
 
-        HTTPSConnection.connect = capturing_connect
-        try:
-            session = self._make_session()
-            resp = session.get(
-                f"https://{_HOSTNAME}:{srv.port}/image.png",
-                verify=ca_pem,
-                allow_redirects=False,
-                timeout=5,
-                proxies={},
-            )
-        finally:
-            HTTPSConnection.connect = original_connect
-            srv.close(t)
+        monkeypatch = pytest.MonkeyPatch()
+        with monkeypatch.context():
+            monkeypatch.setattr(HTTPSConnection, "connect", capturing_connect)
+            try:
+                session = self._make_session()
+                resp = session.get(
+                    f"https://{_HOSTNAME}:{srv.port}/image.png",
+                    verify=ca_pem,
+                    allow_redirects=False,
+                    timeout=5,
+                    proxies={},
+                )
+            finally:
+                srv.close(t)
 
         self.assertEqual(resp.status_code, 200)
         self.assertGreater(len(captured_peers), 0)
@@ -560,9 +561,10 @@ class TestSSRFAdapterHTTP(unittest.TestCase):
         port = raw_server.socket.getsockname()[1]
         t = threading.Thread(target=raw_server.handle_request, daemon=True)
         t.start()
-        old = os.environ.get("HTTP_PROXY")
-        try:
-            os.environ["HTTP_PROXY"] = "http://nonexistent-proxy.invalid:8080"
+
+        monkeypatch = pytest.MonkeyPatch()
+        with monkeypatch.context():
+            monkeypatch.setenv("HTTP_PROXY", "http://nonexistent-proxy.invalid:8080")
             session = self._make_session(hostname=HOSTNAME_HTTP, pinned_ip="127.0.0.1")
             resp = session.get(
                 f"http://{HOSTNAME_HTTP}:{port}/image.png",
@@ -572,13 +574,9 @@ class TestSSRFAdapterHTTP(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(observed.get("host_header", "").startswith(HOSTNAME_HTTP))
-        finally:
-            if old is None:
-                os.environ.pop("HTTP_PROXY", None)
-            else:
-                os.environ["HTTP_PROXY"] = old
-            t.join(timeout=2)
-            raw_server.server_close()
+
+        t.join(timeout=2)
+        raw_server.server_close()
 
     def test_http_non_default_port_in_host_header(self):
         """HTTP con puerto no predeterminado: el Host incluye el puerto."""

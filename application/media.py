@@ -353,6 +353,10 @@ class _SSRFSafeAdapter(HTTPAdapter):
         # Siempre devolver el pool pinneado; ignorar proxies explícitamente.
         # Esto evita que, si proxies contiene entradas del entorno, requests
         # cree un ProxyManager que resuelva el hostname por su cuenta.
+        # `verify` y `cert` se conservan en la firma por compatibilidad con
+        # la interfaz de HTTPAdapter de Requests; no se usan porque el pool
+        # pinneado ya configura TLS con el hostname original.
+        _ = (verify, cert)
         parsed = urlsplit(request.url)
         return self._build_pool(parsed.scheme, parsed)
 

@@ -379,73 +379,60 @@ class TestIsPrivateHost(unittest.TestCase):
 
         return is_private_host(hostname)
 
-    def test_loopback_ipv4(self):
-        self.assertTrue(self._check("127.0.0.1"))
+    @pytest.mark.parametrize(
+        "hostname, expected, mock_infos, mock_effect",
+        [
+            pytest.param("127.0.0.1", True, None, None, id="loopback_ipv4"),
+            pytest.param("10.0.0.1", True, None, None, id="rfc1918_10"),
+            pytest.param("172.16.0.1", True, None, None, id="rfc1918_172"),
+            pytest.param("192.168.0.1", True, None, None, id="rfc1918_192"),
+            pytest.param("169.254.169.254", True, None, None, id="link_local_metadata"),
+            pytest.param("::1", True, None, None, id="loopback_ipv6"),
+            pytest.param("::ffff:127.0.0.1", True, None, None, id="ipv4_mapped_ipv6_loopback"),
+            pytest.param("::ffff:10.0.0.1", True, None, None, id="ipv4_mapped_ipv6_private"),
+            pytest.param("8.8.8.8", False, None, None, id="public_ip_allowed"),
+            pytest.param("", True, None, None, id="empty_host_blocked"),
+            pytest.param(
+                "internal.company.example",
+                True,
+                [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.1.2.3", 0))],
+                None,
+                id="dns_resolves_to_private_blocked",
+            ),
+            pytest.param(
+                "nxdomain.example", True, None, socket.gaierror("fail"), id="dns_error_blocked"
+            ),
+            pytest.param(
+                "mixed.example.com",
+                True,
+                [
+                    (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("1.2.3.4", 0)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 0)),
+                ],
+                None,
+                id="multiple_ips_one_private_blocked",
+            ),
+            pytest.param("100.64.0.1", True, None, None, id="cgnat_rfc6598_low_blocked"),
+            pytest.param("100.127.255.254", True, None, None, id="cgnat_rfc6598_high_blocked"),
+            pytest.param(
+                "cgnat.example.com",
+                True,
+                [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("100.64.1.1", 0))],
+                None,
+                id="cgnat_host_resolves_to_cgnat_blocked",
+            ),
+            pytest.param("1.1.1.1", False, None, None, id="public_global_ip_allowed"),
+        ],
+    )
+    def test_is_private_host(self, hostname, expected, mock_infos, mock_effect):
+        from application.media import is_private_host
 
-    def test_rfc1918_10(self):
-        self.assertTrue(self._check("10.0.0.1"))
-
-    def test_rfc1918_172(self):
-        self.assertTrue(self._check("172.16.0.1"))
-
-    def test_rfc1918_192(self):
-        self.assertTrue(self._check("192.168.0.1"))
-
-    def test_link_local_metadata(self):
-        self.assertTrue(self._check("169.254.169.254"))
-
-    def test_loopback_ipv6(self):
-        self.assertTrue(self._check("::1"))
-
-    def test_ipv4_mapped_ipv6_loopback(self):
-        """::ffff:127.0.0.1 debe ser bloqueado (Python 3.11+)."""
-        self.assertTrue(self._check("::ffff:127.0.0.1"))
-
-    def test_ipv4_mapped_ipv6_private(self):
-        """::ffff:10.0.0.1 debe ser bloqueado."""
-        self.assertTrue(self._check("::ffff:10.0.0.1"))
-
-    def test_public_ip_allowed(self):
-        self.assertFalse(self._check("8.8.8.8"))
-
-    def test_empty_host_blocked(self):
-        self.assertTrue(self._check(""))
-
-    def test_dns_resolves_to_private_blocked(self):
-        infos = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.1.2.3", 0))]
-        with patch("socket.getaddrinfo", return_value=infos):
-            self.assertTrue(self._check("internal.company.example"))
-
-    def test_dns_error_blocked(self):
-        with patch("socket.getaddrinfo", side_effect=socket.gaierror("fail")):
-            self.assertTrue(self._check("nxdomain.example"))
-
-    def test_multiple_ips_one_private_blocked(self):
-        """Fail-secure: si alguna IP es privada, todo el host es bloqueado."""
-        infos = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("1.2.3.4", 0)),
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 0)),
-        ]
-        with patch("socket.getaddrinfo", return_value=infos):
-            self.assertTrue(self._check("mixed.example.com"))
-
-    def test_cgnat_rfc6598_low_blocked(self):
-        """100.64.0.1 (CGNAT RFC 6598) debe ser bloqueado (not is_global)."""
-        self.assertTrue(self._check("100.64.0.1"))
-
-    def test_cgnat_rfc6598_high_blocked(self):
-        """100.127.255.254 (tope del bloque CGNAT) debe ser bloqueado."""
-        self.assertTrue(self._check("100.127.255.254"))
-
-    def test_cgnat_host_resolves_to_cgnat_blocked(self):
-        """Host que resuelve a IP CGNAT (100.64.x.x) → bloqueado."""
-        infos = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("100.64.1.1", 0))]
-        with patch("socket.getaddrinfo", return_value=infos):
-            self.assertTrue(self._check("cgnat.example.com"))
-
-    def test_public_global_ip_allowed(self):
-        """1.1.1.1 es is_global=True → permitida (no es privada ni CGNAT)."""
-        self.assertFalse(self._check("1.1.1.1"))
+        if mock_infos is not None or mock_effect is not None:
+            with patch("socket.getaddrinfo", return_value=mock_infos, side_effect=mock_effect):
+                result = is_private_host(hostname)
+        else:
+            result = is_private_host(hostname)
+        self.assertEqual(result, expected)
 
 
 class TestResolveAndValidateHost(unittest.TestCase):
@@ -592,8 +579,6 @@ class TestProxyBypass(unittest.TestCase):
 
     def test_trust_env_false_in_session(self):
         """La sesión SSRF tiene trust_env=False para ignorar HTTP_PROXY/HTTPS_PROXY del entorno."""
-        import os
-
         import requests as requests_lib
 
         from application.media import fetch_external_image
@@ -606,10 +591,10 @@ class TestProxyBypass(unittest.TestCase):
             original_session_init(self, *a, **kw)
             created_sessions.append(self)
 
-        old_proxy = os.environ.get("HTTPS_PROXY")
-        os.environ["HTTPS_PROXY"] = "http://evil-proxy.test:9999"
-        resp = _make_response(200, "image/png", self._TINY_PNG)
-        try:
+        monkeypatch = pytest.MonkeyPatch()
+        with monkeypatch.context():
+            monkeypatch.setenv("HTTPS_PROXY", "http://evil-proxy.test:9999")
+            resp = _make_response(200, "image/png", self._TINY_PNG)
             with patch("requests.Session.__init__", capturing_init):
                 with patch(
                     "application.media._resolve_and_validate_host",
@@ -624,11 +609,6 @@ class TestProxyBypass(unittest.TestCase):
                     created_sessions[-1].trust_env,
                     "Session should have trust_env=False to ignore proxy env vars",
                 )
-        finally:
-            if old_proxy is None:
-                os.environ.pop("HTTPS_PROXY", None)
-            else:
-                os.environ["HTTPS_PROXY"] = old_proxy
 
     def test_proxies_empty_dict_passed_to_get(self):
         """fetch_external_image pasa proxies={} a session.get() para nulificar select_proxy()."""
