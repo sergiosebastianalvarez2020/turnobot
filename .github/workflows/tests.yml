@@ -192,7 +192,10 @@ jobs:
           import xml.etree.ElementTree as ET
           import sys
 
-          allowed_skip = "tests.test_secure_turnos_contract::test_crear_consultar_cancelar_reprogramar_con_token_propio"
+          allowed_skips = {
+              "tests.test_secure_turnos_contract::test_crear_consultar_cancelar_reprogramar_con_token_propio",
+              "tests.integration.test_gemini.TestGeminiIntegration::test_gemini_responde",
+          }
           junit_file = "/tmp/tests_junit.xml"
 
           try:
@@ -214,7 +217,7 @@ jobs:
                   name = testcase.get("name", "")
                   full_id = f"{classname}::{name}" if classname else name
                   # Normalizar para comparar (pytest usa :: como separador)
-                  if full_id != allowed_skip:
+                  if full_id not in allowed_skips:
                       unexpected_skips.append(full_id)
 
           if unexpected_skips:
