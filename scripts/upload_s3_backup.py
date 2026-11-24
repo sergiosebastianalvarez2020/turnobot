@@ -22,10 +22,14 @@ import tempfile
 import time
 from pathlib import Path
 
-import boto3
-from boto3.s3.transfer import TransferConfig
-from botocore.config import Config
-from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
+import boto3  # type: ignore[import-untyped]
+from boto3.s3.transfer import TransferConfig  # type: ignore[import-untyped]
+from botocore.config import Config  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 BUCKET = "turnobot-backups-528120377808-us-east-2-an"
 REGION = "us-east-2"

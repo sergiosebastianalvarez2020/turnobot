@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.exceptions import ClientError, EndpointConnectionError  # type: ignore[import-untyped]
 
 from scripts.upload_s3_backup import (
     BUCKET,
