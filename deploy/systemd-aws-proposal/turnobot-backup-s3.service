@@ -1,0 +1,19 @@
+[Unit]
+Description=TurnoBot - Subida del backup PostgreSQL a S3
+After=turnobot-backup.service
+# No Requires/Wants desde turnobot-backup: el disparo es via ExecStartPost
+# solo cuando el backup local termino con exito.
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/turnobot
+Environment=PYTHONPATH=/home/ubuntu/turnobot
+UMask=0077
+# Selecciona el automatico mas reciente (mismo criterio que verify override):
+# turnobot-pg-YYYYMMDD-HHMMSS.dump, no-symlink, archivo, no vacio.
+ExecStart=/bin/bash -c 'set -euo pipefail; dir=/home/ubuntu/turnobot/backups_pg; shopt -s nullglob; latest=""; for f in "$dir"/turnobot-pg-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9].dump; do [ -L "$f" ] && continue; [ -f "$f" ] || continue; [ -s "$f" ] || continue; latest="$f"; done; if [ -z "$latest" ]; then echo "No hay backup automatico valido para subir" >&2; exit 2; fi; echo "Subiendo $latest"; exec /usr/bin/python3 /home/ubuntu/turnobot/scripts/upload_s3_backup.py "$latest"'
+TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true

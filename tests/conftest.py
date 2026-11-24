@@ -21,6 +21,7 @@ import psycopg
 import pytest
 
 from database import database as _database_module
+from database.pg_pool import close_pg_pool
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
     apply_current_schema,
@@ -45,7 +46,8 @@ _default_test_db_name: str | None = None
 def _drop_default_test_database() -> None:
     """Elimina la base de datos de sesión por defecto. Idempotente."""
     global _default_test_db_name
-    if not _default_test_db_name:
+    if not _default_test_db_name or not TURNOBOT_PG_URL:
+        _default_test_db_name = None
         return
     try:
         drop_test_database(TURNOBOT_PG_URL, _default_test_db_name)
@@ -297,7 +299,10 @@ def app(pg_test_database: str, monkeypatch):
 
     app = create_app()
     app.config["TESTING"] = True
-    return app
+    try:
+        yield app
+    finally:
+        close_pg_pool(app=app)
 
 
 @pytest.fixture
@@ -395,10 +400,10 @@ def pg_isolate_module_app(request, monkeypatch):
         seed_standard_test_data(test_conninfo)
         test_url = conninfo_to_url(test_conninfo)
 
-        # Apartar el pool anterior sin cerrarlo: puede pertenecer a otro test.
+        # Cerrar el pool anterior si existe en esta aplicación antes de reemplazarlo.
         if old_pool is not None:
-            application_app.extensions.pop("pg_pool", None)
-        pool_swapped = True
+            close_pg_pool(app=application_app)
+        pool_swapped = old_pool is not None
 
         # Create new pool pointing to per-test database
         monkeypatch.setenv("DATABASE_URL", test_url)
