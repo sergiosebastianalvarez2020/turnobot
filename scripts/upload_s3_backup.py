@@ -1,7 +1,8 @@
 """Sube un backup PostgreSQL a S3 y verifica la copia remota.
 
 Uso:
-    /usr/bin/python3 scripts/upload_s3_backup.py /ruta/turnobot-pg-YYYYMMDD-HHMMSS.dump
+    /home/ubuntu/turnobot/.venv312/bin/python scripts/upload_s3_backup.py \
+      /ruta/turnobot-pg-YYYYMMDD-HHMMSS.dump
 
 Autenticación exclusivamente por instance profile IAM (sin claves estáticas).
 Bucket y región fijos para DR: us-east-2.
@@ -22,6 +23,7 @@ import time
 from pathlib import Path
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError, EndpointConnectionError, ReadTimeoutError
 
@@ -32,6 +34,10 @@ MAX_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 1.0
 DUMP_NAME_RE = re.compile(r"^turnobot-pg-\d{8}-\d{6}\.dump$")
 CHUNK_SIZE = 1024 * 1024
+MULTIPART_THRESHOLD = 64 * 1024 * 1024
+MULTIPART_CHUNKSIZE = 16 * 1024 * 1024
+MAX_UPLOAD_CONCURRENCY = 4
+DEFAULT_STATE_DIR = Path("/home/ubuntu/turnobot/state/s3_backup_uploads")
 SHA256_HEX_LEN = 64
 
 EXIT_OK = 0
@@ -42,6 +48,14 @@ EXIT_PG_RESTORE = 4
 EXIT_CHECKSUM = 5
 EXIT_UPLOAD = 6
 EXIT_REMOTE_VERIFY = 7
+EXIT_STATE = 8
+
+UPLOAD_CONFIG = TransferConfig(
+    multipart_threshold=MULTIPART_THRESHOLD,
+    multipart_chunksize=MULTIPART_CHUNKSIZE,
+    max_concurrency=MAX_UPLOAD_CONCURRENCY,
+    use_threads=True,
+)
 
 RETRYABLE_ERROR_CODES = {
     "SlowDown",
@@ -124,6 +138,24 @@ def remote_key_for(dump_path: Path) -> str:
     return f"postgres/{stamp:%Y}/{stamp:%m}/{dump_path.name}"
 
 
+def marker_path_for(state_dir: Path, dump_path: Path) -> Path:
+    return state_dir / f"{dump_path.name}.uploaded"
+
+
+def is_upload_done(state_dir: Path, dump_path: Path) -> bool:
+    return marker_path_for(state_dir, dump_path).is_file()
+
+
+def mark_uploaded(state_dir: Path, dump_path: Path, checksum: str, key: str) -> Path:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, dump_path)
+    tmp = state_dir / f".{marker.name}.{os.getpid()}.tmp"
+    tmp.write_text(f"{checksum}  s3://{BUCKET}/{key}\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, marker)
+    return marker
+
+
 def is_retryable(exc: Exception) -> bool:
     if isinstance(exc, (EndpointConnectionError, ReadTimeoutError)):
         return True
@@ -175,9 +207,15 @@ def s3_client():
 def upload_object(
     client, local: Path, key: str, metadata: dict[str, str] | None, content_type: str
 ) -> None:
-    extra: dict = {"Metadata": metadata or {}, "ContentType": content_type}
+    extra_args = {"Metadata": metadata or {}, "ContentType": content_type}
     retry_call(
-        f"put:{key}", client.put_object, Bucket=BUCKET, Key=key, Body=local.read_bytes(), **extra
+        f"upload:{key}",
+        client.upload_file,
+        str(local),
+        BUCKET,
+        key,
+        ExtraArgs=extra_args,
+        Config=UPLOAD_CONFIG,
     )
 
 
@@ -251,6 +289,12 @@ def verify_remote(
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sube un dump PostgreSQL a S3 y lo verifica.")
     parser.add_argument("dump", help="Ruta al archivo turnobot-pg-YYYYMMDD-HHMMSS.dump")
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        default=DEFAULT_STATE_DIR,
+        help="Directorio con marcadores de backups ya verificados en S3",
+    )
     return parser.parse_args(argv)
 
 
@@ -307,7 +351,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_CHECKSUM
 
+    try:
+        marker = mark_uploaded(args.state_dir, dump_path, final_sha, dump_key)
+    except Exception as exc:
+        print(f"ERROR: no se pudo registrar el estado local: {exc}", file=sys.stderr, flush=True)
+        return EXIT_STATE
+
     print(f"LOCAL_SHA256_OK {final_sha}", flush=True)
+    print(f"UPLOAD_MARKER_OK {marker}", flush=True)
     print("REMOTE_VERIFICATION=OK", flush=True)
     return EXIT_OK
 

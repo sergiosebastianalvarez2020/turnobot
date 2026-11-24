@@ -14,6 +14,25 @@
 | Reintento notificaciones (15 min) | `turnobot-retry-notifications.service` | `turnobot-retry-notifications.timer` | `*:0/15` |
 | Poda de backups PG | `turnobot-backup-prune.service` | `turnobot-backup-prune.timer` | `*-*-* 04:00:00` UTC |
 | Verificación backup PG | `turnobot-backup-verify.service` | `turnobot-backup-verify.timer` | `Sun *-*-* 04:30:00` UTC |
+| Subida backup PG a S3 | `turnobot-backup-s3.service` | drop-in `ExecStartPost` en `turnobot-backup.service` | tras backup local exitoso; reintenta pendientes por marcadores |
+
+## Subida S3 de backups (propuesta actualizada)
+
+- `turnobot-backup-s3.service` usa el venv de producción:
+  `/home/ubuntu/turnobot/.venv312/bin/python`.
+- `scripts/upload_s3_backup.py` usa `boto3.client.upload_file()` con
+  `TransferConfig(multipart_threshold=64MiB, multipart_chunksize=16MiB,
+  max_concurrency=4, use_threads=True)`, evitando cargar el dump completo en RAM.
+- El servicio selecciona dumps válidos `turnobot-pg-YYYYMMDD-HHMMSS.dump`,
+  ordena por más reciente primero, omite los ya confirmados por marcador en
+  `/home/ubuntu/turnobot/state/s3_backup_uploads/<dump>.uploaded`, continúa con
+  los pendientes si uno falla y sale con error si quedó algún fallo.
+- El marcador local solo se escribe después de verificación remota y
+  confirmación del hash local final.
+- `TimeoutStartSec=3600` cubre dumps grandes (~2 GB) en EC2 con ancho de banda
+  variable. Ajustar solo con evidencia.
+- Alertas: `OnFailure=turnobot-failure-notify@%N.service` en la unidad y
+  marcadores de log documentados en `BACKUP_S3_ALERTING_PROPOSAL.md`.
 
 ## Diferencias respecto de las plantillas `deploy/systemd/` (OCI)
 

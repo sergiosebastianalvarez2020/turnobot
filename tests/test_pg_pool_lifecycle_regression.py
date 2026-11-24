@@ -176,77 +176,65 @@ def test_pg_isolate_module_app_no_restaura_pool_cerrado(_pg_app_factory):
 
 
 @pytest.mark.no_pg
-def test_pg_isolate_module_app_cierra_pool_temporal_en_teardown(_pg_app_factory):
-    """El pool temporal registrado en la app se cierra y se retira en teardown."""
-    from database.pg_pool import close_pg_pool, init_pg_pool
+def test_pg_isolate_module_app_restauracion_config_tras_excepcion(monkeypatch):
+    """El teardown restaura config y cierra el pool temporal tras excepción."""
+    import app as application_mod
+    import database.database as database
+    import database.pg_pool as pg_pool_mod
+    from tests.conftest import pg_isolate_module_app as isolate_fixture
 
-    app = _pg_app_factory("test_isolate_temp_teardown")
-    temp_pool = _FakePool(conninfo="postgresql://test@localhost/temp")
+    application_app = application_mod.app
+    old_pool = _FakePool()
+    old_config = dict(application_app.config)
+    old_db_path = database.DATABASE_PATH
+    orig_global = pg_pool_mod._global_pool
+    orig_owned = pg_pool_mod._global_pool_app_owned
+    created: list[_FakePool] = []
 
-    with patch("database.pg_pool.create_pg_pool", return_value=temp_pool):
-        pool = init_pg_pool(app, open=False)
+    monkeypatch.setattr("tests.conftest.TURNOBOT_PG_URL", "postgresql://test@localhost/test")
+    monkeypatch.setattr("tests.conftest.create_test_database", lambda *a, **k: None)
+    monkeypatch.setattr("tests.conftest.apply_current_schema", lambda *a, **k: None)
+    monkeypatch.setattr("tests.conftest.seed_standard_test_data", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "tests.conftest._drop_test_database_with_real_connection", lambda *a, **k: None
+    )
 
-    assert pool is temp_pool
-    assert app.extensions.get("pg_pool") is temp_pool
-    assert temp_pool.closed is False
+    def _create(*args, **kwargs):
+        pool = _FakePool()
+        created.append(pool)
+        return pool
 
-    close_pg_pool(app=app)
+    class _Node:
+        def get_closest_marker(self, name):
+            return None
 
-    assert temp_pool.closed is True
-    assert temp_pool.close_calls == 1
-    assert "pg_pool" not in app.extensions
+    class _Request:
+        node = _Node()
+        fixturenames = []
 
-
-@pytest.mark.no_pg
-def test_pg_isolate_module_app_excepcion_no_impide_cierre(_pg_app_factory):
-    """El teardown cierra el pool temporal aunque el cuerpo del test falle."""
-    from database.pg_pool import close_pg_pool, init_pg_pool
-
-    app = _pg_app_factory("test_isolate_exception")
-    temp_pool = _FakePool()
-
-    with patch("database.pg_pool.create_pg_pool", return_value=temp_pool):
-        init_pg_pool(app, open=False)
+    isolate_impl = isolate_fixture.__wrapped__
+    application_app.extensions["pg_pool"] = old_pool
+    pg_pool_mod._global_pool = None
+    pg_pool_mod._global_pool_app_owned = False
 
     try:
-        raise RuntimeError("fallo intencional del test")
-    except RuntimeError:
-        pass
+        with patch("database.pg_pool.create_pg_pool", side_effect=_create):
+            gen = isolate_impl(_Request(), monkeypatch)
+            next(gen)
+            assert application_app.extensions.get("pg_pool") is created[0]
+            with pytest.raises(RuntimeError, match="fallo intencional"):
+                gen.throw(RuntimeError("fallo intencional"))
     finally:
-        close_pg_pool(app=app)
+        application_app.config.clear()
+        application_app.config.update(old_config)
+        database.DATABASE_PATH = old_db_path
+        application_app.extensions.pop("pg_pool", None)
+        pg_pool_mod._global_pool = orig_global
+        pg_pool_mod._global_pool_app_owned = orig_owned
 
-    assert temp_pool.closed is True
-    assert temp_pool.close_calls == 1
-    assert app.extensions.get("pg_pool") is None
-
-
-@pytest.mark.no_pg
-def test_pg_isolate_module_app_no_cierra_pool_de_otra_app(_pg_app_factory):
-    """close_pg_pool(app=...) es acotado: no afecta pools de otras apps."""
-    from database.pg_pool import close_pg_pool, init_pg_pool
-
-    app1 = _pg_app_factory("app1_independent")
-    app2 = _pg_app_factory("app2_independent")
-    pool1 = _FakePool(conninfo="postgresql://test@localhost/db1")
-    pool2 = _FakePool(conninfo="postgresql://test@localhost/db2")
-
-    with patch("database.pg_pool.create_pg_pool", return_value=pool1):
-        p1 = init_pg_pool(app1, open=False)
-    with patch("database.pg_pool.create_pg_pool", return_value=pool2):
-        p2 = init_pg_pool(app2, open=False)
-
-    assert p1 is pool1
-    assert p2 is pool2
-
-    close_pg_pool(app=app2)
-
-    assert pool2.closed is True
-    assert pool2.close_calls == 1
-    assert "pg_pool" not in app2.extensions
-
-    assert pool1.closed is False
-    assert pool1.close_calls == 0
-    assert app1.extensions.get("pg_pool") is pool1
+    assert created and created[0].closed is True
+    assert application_app.config.get("DATABASE_URL") == old_config.get("DATABASE_URL")
+    assert database.DATABASE_PATH == old_db_path
 
 
 @pytest.mark.no_pg

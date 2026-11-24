@@ -226,13 +226,14 @@ def _resolve_and_validate_host(
     for info in infos:
         family = info[0]
         raw = info[4][0]
+        raw_str = raw if isinstance(raw, str) else str(raw)
         try:
-            addr = ipaddress.ip_address(raw)
+            addr = ipaddress.ip_address(raw_str)
         except ValueError:
             return [], "Dirección IP inválida."
         if _ip_address_is_forbidden(addr):
             return [], "Host no permitido."
-        results.append((family, raw))
+        results.append((family, raw_str))
 
     return results, None
 

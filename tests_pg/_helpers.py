@@ -70,8 +70,8 @@ def conninfo_to_url(conninfo: str) -> str:
     ``build_test_db_conninfo``.
     """
     params = _conninfo.conninfo_to_dict(conninfo)
-    user = quote(params.get("user", ""), safe="")
-    password = quote(params.get("password", ""), safe="")
+    user = quote(str(params.get("user") or ""), safe="")
+    password = quote(str(params.get("password") or ""), safe="")
     host = params.get("host", "localhost")
     port = params.get("port", "5432")
     dbname = params.get("dbname", "")
@@ -158,7 +158,9 @@ def seed_business(url: str) -> int:
             "VALUES (%s, %s, TRUE, FALSE, CURRENT_TIMESTAMP) RETURNING id",
             (f"Negocio {suffix}", f"negocio-{suffix}"),
         ).fetchone()
-    return row[0]
+    if row is None:
+        raise RuntimeError("No se pudo crear el negocio de prueba")
+    return int(row[0])
 
 
 def seed_business_settings(url: str, business_id: int) -> None:
@@ -181,7 +183,9 @@ def seed_user(url: str, email: str | None = None) -> int:
             "VALUES (%s, 'hash', TRUE) RETURNING id",
             (email,),
         ).fetchone()
-    return row[0]
+    if row is None:
+        raise RuntimeError("No se pudo crear el usuario de prueba")
+    return int(row[0])
 
 
 def seed_full_week(url: str, business_id: int, start: str = "09:00", end: str = "18:00") -> None:
@@ -205,7 +209,9 @@ def seed_service(url: str, business_id: int, name: str = "Corte", duration: int 
             "VALUES (%s, %s, %s, TRUE, %s) RETURNING id",
             (name, Decimal("100.00"), duration, business_id),
         ).fetchone()
-    return row[0]
+    if row is None:
+        raise RuntimeError("No se pudo crear el servicio de prueba")
+    return int(row[0])
 
 
 def seed_resource(url: str, business_id: int, name: str) -> int:
@@ -214,7 +220,9 @@ def seed_resource(url: str, business_id: int, name: str) -> int:
             "INSERT INTO resources (name, active, business_id) VALUES (%s, TRUE, %s) RETURNING id",
             (name, business_id),
         ).fetchone()
-    return row[0]
+    if row is None:
+        raise RuntimeError("No se pudo crear el recurso de prueba")
+    return int(row[0])
 
 
 def seed_confirmed_appointment(
@@ -251,7 +259,9 @@ def seed_confirmed_appointment(
                 resource_id,
             ),
         ).fetchone()
-    return row[0]
+    if row is None:
+        raise RuntimeError("No se pudo crear el turno de prueba")
+    return int(row[0])
 
 
 def sync_identity_sequences(conn) -> None:

@@ -51,6 +51,10 @@ def _drop_default_test_database() -> None:
         return
     try:
         drop_test_database(TURNOBOT_PG_URL, _default_test_db_name)
+    except Exception as exc:
+        # La limpieza de sesión no debe ocultar el resultado del test si la base
+        # temporal ya no existe o PostgreSQL no está disponible.
+        print(f"ADVERTENCIA: no se pudo eliminar la base temporal {_default_test_db_name}: {exc}")
     finally:
         _default_test_db_name = None
 

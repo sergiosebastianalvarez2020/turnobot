@@ -455,6 +455,32 @@ class TestResolveAndValidateHost(unittest.TestCase):
         self.assertGreater(len(results), 0)
         self.assertEqual(results[0][1], "1.2.3.4")
 
+    def test_valid_host_regression_returns_pinned_ips_and_runs_ip_validation(self):
+        """Regresión: camino válido resuelve IPs públicas y aplica validaciones IP."""
+        infos = [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("2606:2800:220:1:248:1893:25c8:1946", 0)),
+        ]
+        with patch("socket.getaddrinfo", return_value=infos):
+            results, error = self._resolve("example.com")
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            results,
+            [
+                (socket.AF_INET, "93.184.216.34"),
+                (socket.AF_INET6, "2606:2800:220:1:248:1893:25c8:1946"),
+            ],
+        )
+
+        with patch(
+            "socket.getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))],
+        ):
+            blocked_results, blocked_error = self._resolve("localhost.example")
+        self.assertEqual(blocked_results, [])
+        self.assertIsNotNone(blocked_error)
+
     def test_private_ip_returns_error(self):
         """Host que resuelve a IP privada → error."""
         with patch("socket.getaddrinfo", return_value=self._make_addrinfo("10.0.0.1")):

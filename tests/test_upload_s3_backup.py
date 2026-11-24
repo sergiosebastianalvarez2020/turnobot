@@ -18,10 +18,14 @@ from scripts.upload_s3_backup import (
     EXIT_FILE_INVALID,
     EXIT_OK,
     EXIT_PG_RESTORE,
+    EXIT_STATE,
     EXIT_UPLOAD,
+    UPLOAD_CONFIG,
     download_object,
     head_object,
     is_retryable,
+    is_upload_done,
+    mark_uploaded,
     remote_key_for,
     retry_call,
     sha256_file,
@@ -108,6 +112,21 @@ def test_write_sidecar_atomic(sample_dump: Path):
         )
 
 
+def test_upload_marker_tracks_pending_backups(sample_dump: Path, tmp_path: Path):
+    """El marcador solo existe tras marcar y es idempotente."""
+    state_dir = tmp_path / "state"
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    marker = mark_uploaded(state_dir, sample_dump, "abc123", "postgres/2026/11/dump.dump")
+
+    assert marker == state_dir / f"{sample_dump.name}.uploaded"
+    assert is_upload_done(state_dir, sample_dump) is True
+    assert "s3://" in marker.read_text(encoding="utf-8")
+
+    mark_uploaded(state_dir, sample_dump, "abc123", "postgres/2026/11/dump.dump")
+    assert is_upload_done(state_dir, sample_dump) is True
+
+
 def test_remote_key_for(sample_dump: Path):
     """Genera la clave remota con estructura postgres/YYYY/MM/<name>."""
     key = remote_key_for(sample_dump)
@@ -171,18 +190,29 @@ def test_retry_call_retries_on_transient_error():
 
 
 def test_upload_object(sample_dump: Path):
-    """Llama a client.put_object con los metadatos y contenido correctos."""
+    """Usa upload_file con TransferConfig, sin cargar el dump completo en memoria."""
     client = MagicMock()
-    upload_object(
-        client, sample_dump, "dest/dump.dump", {"sha256": "1234"}, "application/octet-stream"
+    with patch.object(Path, "read_bytes", side_effect=AssertionError("lectura completa")):
+        upload_object(
+            client, sample_dump, "dest/dump.dump", {"sha256": "1234"}, "application/octet-stream"
+        )
+
+    client.upload_file.assert_called_once_with(
+        str(sample_dump),
+        BUCKET,
+        "dest/dump.dump",
+        ExtraArgs={"Metadata": {"sha256": "1234"}, "ContentType": "application/octet-stream"},
+        Config=UPLOAD_CONFIG,
     )
-    client.put_object.assert_called_once_with(
-        Bucket=BUCKET,
-        Key="dest/dump.dump",
-        Body=sample_dump.read_bytes(),
-        Metadata={"sha256": "1234"},
-        ContentType="application/octet-stream",
-    )
+    client.put_object.assert_not_called()
+
+
+def test_upload_transfer_config_uses_multipart(sample_dump: Path):
+    """La configuración de transferencia habilita multipart limitado para dumps grandes."""
+    assert UPLOAD_CONFIG.multipart_threshold == 64 * 1024 * 1024
+    assert UPLOAD_CONFIG.multipart_chunksize == 16 * 1024 * 1024
+    assert UPLOAD_CONFIG.max_request_concurrency == 4
+    assert UPLOAD_CONFIG.use_threads is True
 
 
 def test_head_and_download_object(tmp_path: Path):
@@ -267,8 +297,9 @@ def test_verify_remote_fails_on_hash_mismatch(sample_dump: Path):
 # ============================================================
 
 
-def test_main_cli_flow_success(sample_dump: Path):
-    """Flujo completo exitoso de main() con todos los mocks activos."""
+def test_main_cli_flow_success(sample_dump: Path, tmp_path: Path):
+    """Flujo completo exitoso de main(), con marcador local aislado."""
+    state_dir = tmp_path / "state"
     with (
         patch("scripts.upload_s3_backup.run_pg_restore_list"),
         patch("scripts.upload_s3_backup.s3_client") as mock_s3_client_factory,
@@ -277,9 +308,10 @@ def test_main_cli_flow_success(sample_dump: Path):
         mock_client = MagicMock()
         mock_s3_client_factory.return_value = mock_client
 
-        exit_code = s3_backup_main([str(sample_dump)])
+        exit_code = s3_backup_main([str(sample_dump), "--state-dir", str(state_dir)])
         assert exit_code == EXIT_OK
-        assert mock_client.put_object.call_count == 2  # dump + sidecar
+        assert mock_client.upload_file.call_count == 2  # dump + sidecar
+        assert is_upload_done(state_dir, sample_dump) is True
 
 
 def test_main_cli_invalid_path():
@@ -304,10 +336,26 @@ def test_main_cli_upload_fails(sample_dump: Path):
         patch("scripts.upload_s3_backup.s3_client") as mock_s3_client_factory,
     ):
         mock_client = MagicMock()
-        mock_client.put_object.side_effect = ClientError(
+        mock_client.upload_file.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "Denied"}}, "PutObject"
         )
         mock_s3_client_factory.return_value = mock_client
 
         exit_code = s3_backup_main([str(sample_dump)])
         assert exit_code == EXIT_UPLOAD
+
+
+def test_main_cli_fails_if_marker_write_fails(sample_dump: Path, tmp_path: Path):
+    """No reporta éxito si la verificación remota pasó pero el marcador local falla."""
+    state_dir = tmp_path / "state"
+    with (
+        patch("scripts.upload_s3_backup.run_pg_restore_list"),
+        patch("scripts.upload_s3_backup.s3_client") as mock_s3_client_factory,
+        patch("scripts.upload_s3_backup.verify_remote"),
+        patch("scripts.upload_s3_backup.mark_uploaded", side_effect=PermissionError("no write")),
+    ):
+        mock_client = MagicMock()
+        mock_s3_client_factory.return_value = mock_client
+
+        exit_code = s3_backup_main([str(sample_dump), "--state-dir", str(state_dir)])
+        assert exit_code == EXIT_STATE
