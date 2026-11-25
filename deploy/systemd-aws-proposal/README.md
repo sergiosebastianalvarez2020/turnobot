@@ -20,6 +20,7 @@ explícita y ventana de cutover.
 | Poda de backups PG | `turnobot-backup-prune.service` | `turnobot-backup-prune.timer` | `*-*-* 04:00:00` UTC |
 | Verificación backup PG | `turnobot-backup-verify.service` | `turnobot-backup-verify.timer` | `Sun *-*-* 04:30:00` UTC |
 | Subida backup PG a S3 | `turnobot-backup-s3.service` | drop-in `ExecStartPost` en `turnobot-backup.service` | tras backup local exitoso; reintenta pendientes por marcadores |
+| Recuperación S3 pendientes | `turnobot-backup-s3-recovery.service` | `turnobot-backup-s3-recovery.timer` | cada 30 min; `Persistent=true` + `OnBootSec=5min` |
 
 ## Subida S3 de backups (propuesta actualizada)
 
@@ -58,7 +59,7 @@ explícita y ventana de cutover.
 ## Comandos de instalación propuestos (NO ejecutar sin autorización)
 
 ```bash
-# Copiar los 8 archivos a AWS (desde la máquina local; ajustar rutas)
+# Copiar los 10 archivos a AWS (desde la máquina local; ajustar rutas)
 scp -i '<clave AWS>' deploy/systemd-aws-proposal/* ubuntu@18.191.0.23:/tmp/proposal/
 
 # En AWS (requiere sudo, previa revisión visual de cada archivo)
@@ -66,7 +67,7 @@ sudo cp /tmp/proposal/*.service /tmp/proposal/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # 1) Validación previa en frío con systemd-analyze (sin activar nada)
-systemd-analyze verify /etc/systemd/system/turnobot-{reminders,retry-notifications,backup-prune,backup-verify}.{service,timer}
+systemd-analyze verify /etc/systemd/system/turnobot-{reminders,retry-notifications,backup-prune,backup-verify,backup-s3-recovery}.{service,timer}
 
 # 2) Prueba de una sola pasada de cada script SIN tocar scheduling (sudo del operador)
 sudo -u ubuntu env $(cat /etc/turnobot.env | xargs) $(cat /etc/turnobot-monitoring.env | xargs) \
@@ -76,7 +77,7 @@ sudo -u ubuntu /home/ubuntu/turnobot/.venv312/bin/python /home/ubuntu/turnobot/s
 
 # 3) Activación (recién con aprobación explícita y ventana de cutover)
 sudo systemctl enable --now turnobot-retry-notifications.timer turnobot-reminders.timer \
-  turnobot-backup-prune.timer turnobot-backup-verify.timer
+  turnobot-backup-prune.timer turnobot-backup-verify.timer turnobot-backup-s3-recovery.timer
 
 # 4) En cutover (con autorización): desactivar los 4 timers equivalentes en OCI
 #    sudo systemctl disable --now turnobot-{reminders,retry-notifications}-{*}t* ...
@@ -144,15 +145,47 @@ Dos procesos concurrentes podrían:
 - Ambos subirlo a S3 (duplicado de ancho de banda y tiempo)
 - Ambos escribir el mismo marcador (seguro por `os.replace()`)
 
-**Decisión**: **No añadir `flock` a nivel de servicio** en esta versión.
-- Complejidad añadida (lock file, cleanup en señales, `ExecStartPre`/`ExecStopPost`)
-- Bajo impacto real: duplicación de subida eventual, sin pérdida de datos ni corrupción
-- Los marcadores garantizan *eventual consistency* y reentrancia segura
+**Solución implementada**: **Lock exclusivo con `flock -n -E 75` envolviendo `ExecStart` + Timer de recuperación**
 
-**Recomendación futura**: Si se detecta solape real (logs `S3_UPLOAD_PENDING` duplicados
-consecutivos), añadir `ExecStartPre=/usr/bin/flock -n /run/lock/turnobot-s3-upload.lock`
-al servicio S3, o migrar a `systemd-run --property=ExecStartPre=...` con lock exclusivo.
-Por ahora se documenta el riesgo y se monitorizan los logs.
+1. **Lock `flock -n -E 75` envolviendo `ExecStart` en `turnobot-backup-s3.service`**:
+   - `ExecStart=/bin/bash -c '... /usr/bin/flock -n -E 75 /run/lock/turnobot-s3-upload.lock /bin/bash -c "..." ...'`
+   - `flock` se ejecuta como comando principal que envuelve TODO el script de subida.
+   - El lock se mantiene durante **toda la ejecución** de `upload_s3_backup.py`.
+   - `-n -E 75` (non-blocking, exit code 75): si el lock está tomado, `flock` sale **inmediatamente con código 75** sin ejecutar la subida.
+   - Wrapper bash captura el código de salida: **75 -> 0** (lock ocupado, sin alerta), **0 -> 0** (éxito), **otro -> propaga** (error real activa OnFailure).
+   - **`flock` se ejecuta dentro de un `if`** (`if /usr/bin/flock ...; then exit 0; else flock_exit=$?; ... fi`). Con `set -euo pipefail`, ejecutar `flock` como comando suelto y capturar `$?` después nunca funciona: un 75 (o cualquier fallo) aborta el bash antes de llegar a `flock_exit=$?`, dejando el wrapper y `OnFailure` con el código crudo. La forma `if` desactiva `errexit` para ese comando, permitiendo convertir 75 -> 0 y propagar el resto sin alterar `set -e`.
+   - El drop-in del backup local usa `ExecStartPost=+/bin/bash -c '/bin/systemctl start --no-block turnobot-backup-s3.service || true'`, así que un fallo por lock (exit 0) **no convierte el backup local exitoso en fallido** ni dispara `OnFailure`.
+   - El lock se libera automáticamente al terminar el proceso (incluye señales SIGTERM/SIGKILL por timeout), sin locks abandonados.
+
+2. **Timer de recuperación `turnobot-backup-s3-recovery.timer`** (cada 30 min):
+   - Servicio asociado: `turnobot-backup-s3-recovery.service`
+   - Usa **el mismo lock** (`/run/lock/turnobot-s3-upload.lock`) para serializar con la subida principal.
+   - Mismo wrapper bash (con `flock` dentro de `if`): **75 -> 0** (lock ocupado, salida silenciosa sin OnFailure), **0 -> 0** (éxito), **otro -> propaga** (error real activa OnFailure).
+   - Si adquiere el lock, ejecuta la recuperación completa manteniendo el lock durante todo el proceso.
+   - `Persistent=true` + `OnBootSec=5min`: recupera pendientes tras reinicio.
+   - `RandomizedDelaySec=2min`: evita choques exactos con otras unidades.
+
+**Comportamiento ante solape**:
+- Backup local termina → dispara S3 service (vía `ExecStartPost`)
+- Si S3 anterior sigue corriendo: `flock -n -E 75` falla → wrapper convierte a exit 0 → backup local sigue siendo exitoso (`|| true`)
+- Timer de recuperación (30 min) o próximo backup diario reintenta → lock libre → procesa todos los pendientes (lista construida comprobando `validate_marker_file()`)
+
+**Garantías**:
+1. **Sin subidas duplicadas concurrentes**: `flock` serializa el acceso al directorio de estado y a S3 durante **todo el proceso de subida**.
+2. **Sin backups perdidos**: Los pendientes quedan registrados por ausencia de marcador válido; la siguiente ejecución (recuperación o backup diario) los procesa.
+3. **Backup local independiente**: Fallo/lock S3 nunca afecta el estado del backup local.
+4. **Sin locks abandonados**: `flock` libera el lock al terminar el proceso (incluye señales SIGTERM/SIGKILL por timeout).
+5. **Recuperación automática**: Timer cada 30 min + `Persistent=true` tras reboot.
+6. **Errores reales propagados**: Cualquier fallo de subida (red, S3, permisos) propaga su código de salida → systemd activa `OnFailure`.
+
+**Por qué `ExecStartPre` NO funciona**: `ExecStartPre=/usr/bin/flock -n ...` ejecuta `flock` como proceso separado que adquiere y **libera inmediatamente** el lock al terminar. El `ExecStart` real corre SIN protección. La solución correcta es envolver `ExecStart` con `flock` para que el lock persista durante toda la subida.
+
+**Por qué `flock -n -E 75` y no solo `-n`**: Con `-n` solo, `flock` devuelve 1 tanto para "lock ocupado" como para otros errores. Con `-E 75`, el código 75 es **exclusivo** para "lock ocupado", permitiendo al wrapper distinguir: 75 -> 0 (sin alerta), 0 -> 0 (éxito), cualquier otro -> error real -> OnFailure.
+
+**Alternativas evaluadas y descartadas**:
+- **Cola explícita (ficheros/BD)**: Complejidad innecesaria; los marcadores ya son una cola implícita robusta.
+- **`flock` bloqueante (`-w`)**: Podría bloquear systemd indefinidamente; `-n` es fail-fast y delega la reentrada al timer de recuperación.
+- **`systemd-run --property=ExecStartPre=...`**: Más complejo de operar; la unidad estática con `ExecStart` envuelto es más auditable y versionable.
 
 ## Permisos IAM requeridos (instancia EC2 vía instance profile)
 
@@ -190,10 +223,8 @@ variables de entorno `AWS_ACCESS_KEY_ID`, etc.).
 
 ### Restricciones de seguridad
 
-- **Resource ARN**: Restringido a `postgres/*` dentro del bucket específico. No acceso a otros
-  prefijos ni buckets.
-- **Sin `s3:DeleteObject`**: El script no borra objetos. La retención/limpieza se gestiona
-  externamente (políticas de ciclo de vida S3 o jobs separados).
+- **Resource ARN**: Restringido a `postgres/*` dentro del bucket específico. No acceso a otros prefijos ni buckets.
+- **Sin `s3:DeleteObject`**: El script no borra objetos. La retención/limpieza se gestiona externamente (políticas de ciclo de vida S3 o jobs separados).
 - **Sin `s3:ListBucket`**, `s3:GetBucketLocation`, `s3:ListAllMyBuckets`, etc.: No necesarios para la operación.
 - **Sin `s3:PutObjectTagging`**: El script no envía etiquetas; se omite para reducir superficie.
 

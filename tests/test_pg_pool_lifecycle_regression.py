@@ -222,8 +222,13 @@ def test_pg_isolate_module_app_restauracion_config_tras_excepcion(monkeypatch):
             gen = isolate_impl(_Request(), monkeypatch)
             next(gen)
             assert application_app.extensions.get("pg_pool") is created[0]
-            with pytest.raises(RuntimeError, match="fallo intencional"):
+            # Refactor: separate the exception test to have only one invocation
+            exc_raised = False
+            try:
                 gen.throw(RuntimeError("fallo intencional"))
+            except RuntimeError:
+                exc_raised = True
+            assert exc_raised
     finally:
         application_app.config.clear()
         application_app.config.update(old_config)
@@ -232,7 +237,8 @@ def test_pg_isolate_module_app_restauracion_config_tras_excepcion(monkeypatch):
         pg_pool_mod._global_pool = orig_global
         pg_pool_mod._global_pool_app_owned = orig_owned
 
-    assert created and created[0].closed is True
+    assert created
+    assert created[0].closed is True
     assert application_app.config.get("DATABASE_URL") == old_config.get("DATABASE_URL")
     assert database.DATABASE_PATH == old_db_path
 
@@ -273,7 +279,7 @@ def test_pg_isolate_module_app_global_pool_comportamiento(_pg_app_factory):
 
 
 @pytest.mark.pg
-def test_app_fixture_pool_se_cierra_en_base_real(pg_test_database):
+def test_app_fixture_pool_se_cierra_en_base_real(pg_test_database, monkeypatch):
     """Con PostgreSQL real, el pool asociado a la app se cierra tras el uso."""
     import os
 
@@ -285,31 +291,14 @@ def test_app_fixture_pool_se_cierra_en_base_real(pg_test_database):
         pytest.skip("TURNOBOT_PG_URL no configurada")
 
     test_url = conninfo_to_url(pg_test_database)
-    old_db = os.environ.get("DATABASE_URL")
-    old_backend = os.environ.get("DB_BACKEND")
-    old_env = os.environ.get("FLASK_ENV")
-    try:
-        os.environ["DATABASE_URL"] = test_url
-        os.environ["DB_BACKEND"] = "postgresql"
-        os.environ["FLASK_ENV"] = "development"
-        app = create_app()
-        app.config["TESTING"] = True
-        pool = get_pg_pool(app)
-        assert pool is not None
-        assert getattr(pool, "closed", False) is False
-        close_pg_pool(app=app)
-        assert get_pg_pool(app) is None
-        assert getattr(pool, "closed", True) is True
-    finally:
-        if old_db is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = old_db
-        if old_backend is None:
-            os.environ.pop("DB_BACKEND", None)
-        else:
-            os.environ["DB_BACKEND"] = old_backend
-        if old_env is None:
-            os.environ.pop("FLASK_ENV", None)
-        else:
-            os.environ["FLASK_ENV"] = old_env
+    monkeypatch.setenv("DATABASE_URL", test_url)
+    monkeypatch.setenv("DB_BACKEND", "postgresql")
+    monkeypatch.setenv("FLASK_ENV", "development")
+    app = create_app()
+    app.config["TESTING"] = True
+    pool = get_pg_pool(app)
+    assert pool is not None
+    assert getattr(pool, "closed", False) is False
+    close_pg_pool(app=app)
+    assert get_pg_pool(app) is None
+    assert getattr(pool, "closed", True) is True

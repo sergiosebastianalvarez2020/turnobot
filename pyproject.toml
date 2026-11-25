@@ -80,6 +80,7 @@ files = [
     "tests/test_upload_s3_backup.py",
     "tests/conftest.py",
     "tests/test_pg_pool_lifecycle_regression.py",
+    "tests/test_systemd_s3_wrappers.py",
     "application/media.py",
     "tests_pg/_helpers.py",
 ]

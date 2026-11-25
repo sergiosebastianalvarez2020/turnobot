@@ -129,7 +129,7 @@ def test_upload_marker_tracks_pending_backups(sample_dump: Path, tmp_path: Path)
     state_dir = tmp_path / "state"
     assert is_upload_done(state_dir, sample_dump) is False
 
-    valid_sha = "a" * 64
+    valid_sha = sha256_file(sample_dump)
     expected_key = remote_key_for(sample_dump)
     marker = mark_uploaded(state_dir, sample_dump, valid_sha, expected_key)
 
@@ -144,7 +144,7 @@ def test_upload_marker_tracks_pending_backups(sample_dump: Path, tmp_path: Path)
 def test_is_upload_done_valid_marker(sample_dump: Path, tmp_path: Path):
     """Un marcador válido (sha256 + s3:// URI) retorna True."""
     state_dir = tmp_path / "state"
-    valid_sha = "b" * 64
+    valid_sha = sha256_file(sample_dump)
     expected_key = remote_key_for(sample_dump)
     marker = mark_uploaded(state_dir, sample_dump, valid_sha, expected_key)
 
@@ -209,8 +209,9 @@ def test_mark_uploaded_validates_checksum_length(sample_dump: Path, tmp_path: Pa
     with pytest.raises(ValueError, match="hexadecimal"):
         mark_uploaded(state_dir, sample_dump, "a" * 65, expected_key)
 
-    # Longitud 64 y hex válido debe pasar
-    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, expected_key)
+    # Longitud 64 y hex válido debe pasar (usar hash real del archivo)
+    real_sha = sha256_file(sample_dump)
+    marker = mark_uploaded(state_dir, sample_dump, real_sha, expected_key)
     assert marker.exists()
     assert is_upload_done(state_dir, sample_dump) is True
 
@@ -368,20 +369,20 @@ def test_validate_marker_file_rejects_wrong_bucket_and_key(sample_dump: Path, tm
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, sample_dump)
-    valid_sha = "a" * 64
+    real_sha = sha256_file(sample_dump)
     expected_key = remote_key_for(sample_dump)
     expected_uri = f"s3://{BUCKET}/{expected_key}"
 
     # Válido
-    marker.write_text(f"{valid_sha}  {expected_uri}", encoding="utf-8")
+    marker.write_text(f"{real_sha}  {expected_uri}", encoding="utf-8")
     assert validate_marker_file(marker, sample_dump) is True
 
     # Bucket incorrecto
-    marker.write_text(f"{valid_sha}  s3://otro-bucket/{expected_key}", encoding="utf-8")
+    marker.write_text(f"{real_sha}  s3://otro-bucket/{expected_key}", encoding="utf-8")
     assert validate_marker_file(marker, sample_dump) is False
 
     # Clave incorrecta
-    marker.write_text(f"{valid_sha}  s3://{BUCKET}/postgres/2025/12/otro.dump", encoding="utf-8")
+    marker.write_text(f"{real_sha}  s3://{BUCKET}/postgres/2025/12/otro.dump", encoding="utf-8")
     assert validate_marker_file(marker, sample_dump) is False
 
 
@@ -395,12 +396,13 @@ def test_marker_from_another_backup_never_valid(sample_dump: Path, tmp_path: Pat
     dump2 = tmp_path / "turnobot-pg-20261124-130000.dump"
     dump2.write_bytes(b"PGDMP_TEST_CONTENT_" * 100)
 
-    valid_sha = "a" * 64
+    sha1 = sha256_file(dump1)
+    sha2 = sha256_file(dump2)
 
     # Crear marcador SOLO para dump1
     key1 = remote_key_for(dump1)
     marker1 = marker_path_for(state_dir, dump1)
-    marker1.write_text(f"{valid_sha}  s3://{BUCKET}/{key1}", encoding="utf-8")
+    marker1.write_text(f"{sha1}  s3://{BUCKET}/{key1}", encoding="utf-8")
 
     # NO crear marcador para dump2
 
@@ -415,7 +417,7 @@ def test_marker_from_another_backup_never_valid(sample_dump: Path, tmp_path: Pat
     # Ahora crear marcador para dump2 con clave diferente
     key2 = remote_key_for(dump2)
     marker2 = marker_path_for(state_dir, dump2)
-    marker2.write_text(f"{valid_sha}  s3://{BUCKET}/{key2}", encoding="utf-8")
+    marker2.write_text(f"{sha2}  s3://{BUCKET}/{key2}", encoding="utf-8")
 
     # El marcador de dump2 no debe validarse para dump1
     assert validate_marker_file(marker2, dump1) is False
@@ -562,7 +564,8 @@ def test_mark_uploaded_generates_correct_uri(sample_dump: Path, tmp_path: Path):
 def test_marker_written_can_be_validated(sample_dump: Path, tmp_path: Path):
     """El marcador escrito puede ser validado posteriormente por ambas funciones."""
     state_dir = tmp_path / "state"
-    marker = mark_uploaded(state_dir, sample_dump, "b" * 64, remote_key_for(sample_dump))
+    real_sha = sha256_file(sample_dump)
+    marker = mark_uploaded(state_dir, sample_dump, real_sha, remote_key_for(sample_dump))
 
     assert is_upload_done(state_dir, sample_dump) is True
     assert validate_marker_file(marker, sample_dump) is True
@@ -592,7 +595,8 @@ def test_mark_uploaded_preserves_atomic_write_and_permissions(sample_dump: Path,
 def test_valid_marker_still_prevents_reupload(sample_dump: Path, tmp_path: Path):
     """Un marcador válido sigue evitando una nueva subida."""
     state_dir = tmp_path / "state"
-    marker = mark_uploaded(state_dir, sample_dump, "d" * 64, remote_key_for(sample_dump))
+    real_sha = sha256_file(sample_dump)
+    marker = mark_uploaded(state_dir, sample_dump, real_sha, remote_key_for(sample_dump))
 
     assert is_upload_done(state_dir, sample_dump) is True
     assert validate_marker_file(marker, sample_dump) is True
@@ -600,6 +604,86 @@ def test_valid_marker_still_prevents_reupload(sample_dump: Path, tmp_path: Path)
     # Simular que el servicio intenta procesar el mismo dump
     # is_upload_done debe retornar True y el dump debe omitirse
     assert is_upload_done(state_dir, sample_dump) is True
+
+
+def test_is_upload_done_compares_sha256_with_file_content(sample_dump: Path, tmp_path: Path):
+    """is_upload_done compara el SHA-256 del marcador con el hash real del archivo."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    # Calcular hash real del archivo
+    real_sha = sha256_file(sample_dump)
+    marker = marker_path_for(state_dir, sample_dump)
+
+    # Marcador con hash REAL del archivo: debe ser válido
+    marker.write_text(f"{real_sha}  {expected_uri}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is True
+
+    # Modificar el archivo
+    sample_dump.write_bytes(b"CONTENIDO_MODIFICADO_DISTINTO" * 100)
+
+    # El mismo marcador ya no debe ser válido (hash cambió)
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_validate_marker_file_compares_sha256_with_file_content(sample_dump: Path, tmp_path: Path):
+    """validate_marker_file compara el SHA-256 del marcador con el hash real del archivo."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    real_sha = sha256_file(sample_dump)
+    marker = marker_path_for(state_dir, sample_dump)
+
+    # Marcador con hash REAL: válido
+    marker.write_text(f"{real_sha}  {expected_uri}", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is True
+
+    # Modificar el archivo
+    sample_dump.write_bytes(b"OTRO_CONTENIDO_MODIFICADO" * 100)
+
+    # El mismo marcador ya no debe ser válido
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_marker_with_wrong_sha256_rejected(sample_dump: Path, tmp_path: Path):
+    """Marcador con SHA-256 incorrecto (no coincide con el archivo) es rechazado."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+    marker = marker_path_for(state_dir, sample_dump)
+
+    # SHA-256 válido en formato pero INCORRECTO para este archivo
+    wrong_sha = "b" * 64
+    marker.write_text(f"{wrong_sha}  {expected_uri}", encoding="utf-8")
+
+    assert is_upload_done(state_dir, sample_dump) is False
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_modified_backup_with_same_name_must_be_reuploaded(sample_dump: Path, tmp_path: Path):
+    """Backup modificado con el mismo nombre debe volver a subirse (no considerado hecho)."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+    marker = marker_path_for(state_dir, sample_dump)
+
+    # Marcador válido para el archivo original
+    real_sha = sha256_file(sample_dump)
+    marker.write_text(f"{real_sha}  {expected_uri}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is True
+
+    # Simular que el archivo se modifica pero mantiene el mismo nombre
+    sample_dump.write_bytes(b"BACKUP_MODIFICADO_MISMO_NOMBRE" * 200)
+
+    # is_upload_done debe retornar False (pendiente de subida)
+    assert is_upload_done(state_dir, sample_dump) is False
+    assert validate_marker_file(marker, sample_dump) is False
 
 
 def test_invalid_marker_does_not_skip_pending_backup(sample_dump: Path, tmp_path: Path):

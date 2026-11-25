@@ -175,6 +175,9 @@ def is_upload_done(state_dir: Path, dump_path: Path) -> bool:
         expected_key = remote_key_for(dump_path)
         if s3_uri != expected_marker_uri(expected_key):
             return False
+        local_sha = sha256_file(dump_path)
+        if local_sha != sha256:
+            return False
         return True
     except Exception:
         return False
@@ -182,7 +185,8 @@ def is_upload_done(state_dir: Path, dump_path: Path) -> bool:
 
 def validate_marker_file(marker_path: Path, dump_path: Path) -> bool:
     """Validate a marker file directly by path.
-    Returns True if marker is valid (SHA-256 64 hex + s3:// URI matching expected bucket/key).
+    Returns True if marker is valid (SHA-256 64 hex + s3:// URI matching expected bucket/key
+    AND SHA-256 matches current dump file content).
     Used by systemd service for consistent validation.
     """
     if not marker_path.is_file() or marker_path.is_symlink():
@@ -197,6 +201,9 @@ def validate_marker_file(marker_path: Path, dump_path: Path) -> bool:
             return False
         expected_key = remote_key_for(dump_path)
         if s3_uri != expected_marker_uri(expected_key):
+            return False
+        local_sha = sha256_file(dump_path)
+        if local_sha != sha256:
             return False
         return True
     except Exception:

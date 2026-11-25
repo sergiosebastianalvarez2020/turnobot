@@ -1,0 +1,12 @@
+[Unit]
+Description=Timer de recuperación de backups S3 pendientes cada 30 min
+Requires=turnobot-backup-s3-recovery.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
