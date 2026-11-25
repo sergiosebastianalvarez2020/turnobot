@@ -24,7 +24,7 @@ The following tests fail on Windows due to platform limitations, unrelated to fe
    - Failure cause: Windows symlink limitations (same as above)
    - This test validates backup symlink preservation during prune operations
 
-**Expected baseline:** el run integral verificado más reciente en CI es el workflow `tests.yml`, run `45396217542`, sobre `2e2128bbff74ed8ba66652512d38fb032d4d099a`: job `test` con Ruff check/format OK, MyPy incremental OK, **1.817 passed / 2 skipped** en `tests/`, **145 passed** en `tests_pg/`, 35 subtests passed y T4-T6 3 passed; jobs `visual-tests` y `sonarqube_analysis` también en success. Esa evidencia es anterior a los cambios locales actualmente pendientes en esta rama, por lo que no sustituye la validación integral de los mismos.
+**Expected baseline:** el run integral verificado más reciente en CI es el workflow `tests.yml`, run `45396217542`, sobre `2e2128bbff74ed8ba66652512d38fb032d4d099a`: job `test` con Ruff check/format OK, MyPy incremental OK, **1.817 passed / 2 skipped** en `tests/`, **145 passed** en `tests_pg/`, 35 subtests passed y T4-T6 3 passed; jobs `visual-tests` y `sonarqube_analysis` también en success. Esa evidencia es anterior a los cambios locales actualmente en esta rama. El run integral verificado en CI para los cambios actuales es **GitHub Actions #218** sobre el commit `4720b374b7c40c8e7c51326c97e8697ba3363669` (rama `recovery/local-improvements-20261124`): job `test` con Ruff check/format OK, MyPy OK, tests en verde. Esa evidencia **sí incluye** los cambios de esta revisión.
 
 Los 2 fallos de symlink en Windows y el flakiness de concurrencia listados abajo siguen siendo esperados como fallos preexistentes.
 

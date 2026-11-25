@@ -6,6 +6,11 @@
 **Destino:** AWS EC2 `18.191.0.23` (`ubuntu`), proyecto `/home/ubuntu/turnobot`, venv
 `/home/ubuntu/turnobot/.venv312`.
 
+**Validación en CI:** El commit `4720b37` (rama `recovery/local-improvements-20261124`)
+pasa GitHub Actions #218 con Python 3.12 y PostgreSQL 16. **CI aprobado no significa
+integración en main ni despliegue en AWS.** La instalación en AWS requiere autorización
+explícita y ventana de cutover.
+
 ## Contenido
 
 | Tarea | Servicio | Timer | Horario (paridad con OCI) |
@@ -92,3 +97,146 @@ sudo systemctl enable --now turnobot-retry-notifications.timer turnobot-reminder
 - **Backoff de reintentos**: el intervalo real vive en BD (`next_retry_at` por fila,
   calculado con `retry_count`), el timer de 15 min solo actúa como poller — no reenvía
   más rápido que el backoff configurado.
+
+## Análisis de concurrencia systemd Type=oneshot
+
+**Escenario**: `turnobot-backup.service` (timer diario 03:30 UTC, `Type=oneshot`) dispara
+`turnobot-backup-s3.service` (también `Type=oneshot`) vía `ExecStartPost=+/bin/bash -c
+'/bin/systemctl start --no-block turnobot-backup-s3.service || true'`.
+
+**Riesgo de solape**: Si la subida S3 del día anterior no ha terminado cuando se ejecuta el
+backup del día siguiente, se iniciarían dos instancias concurrentes de
+`turnobot-backup-s3.service`.
+
+**Fuentes de concurrencia** (distintas, no equivalentes):
+
+1. **Reinicio repetido de la misma unidad systemd**: `systemctl start` sobre una unidad
+   `Type=oneshot` ya en ejecución devuelve error inmediato (`Job ... already running`);
+   no lanza una segunda instancia. El riesgo real viene de `ExecStartPost` con
+   `--no-block` que dispara el servicio S3 sin esperar; si el timer diario dispara
+   `turnobot-backup.service` mientras la subida S3 anterior sigue viva, systemd **sí**
+   permite la segunda ejecución porque son dos invocaciones separadas de la unidad S3.
+
+2. **Ejecuciones externas independientes**: Otro proceso (cron, script manual, otra
+   unidad) que invoque `upload_s3_backup.py` directamente con el mismo `--state-dir`.
+
+3. **Ejecuciones manuales directas del script**: Operador que corre
+   `python scripts/upload_s3_backup.py ...` fuera de systemd.
+
+`Type=oneshot` **no genera por sí mismo** ejecuciones concurrentes; la concurrencia
+solo ocurre si hay múltiples disparadores independientes (timer + `ExecStartPost` sin
+esperar, o procesos externos).
+
+**Mitigaciones existentes**:
+1. **Marcadores atómicos**: `scripts/upload_s3_backup.py` usa archivos `.uploaded` con
+   `os.replace()` atómico. Cada proceso construye su lista de pendientes comprobando
+   `is_upload_done()` (lee y valida el marcador: SHA-256 64 hex + `s3://` URI) antes de subir.
+2. **Idempotencia de contenido**: El marcador contiene `SHA-256  s3://...`. Si dos
+   procesos suben el mismo archivo (mismo hash), escriben el mismo marcador; la
+   segunda escritura `os.replace()` es segura y no corrompe el estado.
+3. **Ventana realista**: Backups diarios a las 03:30 UTC; subida típica < 10 min
+   (dumps ~100–500 MB, multipart 4 hilos, us-east-2). Probabilidad de solape > 24 h:
+   despreciable salvo degradación severa de red o S3.
+
+**Riesgo residual**: *Race condition* entre `is_upload_done()` y `mark_uploaded()`.
+Dos procesos concurrentes podrían:
+- Ambos leer `is_upload_done() == False` para el mismo dump
+- Ambos subirlo a S3 (duplicado de ancho de banda y tiempo)
+- Ambos escribir el mismo marcador (seguro por `os.replace()`)
+
+**Decisión**: **No añadir `flock` a nivel de servicio** en esta versión.
+- Complejidad añadida (lock file, cleanup en señales, `ExecStartPre`/`ExecStopPost`)
+- Bajo impacto real: duplicación de subida eventual, sin pérdida de datos ni corrupción
+- Los marcadores garantizan *eventual consistency* y reentrancia segura
+
+**Recomendación futura**: Si se detecta solape real (logs `S3_UPLOAD_PENDING` duplicados
+consecutivos), añadir `ExecStartPre=/usr/bin/flock -n /run/lock/turnobot-s3-upload.lock`
+al servicio S3, o migrar a `systemd-run --property=ExecStartPre=...` con lock exclusivo.
+Por ahora se documenta el riesgo y se monitorizan los logs.
+
+## Permisos IAM requeridos (instancia EC2 vía instance profile)
+
+El script `scripts/upload_s3_backup.py` y el servicio `turnobot-backup-s3.service` corren
+bajo el instance profile de la EC2 `18.191.0.23`. **No se usan claves estáticas** (`~/.aws/`,
+variables de entorno `AWS_ACCESS_KEY_ID`, etc.).
+
+### Permisos mínimos (policy inline o managed policy adjunta al role de la instancia)
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TurnoBotBackupS3Upload",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::turnobot-backups-528120377808-us-east-2-an/postgres/*"
+    }
+  ]
+}
+```
+
+### Justificación de cada permiso
+
+| Acción | Uso en `upload_s3_backup.py` |
+|---|---|
+| `s3:PutObject` | `client.upload_file()` para dump y sidecar `.sha256` (multipart internamente) |
+| `s3:GetObject` | `client.download_file()` en `verify_remote()` para descargar y validar hash + `pg_restore --list`; `client.head_object()` usa internamente `GetObject` |
+| `s3:AbortMultipartUpload` | Limpieza de uploads multipart fallidos/parciales |
+
+### Restricciones de seguridad
+
+- **Resource ARN**: Restringido a `postgres/*` dentro del bucket específico. No acceso a otros
+  prefijos ni buckets.
+- **Sin `s3:DeleteObject`**: El script no borra objetos. La retención/limpieza se gestiona
+  externamente (políticas de ciclo de vida S3 o jobs separados).
+- **Sin `s3:ListBucket`**, `s3:GetBucketLocation`, `s3:ListAllMyBuckets`, etc.: No necesarios para la operación.
+- **Sin `s3:PutObjectTagging`**: El script no envía etiquetas; se omite para reducir superficie.
+
+### SSE-KMS (si aplica)
+
+Si el bucket usa **SSE-KMS** (clave KMS gestionada por AWS o clave del cliente), añadir:
+
+```json
+{
+  "Sid": "TurnoBotBackupKMS",
+  "Effect": "Allow",
+  "Action": [
+    "kms:GenerateDataKey",
+    "kms:Decrypt"
+  ],
+  "Resource": "arn:aws:kms:us-east-2:528120377808:key/<key-id>",
+  "Condition": {
+    "StringEquals": {
+      "kms:ViaService": "s3.us-east-2.amazonaws.com"
+    }
+  }
+}
+```
+
+Para **SSE-S3** (clave gestionada por S3), no se requieren permisos KMS adicionales.
+
+### Verificación en AWS (tras despliegue autorizado)
+
+```bash
+# 1) Simular permisos con IAM Policy Simulator (consola AWS → IAM → Policy Simulator)
+#    Role: arn:aws:iam::528120377808:role/<instance-profile-role>
+#    Acciones: PutObject, GetObject, AbortMultipartUpload
+#    Recurso: arn:aws:s3:::turnobot-backups-528120377808-us-east-2-an/postgres/turnobot-pg-20261124-033000.dump
+
+# 2) Prueba funcional (como usuario ubuntu en la EC2)
+aws s3api head-object --bucket turnobot-backups-528120377808-us-east-2-an --key postgres/2026/11/turnobot-pg-20261124-033000.dump
+aws s3 cp /tmp/test.dump s3://turnobot-backups-528120377808-us-east-2-an/postgres/2026/11/test.dump
+aws s3 cp s3://turnobot-backups-528120377808-us-east-2-an/postgres/2026/11/test.dump /tmp/test.verify
+diff /tmp/test.dump /tmp/test.verify && echo "OK"
+```
+
+### Alertas IAM relacionadas
+
+Ver `BACKUP_S3_ALERTING_PROPOSAL.md` §3: `AccessDenied`, `InvalidAccessKeyId`,
+`SignatureDoesNotMatch` → alerta inmediata (no transitorio). `NoSuchBucket`,
+`PermanentRedirect` → configuración inválida.

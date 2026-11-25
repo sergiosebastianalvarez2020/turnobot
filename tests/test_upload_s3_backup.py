@@ -11,7 +11,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
+from botocore.exceptions import ConnectionError as BotocoreConnectionError
 
 from scripts.upload_s3_backup import (
     BUCKET,
@@ -26,6 +33,7 @@ from scripts.upload_s3_backup import (
     is_retryable,
     is_upload_done,
     mark_uploaded,
+    marker_path_for,
     remote_key_for,
     retry_call,
     sha256_file,
@@ -117,13 +125,87 @@ def test_upload_marker_tracks_pending_backups(sample_dump: Path, tmp_path: Path)
     state_dir = tmp_path / "state"
     assert is_upload_done(state_dir, sample_dump) is False
 
-    marker = mark_uploaded(state_dir, sample_dump, "abc123", "postgres/2026/11/dump.dump")
+    valid_sha = "a" * 64
+    marker = mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
 
     assert marker == state_dir / f"{sample_dump.name}.uploaded"
     assert is_upload_done(state_dir, sample_dump) is True
     assert "s3://" in marker.read_text(encoding="utf-8")
 
-    mark_uploaded(state_dir, sample_dump, "abc123", "postgres/2026/11/dump.dump")
+    mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
+    assert is_upload_done(state_dir, sample_dump) is True
+
+
+def test_is_upload_done_valid_marker(sample_dump: Path, tmp_path: Path):
+    """Un marcador válido (sha256 + s3:// URI) retorna True."""
+    state_dir = tmp_path / "state"
+    valid_sha = "b" * 64
+    marker = mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
+
+    assert is_upload_done(state_dir, sample_dump) is True
+    assert (
+        marker.read_text(encoding="utf-8").strip()
+        == f"{valid_sha}  s3://{BUCKET}/postgres/2026/11/dump.dump"
+    )
+
+
+def test_is_upload_done_missing_marker(sample_dump: Path, tmp_path: Path):
+    """Sin marcador, retorna False."""
+    state_dir = tmp_path / "state"
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_is_upload_done_corrupted_marker_wrong_format(sample_dump: Path, tmp_path: Path):
+    """Marcador con formato incorrecto (más/fewer partes) retorna False."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    marker.write_text("solo_una_parte", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    marker.write_text("parte1 parte2 parte3", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_is_upload_done_corrupted_marker_invalid_sha_length(sample_dump: Path, tmp_path: Path):
+    """Marcador con SHA-256 de longitud incorrecta retorna False."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    marker.write_text("abc  s3://bucket/key", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    marker.write_text("a" * 63 + "  s3://bucket/key", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_is_upload_done_corrupted_marker_invalid_uri(sample_dump: Path, tmp_path: Path):
+    """Marcador con URI no s3:// retorna False."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    marker.write_text("a" * 64 + "  http://bucket/key", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    marker.write_text("a" * 64 + "  gs://bucket/key", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_mark_uploaded_validates_checksum_length(sample_dump: Path, tmp_path: Path):
+    """mark_uploaded rechaza checksums con longitud != 64."""
+    state_dir = tmp_path / "state"
+    with pytest.raises(ValueError, match="Checksum inv"):
+        mark_uploaded(state_dir, sample_dump, "corto", "postgres/2026/11/dump.dump")
+
+    with pytest.raises(ValueError, match="Checksum inv"):
+        mark_uploaded(state_dir, sample_dump, "a" * 63, "postgres/2026/11/dump.dump")
+
+    with pytest.raises(ValueError, match="Checksum inv"):
+        mark_uploaded(state_dir, sample_dump, "a" * 65, "postgres/2026/11/dump.dump")
+
+    # Longitud 64 debe pasar
+    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, "postgres/2026/11/dump.dump")
+    assert marker.exists()
     assert is_upload_done(state_dir, sample_dump) is True
 
 
@@ -182,6 +264,113 @@ def test_retry_call_retries_on_transient_error():
     assert res == "OK"
     assert fn.call_count == 2
     mock_sleep.assert_called_once()
+
+
+def test_is_retryable_connect_timeout():
+    """ConnectTimeoutError se clasifica como reintentable."""
+    assert is_retryable(ConnectTimeoutError(endpoint_url="http://mock"))
+
+
+def test_is_retryable_connection_closed():
+    """ConnectionClosedError se clasifica como reintentable."""
+    assert is_retryable(ConnectionClosedError(endpoint_url="http://mock"))
+
+
+def test_is_retryable_read_timeout():
+    """ReadTimeoutError se clasifica como reintentable."""
+    assert is_retryable(ReadTimeoutError(endpoint_url="http://mock"))
+
+
+def test_is_retryable_botocore_connection_error():
+    """BotocoreConnectionError se clasifica como reintentable."""
+    assert is_retryable(BotocoreConnectionError(error="connection failed"))
+
+
+def test_retry_call_retries_on_botocore_connection_error():
+    """Reintenta ante BotocoreConnectionError y tiene éxito en el siguiente intento."""
+    transient = BotocoreConnectionError(error="connection failed")
+    fn = MagicMock(side_effect=[transient, "OK"])
+
+    with patch("time.sleep") as mock_sleep:
+        res = retry_call("test", fn)
+
+    assert res == "OK"
+    assert fn.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_retry_call_retries_on_connect_timeout():
+    """Reintenta ante ConnectTimeoutError y tiene éxito en el siguiente intento."""
+    transient = ConnectTimeoutError(endpoint_url="http://mock")
+    fn = MagicMock(side_effect=[transient, "OK"])
+
+    with patch("time.sleep") as mock_sleep:
+        res = retry_call("test", fn)
+
+    assert res == "OK"
+    assert fn.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_retry_call_retries_on_connection_closed():
+    """Reintenta ante ConnectionClosedError y tiene éxito en el siguiente intento."""
+    transient = ConnectionClosedError(endpoint_url="http://mock")
+    fn = MagicMock(side_effect=[transient, "OK"])
+
+    with patch("time.sleep") as mock_sleep:
+        res = retry_call("test", fn)
+
+    assert res == "OK"
+    assert fn.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+def test_retry_call_respects_max_attempts():
+    """Después de MAX_ATTEMPTS fallos, propaga la excepción sin más reintentos."""
+    transient = EndpointConnectionError(endpoint_url="http://mock")
+    fn = MagicMock(side_effect=[transient, transient, transient, transient])
+
+    with patch("time.sleep") as mock_sleep:
+        with pytest.raises(EndpointConnectionError):
+            retry_call("test", fn)
+
+    # MAX_ATTEMPTS = 3, así que se intenta 3 veces
+    assert fn.call_count == 3
+    assert mock_sleep.call_count == 2  # sleep entre intentos 1-2 y 2-3
+
+
+def test_retry_call_no_retry_on_permanent_error():
+    """Errores no transitorios (ej. AccessDenied) no se reintentan."""
+    permanent = ClientError(
+        {
+            "Error": {"Code": "AccessDenied", "Message": "Denied"},
+            "ResponseMetadata": {"HTTPStatusCode": 403},
+        },
+        "PutObject",
+    )
+    fn = MagicMock(side_effect=permanent)
+
+    with pytest.raises(ClientError):
+        retry_call("test", fn)
+
+    fn.assert_called_once()
+
+
+def test_retry_call_no_retry_on_403():
+    """ClientError con HTTP 403 no se reintenta."""
+    err_403 = ClientError(
+        {
+            "Error": {"Code": "Forbidden", "Message": "Forbidden"},
+            "ResponseMetadata": {"HTTPStatusCode": 403},
+        },
+        "PutObject",
+    )
+    fn = MagicMock(side_effect=err_403)
+
+    with pytest.raises(ClientError):
+        retry_call("test", fn)
+
+    fn.assert_called_once()
 
 
 # ============================================================

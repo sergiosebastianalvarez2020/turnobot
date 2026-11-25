@@ -3,16 +3,19 @@
 > Hoja de ruta oficial de TurnoBot V1. Este documento es la referencia para futuras
 > sesiones de desarrollo y para cualquier agente de IA que trabaje en el repositorio.
 >
-> **Última actualización:** 2026-11-24 (revisión 3, recuperación y endurecimiento de backups/S3)
+> **Última actualización:** 2026-11-24 (revisión 4, correcciones post-auditoría y CI aprobado)
 >
 > **Ubicación actual:** `C:\Proyectos\turnobot\docs\product\PLAN_TURNOBOT_V1.md`,
-> rama `recovery/local-improvements-20261124`. Los cambios de esta revisión están
-> sin commit y **no** integrados en `main`.
+> rama `recovery/local-improvements-20261124`. Esta rama contiene **cuatro commits
+> adicionales respecto de main**: `d9e8a60` (recuperación), `2e2128b` (deps S3 CI),
+> `79e59fc` (mejoras locales), `4720b37` (fix MyPy imports boto3). Los commits
+> `79e59fc` y `4720b37` están **committeados y pusheados** en esta rama.
 >
 > **Estado general:** V1 **no está lista para comercializar**. Hay funcionalidades
 > existentes y otras parcialmente implementadas; el lanzamiento depende de cerrar
 > los pendientes de validación, preproducción y proceso comercial. La corrección de
-> rutas de dominios es higiene técnica no bloqueante.
+> rutas de dominios es higiene técnica no bloqueante. **CI aprobado (GitHub Actions
+> #218) no significa integración en main ni despliegue en AWS.**
 >
 > **Naturaleza del documento:** planificación y estado. No modifica código funcional,
 > no agrega dependencias y no autoriza despliegues, migraciones ni cambios en producción.
@@ -41,25 +44,27 @@ suposiciones de producto:
 
 Límites explícitos:
 
-- **La suite integral verificada más reciente es anterior a estos cambios.** El run
-  `45396217542` del workflow `tests.yml` sobre
-  `2e2128bbff74ed8ba66652512d38fb032d4d099a` registró: Ruff check/format OK,
-  MyPy incremental OK, **1.817 passed / 2 skipped** en `tests/`, **145 passed** en
-  `tests_pg/`, 35 subtests passed, T4-T6 3 passed, `visual-tests` success y
-  `sonarqube_analysis` success. No se extrapola ese resultado a los cambios
-  locales pendientes de esta revisión.
-- **La validación integral de los cambios actuales está pendiente.** Los cambios
-  de endurecimiento están sin commit en la rama de recuperación. Windows se usa
-  solo para validaciones puntuales (Ruff, formato, MyPy y grupos acotados de
-  tests); la validación integral debe ejecutarse en GitHub Actions con Python
-  3.12 y PostgreSQL 16 tras autorización de commit/push.
-- **Existe un respaldo de cambios locales mezclados.** Hay tres entradas de
-  `git stash` (`WIP: preserve local changes before rebase`,
-  `WIP: preserve TurnoBot changes before test-8-workers` y `fix-invitacion`) y
-  archivos sin seguimiento (helpers `.ps1`/`.bat`, `.env.bak`, `tests/visual/`,
-  scripts sueltos, `.cleanup_backup/`, entre otros). Mezclan cambios de distintas
-  ramas y épocas, incluidos archivos potencialmente sensibles y experimentos.
-  **No deben aplicarse en bloque, commitearse ni usarse como base de V1.**
+- **La suite integral verificada más reciente en CI es GitHub Actions #218** sobre
+  el commit `4720b374b7c40c8e7c51326c97e8697ba3363669` (rama
+  `recovery/local-improvements-20261124`). El run previo `45396217542` del workflow
+  `tests.yml` sobre `2e2128bbff74ed8ba66652512d38fb032d4d099a` registró: Ruff
+  check/format OK, MyPy incremental OK, **1.817 passed / 2 skipped** en `tests/`,
+  **145 passed** en `tests_pg/`, 35 subtests passed, T4-T6 3 passed,
+  `visual-tests` success y `sonarqube_analysis` success. Esa evidencia es anterior
+  a los cambios locales actualmente en esta rama y no sustituye la validación
+  integral de los mismos.
+- **La validación integral de los cambios actuales se completó en CI #218** con
+  Python 3.12 y PostgreSQL 16. Los cambios de endurecimiento están **committeados
+  y pusheados** en esta rama.
+- **Existe un respaldo de cambios locales mezclados.** Hay cuatro entradas de
+  `git stash` (`phase3_premerge_turnobot` en main, `WIP: preserve local changes
+  before rebase` en test-8-workers, `WIP: preserve TurnoBot changes before
+  test-8-workers` en main, `fix-invitacion` en test/sesion-cross-negocio-t4-t6) y
+  archivos sin seguimiento (`.claude/`, `.kilo/`,
+  `deploy/systemd-aws-proposal/BACKUP_S3_ALERTING_PROPOSAL.md`, `run_server.py`).
+  Mezclan cambios de distintas ramas y épocas, incluidos archivos potencialmente
+  sensibles y experimentos. **No deben aplicarse en bloque, commitearse ni usarse
+  como base de V1.**
 - **Corrección local de rutas de dominios (no integrada).** En
   `C:\Proyectos\turnobot-main-clean` existe una corrección local sin commit en tres
   archivos: `routes/__init__.py` (importa e invoca `business_domains.register(app)`),
@@ -475,9 +480,9 @@ a V1. El estado refleja la auditoría del 2026-11-06 y la revisión 2.
 
 | Etapa | Objetivo | Entregables | Criterio de salida | Estado |
 |---|---|---|---|---|
-| E0. Línea base | Conocer el estado real del repositorio y separar cambios válidos de experimentos. | Auditoría de código, documentación, git status/stash, baseline de pruebas. | Riesgos y pendientes identificados; cambios mezclados aislados. | `[EN CURSO]` |
-| E1. Higiene de rutas de dominios (no bloqueante) | Integrar la corrección local de las rutas `/admin/dominios` para eliminar el enlace roto, sin habilitar la activación comercial de dominios en V1. | Commit de los tres archivos, pruebas de autorización/aislamiento, CI y documentación actualizada. | Rutas expuestas solo para owner; pruebas en verde; CI aprobado; sin regresiones. No bloquea el lanzamiento con dominio compartido. | `[EN CURSO]` |
-| E2. Validación integral | Ejecutar la suite completa en el entorno soportado. | Python 3.12, PostgreSQL 16, `TURNOBOT_PG_URL`, lint, formato, typecheck, suite general y PG. | 0 fallos nuevos; solo fallos preexistentes documentados y justificados. | `[PENDIENTE]` |
+| E0. Línea base | Conocer el estado real del repositorio y separar cambios válidos de experimentos. | Auditoría de código, documentación, git status/stash, baseline de pruebas. | Riesgos y pendientes identificados; cambios mezclados aislados. | `[COMPLETADO]` |
+| E1. Higiene de rutas de dominios (no bloqueante) | Integrar la corrección local de las rutas `/admin/dominios` para eliminar el enlace roto, sin habilitar la activación comercial de dominios en V1. | Commit de los tres archivos, pruebas de autorización/aislamiento, CI y documentación actualizada. | Rutas expuestas solo para owner; pruebas en verde; CI aprobado; sin regresiones. No bloquea el lanzamiento con dominio compartido. | `[EN CURSO]` (trabajo aparte en `turnobot-main-clean`) |
+| E2. Validación integral | Ejecutar la suite completa en el entorno soportado. | Python 3.12, PostgreSQL 16, `TURNOBOT_PG_URL`, lint, formato, typecheck, suite general y PG. | 0 fallos nuevos; solo fallos preexistentes documentados y justificados. | `[COMPLETADO]` — CI #218 verde en commit `4720b37` |
 | E2.5. Preproducción AWS | Desplegar y validar en un entorno equivalente en configuración (no en datos) antes del piloto. | Staging en AWS con base de datos independiente, credenciales independientes, notificaciones aisladas, mismas migraciones/configuración, `/health`, logs y rollback. | Despliegue reproducible; smoke tests verdes; migraciones y rollback probados; sin conexión a la base de producción ni correos reales a clientes. | `[PENDIENTE]` |
 | E3. Preparación comercial | Definir y operar el modelo de suscripción mensual con cobro manual. | Precio, condiciones, proceso de cobro, registro de pagos, runbook de suspensión. | Un cobro manual de prueba registrado; activación/suspensión ejecutables por procedimiento. | `[PENDIENTE]` |
 | E4. Piloto controlado | Validar V1 con negocios reales acotados después de preproducción. | 1 a 3 negocios piloto, soporte, métricas de incidentes, feedback. | Operación estable durante el período acordado; sin incidentes críticos de aislamiento. | `[PENDIENTE]` |
@@ -495,12 +500,12 @@ queda fuera de V1.
 
 | Validación | Estado actual | Qué falta |
 |---|---|---|
-| Python 3.12 | `[PENDIENTE]` | Hay 20 tests locales reportados en Python 3.13.14; falta ejecutar la suite completa en 3.12 según CI. |
-| PostgreSQL 16 | `[PENDIENTE]` | `TURNOBOT_PG_URL` está definida, pero no se ejecutó la suite completa en esta revisión. |
-| Suite general `tests/` | `[PENDIENTE]` | Ejecución completa sobre el HEAD actual. |
-| Suite PostgreSQL `tests_pg/` | `[PENDIENTE]` | Ejecución completa sobre el HEAD actual. |
-| Lint y formato | `[PARCIAL]` | En `turnobot-main-clean`, `python -m ruff format --check --exclude ".venv*" .` => **208 files already formatted**; `python -m ruff check --exclude ".venv*" .` => **All checks passed!**. Falta reproducirlo sobre el commit candidato; no sustituye la suite completa ni CI. |
-| Typecheck | `[PENDIENTE]` | `python -m mypy app.py`. |
+| Python 3.12 | `[COMPLETADO]` | CI #218 ejecutó suite completa en Python 3.12. Validaciones locales de MyPy, Ruff, tests clave (S3, PG pool, multi-tenant) en Python 3.12.10. |
+| PostgreSQL 16 | `[COMPLETADO]` | CI #218 ejecutó suite completa con PostgreSQL 16 (servicio postgres:16-alpine). |
+| Suite general `tests/` | `[COMPLETADO]` | CI #218 ejecutó suite completa sobre commit `4720b37`. |
+| Suite PostgreSQL `tests_pg/` | `[COMPLETADO]` | CI #218 ejecutó suite completa con PostgreSQL 16. |
+| Lint y formato | `[COMPLETADO]` | CI #218: `ruff check` y `ruff format --check` pasan. Validación local confirma. |
+| Typecheck | `[COMPLETADO]` | CI #218: `python -m mypy` pasa (9 archivos configurados). Validación local confirma. |
 | Migraciones PG | `[PENDIENTE]` | `python scripts/migrate_pg.py --dry-run` y aplicación controlada en entorno aislado. |
 | Preproducción AWS | `[PENDIENTE]` | Staging con base de datos y credenciales independientes y notificaciones aisladas; smoke tests, secretos/SMTP/health y rollback. Sin conexión a la base de producción ni correos reales a clientes. |
 | Smoke tests post-despliegue | `[PENDIENTE]` | Verificar en el entorno desplegado que reservas, login, admin, health y notificaciones responden. |
@@ -745,7 +750,7 @@ bloqueante.
 | Servicio systemd S3 | `[PENDIENTE]` | La propuesta usa `/home/ubuntu/turnobot/.venv312/bin/python`, no `/usr/bin/python3`, y `TimeoutStartSec` ampliado. Requiere `systemd-analyze verify` e instalación en AWS; **no se aplicó nada en producción**. |
 | Alertas y observabilidad | `[PENDIENTE]` | Se documentan marcadores de log (`UPLOAD_OK`, `S3_RETRY`, `S3_ERROR`, `REMOTE_VERIFICATION=OK`, `S3_UPLOAD_PENDING`, `S3_UPLOAD_SUMMARY`) y el disparo `OnFailure=turnobot-failure-notify@%N.service`. No se enviaron correos ni notificaciones reales. |
 | Revisión de configuración AWS/OCI | `[PARCIAL]` | Evidencia previa read-only: AWS EC2 con `/home/ubuntu/turnobot` en `main@ddef5c0`, `turnobot.service` activo, `/health` 200, PostgreSQL 18.6 schema v6; OCI sigue siendo el servidor anterior. No hubo nueva conexión remota en esta revisión. |
-| MyPy sobre archivos modificados | `[EN CURSO]` | `[tool.mypy].files` incluye los archivos Python modificados y sus dependencias corregidas; CI ejecuta `python -m mypy` sin relajar reglas. La comprobación definitiva corresponde a GitHub Actions. |
+| MyPy sobre archivos modificados | `[COMPLETADO]` | `[tool.mypy].files` incluye los archivos Python modificados y sus dependencias corregidas; CI #218 ejecuta `python -m mypy` sin relajar reglas y pasa. |
 
 ---
 
@@ -756,9 +761,9 @@ anteriores: agregar una nueva fila con la fecha y la evidencia concreta.
 
 **Ámbito:** `Local` = cambio presente en un worktree, sin commit; `Sin commit` =
 no integrado en git; `Integrado` = commit en GitHub; `CI` = workflow aprobado en el
-commit candidato. En esta revisión **no hay filas Integrado ni CI** para el HEAD
-actual. La ejecución local reportada de 20 tests en Python 3.13.14 **no** equivale a
-CI aprobado.
+commit candidato. Los commits `79e59fc` y `4720b37` están **Integrado + CI** (GitHub
+Actions #218 aprobó el commit `4720b37`). La ejecución local reportada de 20 tests
+en Python 3.13.14 **no** equivale a CI aprobado.
 
 | Fecha | Etapa | Ámbito | Estado | Evidencia / cambios | Próximo paso |
 |---|---|---|---|---|---|
@@ -773,3 +778,4 @@ CI aprobado.
 | 2026-11-06 | E6. Dominios personalizados | Local | Futuro | Fuera del alcance inicial de lanzamiento. La implementación existente está parcial y sin ingress/TLS automatizado. | Reevaluar después de V1 con un proceso operativo validado. |
 | 2026-11-24 | Recuperación de rama | Integrado (rama `recovery/local-improvements-20261124`) | CI verificado para la base | Commit `d9e8a607` recuperó cambios locales; commit `2e2128bb` declaró `boto3` y el marker `pg`. Push a la rama de recuperación; CI run `45396217542` en verde. Sin merge a `main`. | Validar los cambios pendientes de esta revisión antes de cualquier integración. |
 | 2026-11-24 | Endurecimiento S3/operación | Local (`recovery/local-improvements-20261124`) | En curso | Reparación UTF-8 de `AGENTS.md`, `pyproject.toml`, `PLAN_TURNOBOT_V1.md` y `tests.yml`; subida multipart, marcadores de pendientes, servicio systemd con venv, alertas documentadas, tests de pools y MyPy explícito. Sin commit, push ni AWS en esta revisión. | Ejecutar validaciones locales; tras autorización, commitear y obtener CI integral en Linux. |
+| 2026-11-24 | Mejoras locales + fix MyPy | Integrado + CI (rama `recovery/local-improvements-20261124`) | **CI #218 aprobado** | Commit `79e59fc`: mejoras UTF-8, upload_s3_backup (SHA-256, sidecar, multipart, verificación remota, marcadores), propuesta systemd S3, fixes media.py, tests SSRF, fixtures PG pool, MyPy files extendido. Commit `4720b37`: fix imports boto3/botocore con `type: ignore[import-untyped]`. **GitHub Actions #218 verde** (Python 3.12, PostgreSQL 16, Ruff, formato, MyPy, tests). No merge a main, no despliegue AWS. | Actualizar documentación (esta revisión); cerrar hallazgos post-auditoría (reintentos S3, marcadores, systemd locking, IAM docs). |

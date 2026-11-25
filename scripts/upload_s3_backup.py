@@ -27,9 +27,12 @@ from boto3.s3.transfer import TransferConfig  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
 from botocore.exceptions import (  # type: ignore[import-untyped]
     ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
     EndpointConnectionError,
     ReadTimeoutError,
 )
+from botocore.exceptions import ConnectionError as BotocoreConnectionError
 
 BUCKET = "turnobot-backups-528120377808-us-east-2-an"
 REGION = "us-east-2"
@@ -147,21 +150,73 @@ def marker_path_for(state_dir: Path, dump_path: Path) -> Path:
 
 
 def is_upload_done(state_dir: Path, dump_path: Path) -> bool:
-    return marker_path_for(state_dir, dump_path).is_file()
+    marker = marker_path_for(state_dir, dump_path)
+    if not marker.is_file():
+        return False
+    try:
+        content = marker.read_text(encoding="utf-8", errors="replace").strip()
+        # Validate format: "<sha256>  s3://<bucket>/<key>"
+        parts = content.split()
+        if len(parts) != 2:
+            return False
+        sha256, s3_uri = parts
+        if len(sha256) != SHA256_HEX_LEN:
+            return False
+        if not s3_uri.startswith("s3://"):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def validate_marker_file(marker_path: Path) -> bool:
+    """Validate a marker file directly by path.
+    Returns True if marker is valid (SHA-256 64 hex + s3:// URI).
+    Used by systemd service for consistent validation.
+    """
+    if not marker_path.is_file():
+        return False
+    try:
+        content = marker_path.read_text(encoding="utf-8", errors="replace").strip()
+        parts = content.split()
+        if len(parts) != 2:
+            return False
+        sha256, s3_uri = parts
+        if len(sha256) != SHA256_HEX_LEN:
+            return False
+        if not s3_uri.startswith("s3://"):
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def mark_uploaded(state_dir: Path, dump_path: Path, checksum: str, key: str) -> Path:
+    if len(checksum) != SHA256_HEX_LEN:
+        raise ValueError(
+            f"Checksum inválido (longitud {len(checksum)} != {SHA256_HEX_LEN}): {checksum}"
+        )
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, dump_path)
     tmp = state_dir / f".{marker.name}.{os.getpid()}.tmp"
-    tmp.write_text(f"{checksum}  s3://{BUCKET}/{key}\n", encoding="utf-8")
+    s3_uri = f"s3://{BUCKET}/{key}"
+    tmp.write_text(f"{checksum}  {s3_uri}\n", encoding="utf-8")
     os.chmod(tmp, 0o600)
     os.replace(tmp, marker)
     return marker
 
 
 def is_retryable(exc: Exception) -> bool:
-    if isinstance(exc, (EndpointConnectionError, ReadTimeoutError)):
+    if isinstance(
+        exc,
+        (
+            EndpointConnectionError,
+            ConnectTimeoutError,
+            ConnectionClosedError,
+            ReadTimeoutError,
+            BotocoreConnectionError,
+        ),
+    ):
         return True
     if isinstance(exc, ClientError):
         code = str(exc.response.get("Error", {}).get("Code", ""))
@@ -179,7 +234,14 @@ def retry_call(label: str, func, *args, **kwargs):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             return func(*args, **kwargs)
-        except (ClientError, EndpointConnectionError, ReadTimeoutError) as exc:
+        except (
+            ClientError,
+            EndpointConnectionError,
+            ConnectTimeoutError,
+            ConnectionClosedError,
+            ReadTimeoutError,
+            BotocoreConnectionError,
+        ) as exc:
             last_exc = exc
             if not is_retryable(exc) or attempt >= MAX_ATTEMPTS:
                 print(
