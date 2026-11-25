@@ -7,6 +7,8 @@ subida y verificación remota, aislando completamente las llamadas a AWS mediant
 from __future__ import annotations
 
 import hashlib
+import os
+import platform
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +34,7 @@ from scripts.upload_s3_backup import (
     head_object,
     is_retryable,
     is_upload_done,
+    is_valid_sha256_hex,
     mark_uploaded,
     marker_path_for,
     remote_key_for,
@@ -39,6 +42,7 @@ from scripts.upload_s3_backup import (
     sha256_file,
     upload_object,
     validate_dump_path,
+    validate_marker_file,
     verify_remote,
     write_sidecar_atomic,
 )
@@ -126,13 +130,14 @@ def test_upload_marker_tracks_pending_backups(sample_dump: Path, tmp_path: Path)
     assert is_upload_done(state_dir, sample_dump) is False
 
     valid_sha = "a" * 64
-    marker = mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
+    expected_key = remote_key_for(sample_dump)
+    marker = mark_uploaded(state_dir, sample_dump, valid_sha, expected_key)
 
     assert marker == state_dir / f"{sample_dump.name}.uploaded"
     assert is_upload_done(state_dir, sample_dump) is True
     assert "s3://" in marker.read_text(encoding="utf-8")
 
-    mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
+    mark_uploaded(state_dir, sample_dump, valid_sha, expected_key)
     assert is_upload_done(state_dir, sample_dump) is True
 
 
@@ -140,12 +145,12 @@ def test_is_upload_done_valid_marker(sample_dump: Path, tmp_path: Path):
     """Un marcador válido (sha256 + s3:// URI) retorna True."""
     state_dir = tmp_path / "state"
     valid_sha = "b" * 64
-    marker = mark_uploaded(state_dir, sample_dump, valid_sha, "postgres/2026/11/dump.dump")
+    expected_key = remote_key_for(sample_dump)
+    marker = mark_uploaded(state_dir, sample_dump, valid_sha, expected_key)
 
     assert is_upload_done(state_dir, sample_dump) is True
     assert (
-        marker.read_text(encoding="utf-8").strip()
-        == f"{valid_sha}  s3://{BUCKET}/postgres/2026/11/dump.dump"
+        marker.read_text(encoding="utf-8").strip() == f"{valid_sha}  s3://{BUCKET}/{expected_key}"
     )
 
 
@@ -194,19 +199,451 @@ def test_is_upload_done_corrupted_marker_invalid_uri(sample_dump: Path, tmp_path
 def test_mark_uploaded_validates_checksum_length(sample_dump: Path, tmp_path: Path):
     """mark_uploaded rechaza checksums con longitud != 64."""
     state_dir = tmp_path / "state"
-    with pytest.raises(ValueError, match="Checksum inv"):
-        mark_uploaded(state_dir, sample_dump, "corto", "postgres/2026/11/dump.dump")
+    expected_key = remote_key_for(sample_dump)
+    with pytest.raises(ValueError, match="hexadecimal"):
+        mark_uploaded(state_dir, sample_dump, "corto", expected_key)
 
-    with pytest.raises(ValueError, match="Checksum inv"):
-        mark_uploaded(state_dir, sample_dump, "a" * 63, "postgres/2026/11/dump.dump")
+    with pytest.raises(ValueError, match="hexadecimal"):
+        mark_uploaded(state_dir, sample_dump, "a" * 63, expected_key)
 
-    with pytest.raises(ValueError, match="Checksum inv"):
-        mark_uploaded(state_dir, sample_dump, "a" * 65, "postgres/2026/11/dump.dump")
+    with pytest.raises(ValueError, match="hexadecimal"):
+        mark_uploaded(state_dir, sample_dump, "a" * 65, expected_key)
 
-    # Longitud 64 debe pasar
-    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, "postgres/2026/11/dump.dump")
+    # Longitud 64 y hex válido debe pasar
+    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, expected_key)
     assert marker.exists()
     assert is_upload_done(state_dir, sample_dump) is True
+
+
+# ============================================================
+# Pruebas de validación estricta de SHA-256 hexadecimal
+# ============================================================
+
+
+def test_is_valid_sha256_hex_valid():
+    """SHA-256 válido de 64 caracteres hexadecimales."""
+    # Minúsculas
+    assert is_valid_sha256_hex("a" * 64)
+    # Mayúsculas
+    assert is_valid_sha256_hex("A" * 64)
+    # Mixto (exactamente 64 chars)
+    assert is_valid_sha256_hex("aBcDeF" * 10 + "1234")
+    # Hash real de ejemplo (SHA-256 de cadena vacía)
+    assert is_valid_sha256_hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+
+def test_is_valid_sha256_hex_invalid_chars():
+    """Rechaza caracteres no hexadecimales."""
+    # Caracteres no hex (g-z)
+    assert not is_valid_sha256_hex("g" * 64)
+    # Caracteres especiales
+    assert not is_valid_sha256_hex("!" * 64)
+    # Espacios
+    assert not is_valid_sha256_hex(" " * 64)
+    # Mix válido + inválido
+    assert not is_valid_sha256_hex("a" * 63 + "g")
+    assert not is_valid_sha256_hex("a" * 32 + "g" * 32)
+
+
+def test_is_valid_sha256_hex_wrong_length():
+    """Rechaza longitudes distintas de 64."""
+    assert not is_valid_sha256_hex("")
+    assert not is_valid_sha256_hex("a")
+    assert not is_valid_sha256_hex("a" * 63)
+    assert not is_valid_sha256_hex("a" * 65)
+    assert not is_valid_sha256_hex("a" * 128)
+
+
+def test_is_upload_done_rejects_non_hex_sha256(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza SHA-256 con caracteres no hexadecimales."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    # SHA-256 con 'g' (no hex)
+    marker.write_text("g" * 64 + f"  {expected_uri}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # SHA-256 con caracteres especiales
+    marker.write_text("!" * 64 + f"  {expected_uri}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_validate_marker_file_rejects_non_hex_sha256(sample_dump: Path, tmp_path: Path):
+    """validate_marker_file rechaza SHA-256 con caracteres no hexadecimales."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    marker.write_text("g" * 64 + f"  {expected_uri}", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_mark_uploaded_rejects_non_hex_sha256(sample_dump: Path, tmp_path: Path):
+    """mark_uploaded rechaza checksums con caracteres no hexadecimales."""
+    state_dir = tmp_path / "state"
+    expected_key = remote_key_for(sample_dump)
+    with pytest.raises(ValueError, match="hexadecimal"):
+        mark_uploaded(state_dir, sample_dump, "g" * 64, expected_key)
+
+    with pytest.raises(ValueError, match="hexadecimal"):
+        mark_uploaded(state_dir, sample_dump, "!" * 64, expected_key)
+
+    # Válido debe pasar
+    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, expected_key)
+    assert marker.exists()
+
+
+# ============================================================
+# Pruebas de validación estricta de URI S3 (bucket y clave)
+# ============================================================
+
+
+def test_is_upload_done_rejects_wrong_bucket(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza URI con bucket incorrecto."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    expected_key = remote_key_for(sample_dump)
+    valid_sha = "a" * 64
+
+    # Bucket incorrecto
+    marker.write_text(f"{valid_sha}  s3://otro-bucket/{expected_key}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # Bucket con nombre similar pero distinto
+    marker.write_text(f"{valid_sha}  s3://turnobot-backups-otro/{expected_key}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_is_upload_done_rejects_wrong_key(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza URI con clave incorrecta."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    valid_sha = "a" * 64
+
+    # Clave incorrecta (otro año/mes)
+    marker.write_text(f"{valid_sha}  s3://{BUCKET}/postgres/2025/12/otro.dump", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # Clave con nombre diferente
+    marker.write_text(
+        f"{valid_sha}  s3://{BUCKET}/postgres/2026/11/turnobot-pg-20261124-130000.dump",
+        encoding="utf-8",
+    )
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # Solo bucket sin clave
+    marker.write_text(f"{valid_sha}  s3://{BUCKET}/", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_is_upload_done_rejects_malformed_uri(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza URIs malformadas."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    valid_sha = "a" * 64
+
+    # Sin esquema s3://
+    marker.write_text(f"{valid_sha}  http://{BUCKET}/postgres/2026/11/dump.dump", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # URI vacía
+    marker.write_text(f"{valid_sha}  ", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+    # Sin bucket
+    marker.write_text(f"{valid_sha}  s3:///postgres/2026/11/dump.dump", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+def test_validate_marker_file_rejects_wrong_bucket_and_key(sample_dump: Path, tmp_path: Path):
+    """validate_marker_file rechaza bucket y clave incorrectos."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    valid_sha = "a" * 64
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    # Válido
+    marker.write_text(f"{valid_sha}  {expected_uri}", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is True
+
+    # Bucket incorrecto
+    marker.write_text(f"{valid_sha}  s3://otro-bucket/{expected_key}", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is False
+
+    # Clave incorrecta
+    marker.write_text(f"{valid_sha}  s3://{BUCKET}/postgres/2025/12/otro.dump", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_marker_from_another_backup_never_valid(sample_dump: Path, tmp_path: Path):
+    """Un marcador de otro backup nunca debe considerarse válido."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    # Crear dos dumps diferentes
+    dump1 = sample_dump
+    dump2 = tmp_path / "turnobot-pg-20261124-130000.dump"
+    dump2.write_bytes(b"PGDMP_TEST_CONTENT_" * 100)
+
+    valid_sha = "a" * 64
+
+    # Crear marcador SOLO para dump1
+    key1 = remote_key_for(dump1)
+    marker1 = marker_path_for(state_dir, dump1)
+    marker1.write_text(f"{valid_sha}  s3://{BUCKET}/{key1}", encoding="utf-8")
+
+    # NO crear marcador para dump2
+
+    # El marcador de dump1 no debe validarse para dump2
+    assert is_upload_done(state_dir, dump2) is False
+    assert validate_marker_file(marker1, dump2) is False
+
+    # El marcador de dump1 SÍ debe validarse para dump1
+    assert is_upload_done(state_dir, dump1) is True
+    assert validate_marker_file(marker1, dump1) is True
+
+    # Ahora crear marcador para dump2 con clave diferente
+    key2 = remote_key_for(dump2)
+    marker2 = marker_path_for(state_dir, dump2)
+    marker2.write_text(f"{valid_sha}  s3://{BUCKET}/{key2}", encoding="utf-8")
+
+    # El marcador de dump2 no debe validarse para dump1
+    assert validate_marker_file(marker2, dump1) is False
+    # Pero sí para dump2
+    assert is_upload_done(state_dir, dump2) is True
+    assert validate_marker_file(marker2, dump2) is True
+
+
+# ============================================================
+# Pruebas de rechazo de enlaces simbólicos (symlinks)
+# ============================================================
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
+    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
+)
+@pytest.mark.skipif(
+    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
+    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
+)
+def test_is_upload_done_rejects_symlink_to_valid_marker(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza symlink aunque apunte a marcador válido."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    expected_key = remote_key_for(sample_dump)
+    valid_sha = "a" * 64
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    # Crear marcador válido
+    marker.write_text(f"{valid_sha}  {expected_uri}", encoding="utf-8")
+    assert is_upload_done(state_dir, sample_dump) is True
+
+    # Reemplazar el archivo marcador con un symlink al mismo archivo
+    marker.unlink()
+    try:
+        marker.symlink_to(
+            "/tmp/valid_marker_for_test"
+        )  # symlink a ruta inexistente pero el test verifica que se rechaza por ser symlink
+        # En realidad, para probar que rechaza symlink a archivo válido, creamos un archivo válido
+        # y luego un symlink a él
+        target = tmp_path / "valid_target_marker"
+        target.write_text(f"{valid_sha}  {expected_uri}", encoding="utf-8")
+        marker.unlink(missing_ok=True)
+        marker.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("No se pueden crear symlinks en este entorno")
+
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
+    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
+)
+def test_is_upload_done_rejects_symlink_to_nonexistent(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza symlink a archivo inexistente."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+
+    try:
+        marker.symlink_to("/ruta/inexistente/uploaded")
+    except (OSError, NotImplementedError):
+        pytest.skip("No se pueden crear symlinks en este entorno")
+
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
+    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
+)
+def test_is_upload_done_rejects_symlink_to_directory(sample_dump: Path, tmp_path: Path):
+    """is_upload_done rechaza symlink a directorio."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+
+    try:
+        marker.symlink_to(state_dir)
+    except (OSError, NotImplementedError):
+        pytest.skip("No se pueden crear symlinks en este entorno")
+
+    assert is_upload_done(state_dir, sample_dump) is False
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
+    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
+)
+def test_validate_marker_file_rejects_symlinks(sample_dump: Path, tmp_path: Path):
+    """validate_marker_file rechaza symlinks."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    expected_key = remote_key_for(sample_dump)
+    valid_sha = "a" * 64
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+
+    # Marcador válido
+    marker.write_text(f"{valid_sha}  {expected_uri}", encoding="utf-8")
+    assert validate_marker_file(marker, sample_dump) is True
+
+    # Reemplazar con symlink
+    marker.unlink()
+    try:
+        marker.symlink_to("/tmp/algo")
+    except (OSError, NotImplementedError):
+        pytest.skip("No se pueden crear symlinks en este entorno")
+
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+# ============================================================
+# Pruebas de escritura segura del marcador
+# ============================================================
+
+
+def test_mark_uploaded_rejects_wrong_key(sample_dump: Path, tmp_path: Path):
+    """mark_uploaded rechaza claves que no coinciden con el dump."""
+    state_dir = tmp_path / "state"
+    with pytest.raises(ValueError, match="Clave no coincide"):
+        mark_uploaded(state_dir, sample_dump, "a" * 64, "postgres/2025/12/otro.dump")
+
+    with pytest.raises(ValueError, match="Clave no coincide"):
+        mark_uploaded(
+            state_dir, sample_dump, "a" * 64, "postgres/2026/11/turnobot-pg-20261124-130000.dump"
+        )
+
+
+def test_mark_uploaded_generates_correct_uri(sample_dump: Path, tmp_path: Path):
+    """mark_uploaded genera URI correcta con bucket y clave esperados."""
+    state_dir = tmp_path / "state"
+    marker = mark_uploaded(state_dir, sample_dump, "a" * 64, remote_key_for(sample_dump))
+
+    content = marker.read_text(encoding="utf-8").strip()
+    expected_key = remote_key_for(sample_dump)
+    expected_uri = f"s3://{BUCKET}/{expected_key}"
+    assert content == "a" * 64 + f"  {expected_uri}"
+
+
+def test_marker_written_can_be_validated(sample_dump: Path, tmp_path: Path):
+    """El marcador escrito puede ser validado posteriormente por ambas funciones."""
+    state_dir = tmp_path / "state"
+    marker = mark_uploaded(state_dir, sample_dump, "b" * 64, remote_key_for(sample_dump))
+
+    assert is_upload_done(state_dir, sample_dump) is True
+    assert validate_marker_file(marker, sample_dump) is True
+
+
+def test_mark_uploaded_preserves_atomic_write_and_permissions(sample_dump: Path, tmp_path: Path):
+    """mark_uploaded conserva escritura atómica y permisos restrictivos."""
+    state_dir = tmp_path / "state"
+    marker = mark_uploaded(state_dir, sample_dump, "c" * 64, remote_key_for(sample_dump))
+
+    # El archivo final existe y no hay temporales残留
+    assert marker.exists()
+    tmp_files = list(state_dir.glob(".*.tmp"))
+    assert len(tmp_files) == 0
+
+    # Permisos 0o600 (solo owner read/write) - solo en Unix
+    if platform.system() != "Windows":
+        stat_info = marker.stat()
+        assert stat_info.st_mode & 0o777 == 0o600
+
+
+# ============================================================
+# Pruebas de regresión
+# ============================================================
+
+
+def test_valid_marker_still_prevents_reupload(sample_dump: Path, tmp_path: Path):
+    """Un marcador válido sigue evitando una nueva subida."""
+    state_dir = tmp_path / "state"
+    marker = mark_uploaded(state_dir, sample_dump, "d" * 64, remote_key_for(sample_dump))
+
+    assert is_upload_done(state_dir, sample_dump) is True
+    assert validate_marker_file(marker, sample_dump) is True
+
+    # Simular que el servicio intenta procesar el mismo dump
+    # is_upload_done debe retornar True y el dump debe omitirse
+    assert is_upload_done(state_dir, sample_dump) is True
+
+
+def test_invalid_marker_does_not_skip_pending_backup(sample_dump: Path, tmp_path: Path):
+    """Un marcador inválido no debe hacer que se omita un backup pendiente."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+
+    # Marcador con SHA-256 inválido (no hex)
+    marker.write_text("g" * 64 + f"  s3://{BUCKET}/{remote_key_for(sample_dump)}", encoding="utf-8")
+
+    # Debe considerarse pendiente (no subido)
+    assert is_upload_done(state_dir, sample_dump) is False
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_marker_from_other_bucket_never_validated_as_good(sample_dump: Path, tmp_path: Path):
+    """Un marcador de otro bucket nunca debe considerarse válido."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    valid_sha = "e" * 64
+
+    # Marcador con bucket incorrecto
+    marker.write_text(
+        f"{valid_sha}  s3://bucket-inexistente/{remote_key_for(sample_dump)}", encoding="utf-8"
+    )
+
+    assert is_upload_done(state_dir, sample_dump) is False
+    assert validate_marker_file(marker, sample_dump) is False
+
+
+def test_marker_from_other_key_never_validated_as_good(sample_dump: Path, tmp_path: Path):
+    """Un marcador de otra clave nunca debe considerarse válido."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_path_for(state_dir, sample_dump)
+    valid_sha = "f" * 64
+
+    # Marcador con clave incorrecta
+    marker.write_text(f"{valid_sha}  s3://{BUCKET}/postgres/2025/01/otro.dump", encoding="utf-8")
+
+    assert is_upload_done(state_dir, sample_dump) is False
+    assert validate_marker_file(marker, sample_dump) is False
 
 
 def test_remote_key_for(sample_dump: Path):

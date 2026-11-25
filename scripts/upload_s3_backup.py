@@ -46,6 +46,7 @@ MULTIPART_CHUNKSIZE = 16 * 1024 * 1024
 MAX_UPLOAD_CONCURRENCY = 4
 DEFAULT_STATE_DIR = Path("/home/ubuntu/turnobot/state/s3_backup_uploads")
 SHA256_HEX_LEN = 64
+SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 EXIT_OK = 0
 EXIT_UNEXPECTED = 1
@@ -85,6 +86,16 @@ def sha256_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def is_valid_sha256_hex(value: str) -> bool:
+    """Validate that a string is exactly 64 hexadecimal characters (SHA-256)."""
+    return bool(SHA256_HEX_RE.fullmatch(value))
+
+
+def expected_marker_uri(key: str) -> str:
+    """Generate the expected S3 URI for a marker."""
+    return f"s3://{BUCKET}/{key}"
 
 
 def validate_dump_path(path_str: str) -> Path:
@@ -151,30 +162,30 @@ def marker_path_for(state_dir: Path, dump_path: Path) -> Path:
 
 def is_upload_done(state_dir: Path, dump_path: Path) -> bool:
     marker = marker_path_for(state_dir, dump_path)
-    if not marker.is_file():
+    if not marker.is_file() or marker.is_symlink():
         return False
     try:
         content = marker.read_text(encoding="utf-8", errors="replace").strip()
-        # Validate format: "<sha256>  s3://<bucket>/<key>"
         parts = content.split()
         if len(parts) != 2:
             return False
         sha256, s3_uri = parts
-        if len(sha256) != SHA256_HEX_LEN:
+        if not is_valid_sha256_hex(sha256):
             return False
-        if not s3_uri.startswith("s3://"):
+        expected_key = remote_key_for(dump_path)
+        if s3_uri != expected_marker_uri(expected_key):
             return False
         return True
     except Exception:
         return False
 
 
-def validate_marker_file(marker_path: Path) -> bool:
+def validate_marker_file(marker_path: Path, dump_path: Path) -> bool:
     """Validate a marker file directly by path.
-    Returns True if marker is valid (SHA-256 64 hex + s3:// URI).
+    Returns True if marker is valid (SHA-256 64 hex + s3:// URI matching expected bucket/key).
     Used by systemd service for consistent validation.
     """
-    if not marker_path.is_file():
+    if not marker_path.is_file() or marker_path.is_symlink():
         return False
     try:
         content = marker_path.read_text(encoding="utf-8", errors="replace").strip()
@@ -182,9 +193,10 @@ def validate_marker_file(marker_path: Path) -> bool:
         if len(parts) != 2:
             return False
         sha256, s3_uri = parts
-        if len(sha256) != SHA256_HEX_LEN:
+        if not is_valid_sha256_hex(sha256):
             return False
-        if not s3_uri.startswith("s3://"):
+        expected_key = remote_key_for(dump_path)
+        if s3_uri != expected_marker_uri(expected_key):
             return False
         return True
     except Exception:
@@ -192,14 +204,14 @@ def validate_marker_file(marker_path: Path) -> bool:
 
 
 def mark_uploaded(state_dir: Path, dump_path: Path, checksum: str, key: str) -> Path:
-    if len(checksum) != SHA256_HEX_LEN:
-        raise ValueError(
-            f"Checksum inválido (longitud {len(checksum)} != {SHA256_HEX_LEN}): {checksum}"
-        )
+    if not is_valid_sha256_hex(checksum):
+        raise ValueError(f"Checksum inválido (debe ser 64 caracteres hexadecimales): {checksum}")
+    if key != remote_key_for(dump_path):
+        raise ValueError(f"Clave no coincide con la esperada para el dump: {key}")
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, dump_path)
     tmp = state_dir / f".{marker.name}.{os.getpid()}.tmp"
-    s3_uri = f"s3://{BUCKET}/{key}"
+    s3_uri = expected_marker_uri(key)
     tmp.write_text(f"{checksum}  {s3_uri}\n", encoding="utf-8")
     os.chmod(tmp, 0o600)
     os.replace(tmp, marker)
