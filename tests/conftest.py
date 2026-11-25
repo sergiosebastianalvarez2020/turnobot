@@ -187,6 +187,11 @@ def pg_test_env(request, monkeypatch):
         monkeypatch.delenv("DATABASE_URL", raising=False)
         monkeypatch.setenv("FLASK_ENV", "development")
         _align_sqlite_config(application_app)
+        # Cerrar y remover cualquier pool PostgreSQL residual en la app del módulo
+        # para que get_pg_pool() no lo devuelva (evita AdminShutdown / "database does not exist"
+        # cuando load_current_business intenta resolver un host desconocido en HTTPS).
+        if application_app is not None:
+            close_pg_pool(app=application_app)
         try:
             yield
         finally:
