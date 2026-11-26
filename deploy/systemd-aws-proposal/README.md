@@ -74,13 +74,17 @@ sudo cp /tmp/proposal/turnobot-backup.service.d/s3-upload.conf \
   /etc/systemd/system/turnobot-backup.service.d/s3-upload.conf
 sudo systemctl daemon-reload
 
-# 1) Validación previa en frío con systemd-analyze (sin activar nada)
+# 1) Validación previa en frío con systemd-analyze (sin activar nada).
+# El drop-in NO se pasa como unidad independiente: se valida la unidad principal
+# turnobot-backup.service (ya existente en AWS; la propuesta solo añade su
+# drop-in) y systemd carga turnobot-backup.service.d/s3-upload.conf desde la
+# ruta de drop-ins.
 systemd-analyze verify \
   /etc/systemd/system/turnobot-{reminders,retry-notifications,backup-prune,backup-verify}.{service,timer} \
+  /etc/systemd/system/turnobot-backup.service \
   /etc/systemd/system/turnobot-backup-s3.service \
   /etc/systemd/system/turnobot-backup-s3-recovery.service \
-  /etc/systemd/system/turnobot-backup-s3-recovery.timer \
-  /etc/systemd/system/turnobot-backup.service.d/s3-upload.conf
+  /etc/systemd/system/turnobot-backup-s3-recovery.timer
 
 # 2) Prueba de una sola pasada de cada script SIN tocar scheduling (sudo del operador)
 sudo -u ubuntu env $(cat /etc/turnobot.env | xargs) $(cat /etc/turnobot-monitoring.env | xargs) \

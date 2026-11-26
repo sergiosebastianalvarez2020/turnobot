@@ -39,11 +39,14 @@
 ## Verificación operativa propuesta (sin ejecutar ahora)
 
 ```bash
+# El drop-in se valida a través de su unidad principal, no como unidad suelta:
+# systemd carga turnobot-backup.service.d/s3-upload.conf al verificar
+# turnobot-backup.service.
 systemd-analyze verify \
+  /etc/systemd/system/turnobot-backup.service \
   /etc/systemd/system/turnobot-backup-s3.service \
   /etc/systemd/system/turnobot-backup-s3-recovery.service \
-  /etc/systemd/system/turnobot-backup-s3-recovery.timer \
-  /etc/systemd/system/turnobot-backup.service.d/s3-upload.conf
+  /etc/systemd/system/turnobot-backup-s3-recovery.timer
 systemctl status turnobot-backup-s3.service --no-pager
 journalctl -u turnobot-backup-s3.service -n 200 --no-pager
 find /home/ubuntu/turnobot/backups_pg -name 'turnobot-pg-*.dump' -type f | sort
