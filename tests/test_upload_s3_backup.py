@@ -445,7 +445,7 @@ def test_is_upload_done_rejects_symlink_to_valid_marker(sample_dump: Path, tmp_p
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, sample_dump)
     expected_key = remote_key_for(sample_dump)
-    valid_sha = "a" * 64
+    valid_sha = sha256_file(sample_dump)
     expected_uri = f"s3://{BUCKET}/{expected_key}"
 
     # Crear marcador válido
@@ -516,7 +516,7 @@ def test_validate_marker_file_rejects_symlinks(sample_dump: Path, tmp_path: Path
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, sample_dump)
     expected_key = remote_key_for(sample_dump)
-    valid_sha = "a" * 64
+    valid_sha = sha256_file(sample_dump)
     expected_uri = f"s3://{BUCKET}/{expected_key}"
 
     # Marcador válido
