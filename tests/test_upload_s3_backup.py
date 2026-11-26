@@ -1163,7 +1163,7 @@ def test_main_rechecks_marker_under_lock(
     """Si otra ejecución ya subió el dump, no se repite la subida."""
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    mark_uploaded(state_dir, sample_dump, "c" * 64, remote_key_for(sample_dump))
+    mark_uploaded(state_dir, sample_dump, sha256_file(sample_dump), remote_key_for(sample_dump))
 
     with patch("scripts.upload_s3_backup.s3_client") as mock_client:
         code = s3_backup_main([str(sample_dump), "--state-dir", str(state_dir)])
