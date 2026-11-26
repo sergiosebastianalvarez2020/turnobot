@@ -162,47 +162,40 @@ Dos procesos concurrentes podrían:
 - Ambos subirlo a S3 (duplicado de ancho de banda y tiempo)
 - Ambos escribir el mismo marcador (seguro por `os.replace()`)
 
-**Solución implementada**: **Lock exclusivo con `flock -n -E 75` envolviendo `ExecStart` + Timer de recuperación**
+**Solución implementada**: **Lock exclusivo dentro de `upload_s3_backup.py` (fcntl.flock) + timer de recuperación**
 
-1. **Lock `flock -n -E 75` envolviendo `ExecStart` en `turnobot-backup-s3.service`**:
-   - `ExecStart=/bin/bash -c '... /usr/bin/flock -n -E 75 /run/lock/turnobot-s3-upload.lock /bin/bash -c "..." ...'`
-   - `flock` se ejecuta como comando principal que envuelve TODO el script de subida.
-   - El lock se mantiene durante **toda la ejecución** de `upload_s3_backup.py`.
-   - `-n -E 75` (non-blocking, exit code 75): si el lock está tomado, `flock` sale **inmediatamente con código 75** sin ejecutar la subida.
-   - Wrapper bash captura el código de salida: **75 -> 0** (lock ocupado, sin alerta), **0 -> 0** (éxito), **otro -> propaga** (error real activa OnFailure).
-   - **`flock` se ejecuta dentro de un `if`** (`if /usr/bin/flock ...; then exit 0; else flock_exit=$?; ... fi`). Con `set -euo pipefail`, ejecutar `flock` como comando suelto y capturar `$?` después nunca funciona: un 75 (o cualquier fallo) aborta el bash antes de llegar a `flock_exit=$?`, dejando el wrapper y `OnFailure` con el código crudo. La forma `if` desactiva `errexit` para ese comando, permitiendo convertir 75 -> 0 y propagar el resto sin alterar `set -e`.
-   - El drop-in del backup local usa `ExecStartPost=+/bin/bash -c '/bin/systemctl start --no-block turnobot-backup-s3.service || true'`, así que un fallo por lock (exit 0) **no convierte el backup local exitoso en fallido** ni dispara `OnFailure`.
-   - El lock se libera automáticamente al terminar el proceso (incluye señales SIGTERM/SIGKILL por timeout), sin locks abandonados.
+1. **Lock en el propio script**: `upload_lock()` abre `/run/lock/turnobot-s3-upload.lock` y aplica `fcntl.flock(fd, LOCK_EX | LOCK_NB)`; el descriptor permanece abierto durante **toda la subida** y se cierra en un `finally`.
+   - Funciona igual para ejecución directa y para systemd. Ya no hay wrapper `flock` en `ExecStart`: eso producía una doble adquisición del mismo lock y, además, invocar `flock` sin un comando hijo no mantiene el lock durante la subida.
+   - `-E 75` de `flock` **no** convierte 75 en éxito: 75 es el código de "lock ocupado". El script devuelve 75 en ese caso y los servicios lo tratan como omisión del dump (sin `OnFailure`).
+   - Error al adquirir el lock (falta `fcntl`, `/run/lock` inexistente o sin permisos): código 6 con mensaje en stderr; activa `OnFailure`. No se disfraza de "ocupado".
+   - Fallo real de S3/verificación/marcador: códigos 6/7/8; se propaga y activa `OnFailure`.
 
 2. **Timer de recuperación `turnobot-backup-s3-recovery.timer`** (cada 30 min):
-   - Servicio asociado: `turnobot-backup-s3-recovery.service`
-   - Usa **el mismo lock** (`/run/lock/turnobot-s3-upload.lock`) para serializar con la subida principal.
-   - Mismo wrapper bash (con `flock` dentro de `if`): **75 -> 0** (lock ocupado, salida silenciosa sin OnFailure), **0 -> 0** (éxito), **otro -> propaga** (error real activa OnFailure).
-   - Si adquiere el lock, ejecuta la recuperación completa manteniendo el lock durante todo el proceso.
-   - `Persistent=true` + `OnBootSec=5min`: recupera pendientes tras reinicio.
+   - Servicio asociado: `turnobot-backup-s3-recovery.service`, sin wrapper `flock`; usa el mismo lock desde Python.
+   - Códigos: **75 -> se omite sin alerta**, **0 -> éxito**, **otro -> error real**.
+   - `OnBootSec=5min` dispara 5 minutos después del arranque; `OnUnitActiveSec=30min` cuenta desde la última activación del servicio.
+   - `Persistent=true` solo tiene efecto con `OnCalendar`; con `OnUnitActiveSec` no recupera disparos perdidos durante el apagado.
    - `RandomizedDelaySec=2min`: evita choques exactos con otras unidades.
 
 **Comportamiento ante solape**:
 - Backup local termina → dispara S3 service (vía `ExecStartPost`)
-- Si S3 anterior sigue corriendo: `flock -n -E 75` falla → wrapper convierte a exit 0 → backup local sigue siendo exitoso (`|| true`)
+- Si S3 anterior sigue corriendo: el nuevo `main()` devuelve 75 sin subir; el servicio registra `S3_UPLOAD_SKIPPED_BUSY` y no marca fallo.
 - Timer de recuperación (30 min) o próximo backup diario reintenta → lock libre → procesa todos los pendientes (lista construida comprobando `validate_marker_file()`)
 
 **Garantías**:
-1. **Sin subidas duplicadas concurrentes**: `flock` serializa el acceso al directorio de estado y a S3 durante **todo el proceso de subida**.
+1. **Sin subidas duplicadas concurrentes**: un único lock `flock(2)` por proceso serializa el estado local y S3 durante **toda la subida**.
 2. **Sin backups perdidos**: Los pendientes quedan registrados por ausencia de marcador válido; la siguiente ejecución (recuperación o backup diario) los procesa.
 3. **Backup local independiente**: Fallo/lock S3 nunca afecta el estado del backup local.
-4. **Sin locks abandonados**: `flock` libera el lock al terminar el proceso (incluye señales SIGTERM/SIGKILL por timeout).
-5. **Recuperación automática**: Timer cada 30 min + `Persistent=true` tras reboot.
+4. **Sin locks abandonados**: el descriptor se cierra en `finally` ante excepciones y retornos normales; si el proceso termina por señal (SIGTERM/SIGKILL), el kernel libera el lock automáticamente al cerrar el descriptor.
+5. **Recuperación automática**: Timer cada 30 min + `OnBootSec=5min` tras reboot.
 6. **Errores reales propagados**: Cualquier fallo de subida (red, S3, permisos) propaga su código de salida → systemd activa `OnFailure`.
 
-**Por qué `ExecStartPre` NO funciona**: `ExecStartPre=/usr/bin/flock -n ...` ejecuta `flock` como proceso separado que adquiere y **libera inmediatamente** el lock al terminar. El `ExecStart` real corre SIN protección. La solución correcta es envolver `ExecStart` con `flock` para que el lock persista durante toda la subida.
-
-**Por qué `flock -n -E 75` y no solo `-n`**: Con `-n` solo, `flock` devuelve 1 tanto para "lock ocupado" como para otros errores. Con `-E 75`, el código 75 es **exclusivo** para "lock ocupado", permitiendo al wrapper distinguir: 75 -> 0 (sin alerta), 0 -> 0 (éxito), cualquier otro -> error real -> OnFailure.
+**Por qué no `ExecStartPre` ni un wrapper `flock`**: un proceso `flock` separado adquiere y libera el lock al terminar, dejando el `ExecStart` real sin protección; envolver además el script duplica la adquisición. El lock se mantiene en el mismo proceso que sube.
 
 **Alternativas evaluadas y descartadas**:
 - **Cola explícita (ficheros/BD)**: Complejidad innecesaria; los marcadores ya son una cola implícita robusta.
-- **`flock` bloqueante (`-w`)**: Podría bloquear systemd indefinidamente; `-n` es fail-fast y delega la reentrada al timer de recuperación.
-- **`systemd-run --property=ExecStartPre=...`**: Más complejo de operar; la unidad estática con `ExecStart` envuelto es más auditable y versionable.
+- **`flock` bloqueante (`-w`)**: Podría bloquear systemd indefinidamente; el lock no bloqueante delega la reentrada al timer de recuperación.
+- **`systemd-run`**: Más complejo de operar; la unidad estática es más auditable y versionable.
 
 ## Permisos IAM requeridos (instancia EC2 vía instance profile)
 

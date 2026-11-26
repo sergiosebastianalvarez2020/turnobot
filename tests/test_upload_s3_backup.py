@@ -7,9 +7,12 @@ subida y verificación remota, aislando completamente las llamadas a AWS mediant
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 import platform
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,11 +28,13 @@ from botocore.exceptions import ConnectionError as BotocoreConnectionError
 from scripts.upload_s3_backup import (
     BUCKET,
     EXIT_FILE_INVALID,
+    EXIT_LOCK_BUSY,
     EXIT_OK,
     EXIT_PG_RESTORE,
     EXIT_STATE,
     EXIT_UPLOAD,
     UPLOAD_CONFIG,
+    UploadLockBusy,
     download_object,
     head_object,
     is_retryable,
@@ -40,6 +45,7 @@ from scripts.upload_s3_backup import (
     remote_key_for,
     retry_call,
     sha256_file,
+    upload_lock,
     upload_object,
     validate_dump_path,
     validate_marker_file,
@@ -47,6 +53,8 @@ from scripts.upload_s3_backup import (
     write_sidecar_atomic,
 )
 from scripts.upload_s3_backup import main as s3_backup_main
+
+FCNTL: Any = importlib.import_module("fcntl") if platform.system() == "Linux" else None
 
 
 @pytest.fixture
@@ -57,6 +65,12 @@ def sample_dump(tmp_path: Path) -> Path:
     content = b"PGDMP_TEST_CONTENT_" * 100
     dump_file.write_bytes(content)
     return dump_file
+
+
+@pytest.fixture
+def no_real_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Aísla main() del lock del sistema; el lock real se prueba por separado."""
+    monkeypatch.setattr("scripts.upload_s3_backup.upload_lock", lambda *a, **k: nullcontext())
 
 
 # ============================================================
@@ -161,7 +175,7 @@ def test_is_upload_done_missing_marker(sample_dump: Path, tmp_path: Path):
 
 
 def test_is_upload_done_corrupted_marker_wrong_format(sample_dump: Path, tmp_path: Path):
-    """Marcador con formato incorrecto (más/fewer partes) retorna False."""
+    """Marcador con formato incorrecto (distinto número de partes) retorna False."""
     state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = marker_path_for(state_dir, sample_dump)
@@ -435,10 +449,6 @@ def test_marker_from_another_backup_never_valid(sample_dump: Path, tmp_path: Pat
     platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
     reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
 )
-@pytest.mark.skipif(
-    platform.system() == "Windows" and not os.environ.get("PYTEST_ALLOW_SYMLINKS"),
-    reason="Windows no soporta symlinks sin privilegios elevados; establecer PYTEST_ALLOW_SYMLINKS=1 para forzar",
-)
 def test_is_upload_done_rejects_symlink_to_valid_marker(sample_dump: Path, tmp_path: Path):
     """is_upload_done rechaza symlink aunque apunte a marcador válido."""
     state_dir = tmp_path / "state"
@@ -576,7 +586,7 @@ def test_mark_uploaded_preserves_atomic_write_and_permissions(sample_dump: Path,
     state_dir = tmp_path / "state"
     marker = mark_uploaded(state_dir, sample_dump, "c" * 64, remote_key_for(sample_dump))
 
-    # El archivo final existe y no hay temporales残留
+    # El archivo final existe y no quedan temporales
     assert marker.exists()
     tmp_files = list(state_dir.glob(".*.tmp"))
     assert len(tmp_files) == 0
@@ -1007,7 +1017,7 @@ def test_verify_remote_fails_on_hash_mismatch(sample_dump: Path):
 # ============================================================
 
 
-def test_main_cli_flow_success(sample_dump: Path, tmp_path: Path):
+def test_main_cli_flow_success(sample_dump: Path, tmp_path: Path, no_real_lock: None):
     """Flujo completo exitoso de main(), con marcador local aislado."""
     state_dir = tmp_path / "state"
     with (
@@ -1024,13 +1034,13 @@ def test_main_cli_flow_success(sample_dump: Path, tmp_path: Path):
         assert is_upload_done(state_dir, sample_dump) is True
 
 
-def test_main_cli_invalid_path():
+def test_main_cli_invalid_path(no_real_lock: None):
     """Retorna EXIT_FILE_INVALID ante un archivo inexistente."""
     exit_code = s3_backup_main(["archivo_inexistente.dump"])
     assert exit_code == EXIT_FILE_INVALID
 
 
-def test_main_cli_restore_fails(sample_dump: Path):
+def test_main_cli_restore_fails(sample_dump: Path, no_real_lock: None):
     """Retorna EXIT_PG_RESTORE si pg_restore --list falla."""
     with patch(
         "scripts.upload_s3_backup.run_pg_restore_list", side_effect=RuntimeError("Corrupted dump")
@@ -1039,7 +1049,7 @@ def test_main_cli_restore_fails(sample_dump: Path):
         assert exit_code == EXIT_PG_RESTORE
 
 
-def test_main_cli_upload_fails(sample_dump: Path):
+def test_main_cli_upload_fails(sample_dump: Path, no_real_lock: None):
     """Retorna EXIT_UPLOAD si la subida a S3 falla."""
     with (
         patch("scripts.upload_s3_backup.run_pg_restore_list"),
@@ -1055,7 +1065,9 @@ def test_main_cli_upload_fails(sample_dump: Path):
         assert exit_code == EXIT_UPLOAD
 
 
-def test_main_cli_fails_if_marker_write_fails(sample_dump: Path, tmp_path: Path):
+def test_main_cli_fails_if_marker_write_fails(
+    sample_dump: Path, tmp_path: Path, no_real_lock: None
+):
     """No reporta éxito si la verificación remota pasó pero el marcador local falla."""
     state_dir = tmp_path / "state"
     with (
@@ -1069,3 +1081,93 @@ def test_main_cli_fails_if_marker_write_fails(sample_dump: Path, tmp_path: Path)
 
         exit_code = s3_backup_main([str(sample_dump), "--state-dir", str(state_dir)])
         assert exit_code == EXIT_STATE
+
+
+# ============================================================
+# Pruebas del lock exclusivo de subida
+# ============================================================
+
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="FCNTL.flock requiere Linux")
+def test_upload_lock_is_exclusive_and_released(tmp_path: Path):
+    """El lock real bloquea a un segundo proceso y se libera al salir."""
+    lock_path = str(tmp_path / "upload.lock")
+    assert not os.path.exists(lock_path)
+
+    with upload_lock(lock_path):
+        assert os.path.exists(lock_path)
+        probe = os.open(lock_path, os.O_RDWR)
+        try:
+            with pytest.raises(BlockingIOError):
+                FCNTL.flock(probe, FCNTL.LOCK_EX | FCNTL.LOCK_NB)
+        finally:
+            os.close(probe)
+
+    probe = os.open(lock_path, os.O_RDWR)
+    try:
+        FCNTL.flock(probe, FCNTL.LOCK_EX | FCNTL.LOCK_NB)
+    finally:
+        os.close(probe)
+
+
+@pytest.mark.skipif(platform.system() != "Linux", reason="FCNTL.flock requiere Linux")
+def test_upload_lock_released_on_exception(tmp_path: Path):
+    """Una excepción dentro del bloque no deja el lock abandonado."""
+    lock_path = str(tmp_path / "upload.lock")
+    with pytest.raises(RuntimeError, match="boom"):
+        with upload_lock(lock_path):
+            raise RuntimeError("boom")
+
+    probe = os.open(lock_path, os.O_RDWR)
+    try:
+        FCNTL.flock(probe, FCNTL.LOCK_EX | FCNTL.LOCK_NB)
+    finally:
+        os.close(probe)
+
+
+def test_main_returns_busy_without_upload(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], sample_dump: Path
+):
+    """Lock ocupado: código 75, sin llamar a S3 y sin ocultarlo en el log."""
+
+    def busy_lock(*args, **kwargs):
+        raise UploadLockBusy("ocupado")
+
+    monkeypatch.setattr("scripts.upload_s3_backup.upload_lock", busy_lock)
+    with patch("scripts.upload_s3_backup.s3_client") as mock_client:
+        code = s3_backup_main([str(sample_dump)])
+
+    assert code == EXIT_LOCK_BUSY
+    mock_client.assert_not_called()
+    assert "S3_UPLOAD_SKIPPED_BUSY=1" in capsys.readouterr().out
+
+
+def test_main_reports_lock_acquisition_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], sample_dump: Path
+):
+    """Error real al adquirir el lock: se reporta, no se disfraza de busy."""
+
+    def broken_lock(*args, **kwargs):
+        raise PermissionError("sin permisos en /run/lock")
+
+    monkeypatch.setattr("scripts.upload_s3_backup.upload_lock", broken_lock)
+    code = s3_backup_main([str(sample_dump)])
+
+    assert code == EXIT_UPLOAD
+    assert "no se pudo adquirir el lock" in capsys.readouterr().err
+
+
+def test_main_rechecks_marker_under_lock(
+    sample_dump: Path, tmp_path: Path, no_real_lock: None, capsys: pytest.CaptureFixture[str]
+):
+    """Si otra ejecución ya subió el dump, no se repite la subida."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    mark_uploaded(state_dir, sample_dump, "c" * 64, remote_key_for(sample_dump))
+
+    with patch("scripts.upload_s3_backup.s3_client") as mock_client:
+        code = s3_backup_main([str(sample_dump), "--state-dir", str(state_dir)])
+
+    assert code == EXIT_OK
+    mock_client.assert_not_called()
+    assert "S3_UPLOAD_SKIPPED_DONE" in capsys.readouterr().out

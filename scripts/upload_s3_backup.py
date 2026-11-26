@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib
 import os
 import re
 import shutil
@@ -20,7 +21,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import Any
 
 import boto3  # type: ignore[import-untyped]
 from boto3.s3.transfer import TransferConfig  # type: ignore[import-untyped]
@@ -57,6 +61,8 @@ EXIT_CHECKSUM = 5
 EXIT_UPLOAD = 6
 EXIT_REMOTE_VERIFY = 7
 EXIT_STATE = 8
+EXIT_LOCK_BUSY = 75
+LOCK_PATH = "/run/lock/turnobot-s3-upload.lock"
 
 UPLOAD_CONFIG = TransferConfig(
     multipart_threshold=MULTIPART_THRESHOLD,
@@ -75,6 +81,28 @@ RETRYABLE_ERROR_CODES = {
     "RequestThrottled",
     "TooManyRequests",
 }
+
+
+class UploadLockBusy(RuntimeError):
+    """Otra instancia ya tiene el lock exclusivo de subida."""
+
+
+@contextmanager
+def upload_lock(lock_path: str = LOCK_PATH) -> Iterator[None]:
+    """Mantiene un lock flock exclusivo no bloqueante durante toda la subida."""
+    try:
+        fcntl: Any = importlib.import_module("fcntl")
+    except ImportError as exc:
+        raise RuntimeError("fcntl no disponible: el lock S3 requiere Linux") from exc
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise UploadLockBusy(f"lock ocupado: {lock_path}") from exc
+        yield
+    finally:
+        os.close(fd)
 
 
 def sha256_file(path: Path) -> str:
@@ -383,13 +411,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+def _run_upload(args: argparse.Namespace) -> int:
     try:
         dump_path = validate_dump_path(args.dump)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return EXIT_FILE_INVALID
+
+    if is_upload_done(args.state_dir, dump_path):
+        print(f"S3_UPLOAD_SKIPPED_DONE dump={dump_path}", flush=True)
+        return EXIT_OK
 
     try:
         run_pg_restore_list(dump_path)
@@ -446,6 +477,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"UPLOAD_MARKER_OK {marker}", flush=True)
     print("REMOTE_VERIFICATION=OK", flush=True)
     return EXIT_OK
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    stack = ExitStack()
+    try:
+        stack.enter_context(upload_lock())
+    except UploadLockBusy:
+        print("S3_UPLOAD_SKIPPED_BUSY=1", flush=True)
+        return EXIT_LOCK_BUSY
+    except Exception as exc:
+        print(f"ERROR: no se pudo adquirir el lock: {exc}", file=sys.stderr, flush=True)
+        return EXIT_UPLOAD
+
+    try:
+        return _run_upload(args)
+    finally:
+        stack.close()
 
 
 if __name__ == "__main__":
