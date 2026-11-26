@@ -1,0 +1,22 @@
+[Unit]
+Description=TurnoBot - Recuperación de backups S3 pendientes
+# Timer asociado: turnobot-backup-s3-recovery.timer (cada 30 min)
+# No requiere red inmediata; OnFailure notifica si falla la recuperación.
+OnFailure=turnobot-failure-notify@%N.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/turnobot
+Environment=PYTHONPATH=/home/ubuntu/turnobot
+UMask=0077
+# El mismo lock que la subida principal, adquirido dentro de
+# upload_s3_backup.py (fcntl.flock). No se envuelve con flock aqui: eso
+# duplicaria la adquisicion y el script nunca podria entrar.
+# Codigo 75 = lock ocupado: se omite ese dump sin marcar fallo.
+# Cualquier otro codigo cuenta como fallo real y activa OnFailure.
+ExecStart=/bin/bash -c 'set -euo pipefail; dir=/home/ubuntu/turnobot/backups_pg; state=/home/ubuntu/turnobot/state/s3_backup_uploads; py=/home/ubuntu/turnobot/.venv312/bin/python; mkdir -p "$state"; shopt -s nullglob; pending=(); for f in "$dir"/turnobot-pg-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9].dump; do [ -L "$f" ] && continue; [ -f "$f" ] || continue; [ -s "$f" ] || continue; base="$(basename "$f")"; marker="$state/${base}.uploaded"; if "$py" -c "import sys; sys.path.insert(0, \\\"/home/ubuntu/turnobot\\\"); from scripts.upload_s3_backup import validate_marker_file; from pathlib import Path; sys.exit(0 if validate_marker_file(Path(sys.argv[1]), Path(sys.argv[2])) else 1)" "$marker" "$f"; then continue; fi; pending+=("$f"); done; if [ ${#pending[@]} -eq 0 ]; then echo "S3_RECOVERY_PENDING=0"; exit 0; fi; failed=0; uploaded=0; for ((i=${#pending[@]}-1; i>=0; i--)); do f="${pending[$i]}"; echo "S3_RECOVERY_PENDING=${#pending[@]} uploading=$(basename "$f")"; if "$py" /home/ubuntu/turnobot/scripts/upload_s3_backup.py "$f" --state-dir "$state"; then uploaded=$((uploaded+1)); else rc=$?; if [ "$rc" -eq 75 ]; then echo "S3_RECOVERY_SKIPPED_BUSY file=$f"; else echo "S3_ERROR recovery_failed file=$f rc=$rc" >&2; failed=$((failed+1)); fi; fi; done; echo "S3_RECOVERY_SUMMARY uploaded=$uploaded failed=$failed pending_initial=${#pending[@]}"; [ "$failed" -eq 0 ]'
+TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true

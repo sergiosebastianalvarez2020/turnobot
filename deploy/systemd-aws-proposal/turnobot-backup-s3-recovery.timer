@@ -1,0 +1,20 @@
+[Unit]
+Description=Timer de recuperación de backups S3 pendientes cada 30 min
+# Sin Requires=: systemd asocia implícitamente el timer con su servicio homónimo
+# (turnobot-backup-s3-recovery.service) y lo activa por nombre. Una dependencia
+# explícita hacia un Type=oneshot no aporta nada aquí y solo acopla el arranque
+# del timer al estado del servicio. Comportamiento esperado (no validado en AWS):
+# OnBootSec=5min tras arrancar; OnUnitActiveSec=30min cuenta desde la ultima
+# activacion del servicio, no desde que quedo inactivo. Persistent=true solo
+# recupera disparos perdidos en timers OnCalendar; con OnUnitActiveSec no tiene
+# efecto: tras un reinicio el conteo se reinicia con OnBootSec.
+# RandomizedDelaySec=2min desincroniza el disparo.
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

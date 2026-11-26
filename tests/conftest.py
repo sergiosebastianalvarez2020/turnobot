@@ -21,6 +21,7 @@ import psycopg
 import pytest
 
 from database import database as _database_module
+from database.pg_pool import close_pg_pool
 from tests_pg._helpers import (
     TURNOBOT_PG_URL_KEY,
     apply_current_schema,
@@ -45,10 +46,15 @@ _default_test_db_name: str | None = None
 def _drop_default_test_database() -> None:
     """Elimina la base de datos de sesión por defecto. Idempotente."""
     global _default_test_db_name
-    if not _default_test_db_name:
+    if not _default_test_db_name or not TURNOBOT_PG_URL:
+        _default_test_db_name = None
         return
     try:
         drop_test_database(TURNOBOT_PG_URL, _default_test_db_name)
+    except Exception as exc:
+        # La limpieza de sesión no debe ocultar el resultado del test si la base
+        # temporal ya no existe o PostgreSQL no está disponible.
+        print(f"ADVERTENCIA: no se pudo eliminar la base temporal {_default_test_db_name}: {exc}")
     finally:
         _default_test_db_name = None
 
@@ -181,6 +187,11 @@ def pg_test_env(request, monkeypatch):
         monkeypatch.delenv("DATABASE_URL", raising=False)
         monkeypatch.setenv("FLASK_ENV", "development")
         _align_sqlite_config(application_app)
+        # Cerrar y remover cualquier pool PostgreSQL residual en la app del módulo
+        # para que get_pg_pool() no lo devuelva (evita AdminShutdown / "database does not exist"
+        # cuando load_current_business intenta resolver un host desconocido en HTTPS).
+        if application_app is not None:
+            close_pg_pool(app=application_app)
         try:
             yield
         finally:
@@ -297,7 +308,10 @@ def app(pg_test_database: str, monkeypatch):
 
     app = create_app()
     app.config["TESTING"] = True
-    return app
+    try:
+        yield app
+    finally:
+        close_pg_pool(app=app)
 
 
 @pytest.fixture
@@ -342,10 +356,11 @@ def pg_isolate_module_app(request, monkeypatch):
     necesitan el pool del módulo apuntando a una base aislada. Este fixture:
     1. Crea una base temporal
     2. Aplica schema + seed
-    3. Aparta (sin cerrarlo) el pool anterior del module-level app
-    4. Crea un nuevo pool con la base temporal
-    5. Al terminar, cierra el pool temporal, destruye la base y restaura
-       configuración, DATABASE_PATH, entorno y referencias de pool originales.
+    3. Cierra el pool anterior del module-level app, si existe
+    4. Crea un nuevo pool con la base temporal (siempre, haya o no pool previo)
+    5. Al terminar, cierra el pool temporal (exista o no un pool previo),
+       destruye la base y restaura configuración, DATABASE_PATH, entorno y
+       referencias de pool originales utilizables.
 
     NOTA: Tests que usan el fixture `app` (per-test) no se ven afectados porque
     ese fixture crea una app nueva con su propio pool.
@@ -388,17 +403,20 @@ def pg_isolate_module_app(request, monkeypatch):
     old_pool = application_app.extensions.get("pg_pool")
     orig_global_pool = pg_pool._global_pool
     orig_global_pool_app_owned = pg_pool._global_pool_app_owned
-    pool_swapped = False
+    # El fixture SIEMPRE crea un pool nuevo para la base temporal, exista o no un
+    # pool anterior. Por eso el cierre del temporal no puede depender de
+    # `old_pool is not None`: con el module-level app sin pool previo el temporal
+    # quedaría abierto al terminar el test.
+    temporary_pool_created = False
     try:
         test_conninfo = build_test_db_conninfo(TURNOBOT_PG_URL, dbname)
         apply_current_schema(test_conninfo)
         seed_standard_test_data(test_conninfo)
         test_url = conninfo_to_url(test_conninfo)
 
-        # Apartar el pool anterior sin cerrarlo: puede pertenecer a otro test.
+        # Cerrar el pool anterior si existe en esta aplicación antes de reemplazarlo.
         if old_pool is not None:
-            application_app.extensions.pop("pg_pool", None)
-        pool_swapped = True
+            close_pg_pool(app=application_app)
 
         # Create new pool pointing to per-test database
         monkeypatch.setenv("DATABASE_URL", test_url)
@@ -408,6 +426,7 @@ def pg_isolate_module_app(request, monkeypatch):
         if new_pool is None:
             raise RuntimeError("init_pg_pool no creó el pool PostgreSQL para el test")
         application_app.extensions["pg_pool"] = new_pool
+        temporary_pool_created = True
 
         yield
     finally:
@@ -418,9 +437,9 @@ def pg_isolate_module_app(request, monkeypatch):
         # es idempotente y seguro invocarlo aunque la creacion haya fallado.
         try:
             if created:
-                if pool_swapped:
-                    # Cerrar SOLO el pool temporal de esta app (nunca el global
-                    # ni el pool anterior, que fue apartado sin cerrar).
+                if temporary_pool_created:
+                    # Cerrar SOLO el pool temporal de esta app (nunca un pool
+                    # global compartido que no pertenezca al fixture).
                     try:
                         close_pg_pool(app=application_app)
                     finally:

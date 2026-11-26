@@ -8,3 +8,4 @@ psycopg-pool==3.2.4
 dnspython==2.9.2
 
 Pillow==13.0.0
+boto3==1.44.10
