@@ -52,22 +52,35 @@ explícita y ventana de cutover.
    unidad activa en OCI) corren sin `--dir`, con lo cual operan sobre `database/backups`
    (SQLite heredado) y **no podan** los dumps PostgreSQL (evidenciado en OCI: journal prune
    del 26/10 solo preserva, y `backups_pg` acumula 29 dumps).
-4. `OnFailure=turnobot-failure-notify@%N.service` va inline en cada `[Unit]` (sin drop-ins),
-   alineado con el template del healthcheck ya instalado en AWS.
+4. `OnFailure=turnobot-failure-notify@%N.service` va inline en cada `[Unit]` (sin drop-ins
+   para `OnFailure`), alineado con el template del healthcheck ya instalado en AWS. El único
+   drop-in de esta propuesta es `turnobot-backup.service.d/s3-upload.conf` (`ExecStartPost`
+   que dispara la subida S3).
 5. Timer de poda: `After=network.target turnobot-backup.service` mantenido (paridad OCI).
 
 ## Comandos de instalación propuestos (NO ejecutar sin autorización)
 
 ```bash
-# Copiar los 10 archivos a AWS (desde la máquina local; ajustar rutas)
-scp -i '<clave AWS>' deploy/systemd-aws-proposal/* ubuntu@18.191.0.23:/tmp/proposal/
+# Copiar los 12 archivos a AWS (desde la máquina local; ajustar rutas).
+# Se incluye el subdirectorio del drop-in turnobot-backup.service.d/, que un
+# comodín plano (`deploy/systemd-aws-proposal/*`) NO copiaría.
+scp -r -i '<clave AWS>' deploy/systemd-aws-proposal/. ubuntu@18.191.0.23:/tmp/proposal/
 
 # En AWS (requiere sudo, previa revisión visual de cada archivo)
 sudo cp /tmp/proposal/*.service /tmp/proposal/*.timer /etc/systemd/system/
+# systemd exige <unidad>.service.d/<archivo>.conf para los drop-ins.
+sudo install -d /etc/systemd/system/turnobot-backup.service.d
+sudo cp /tmp/proposal/turnobot-backup.service.d/s3-upload.conf \
+  /etc/systemd/system/turnobot-backup.service.d/s3-upload.conf
 sudo systemctl daemon-reload
 
 # 1) Validación previa en frío con systemd-analyze (sin activar nada)
-systemd-analyze verify /etc/systemd/system/turnobot-{reminders,retry-notifications,backup-prune,backup-verify,backup-s3-recovery}.{service,timer}
+systemd-analyze verify \
+  /etc/systemd/system/turnobot-{reminders,retry-notifications,backup-prune,backup-verify}.{service,timer} \
+  /etc/systemd/system/turnobot-backup-s3.service \
+  /etc/systemd/system/turnobot-backup-s3-recovery.service \
+  /etc/systemd/system/turnobot-backup-s3-recovery.timer \
+  /etc/systemd/system/turnobot-backup.service.d/s3-upload.conf
 
 # 2) Prueba de una sola pasada de cada script SIN tocar scheduling (sudo del operador)
 sudo -u ubuntu env $(cat /etc/turnobot.env | xargs) $(cat /etc/turnobot-monitoring.env | xargs) \

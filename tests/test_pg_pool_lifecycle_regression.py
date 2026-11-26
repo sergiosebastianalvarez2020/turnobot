@@ -244,6 +244,76 @@ def test_pg_isolate_module_app_restauracion_config_tras_excepcion(monkeypatch):
 
 
 @pytest.mark.no_pg
+def test_pg_isolate_module_app_cierra_pool_temporal_sin_pool_previo(monkeypatch):
+    """Sin pool previo, el pool temporal se cierra exactamente una vez en teardown.
+
+    Regresión: el cierre del pool temporal dependía de `old_pool is not None`,
+    pero el fixture crea un pool nuevo aunque no hubiera uno anterior. Sin un
+    pool previo, el temporal quedaba abierto al terminar el test.
+    """
+    import app as application_mod
+    import database.database as database
+    import database.pg_pool as pg_pool_mod
+    from tests.conftest import pg_isolate_module_app as isolate_fixture
+
+    application_app = application_mod.app
+    old_config = dict(application_app.config)
+    old_db_path = database.DATABASE_PATH
+    orig_global = pg_pool_mod._global_pool
+    orig_owned = pg_pool_mod._global_pool_app_owned
+    created: list[_FakePool] = []
+
+    monkeypatch.setattr("tests.conftest.TURNOBOT_PG_URL", "postgresql://test@localhost/test")
+    monkeypatch.setattr("tests.conftest.create_test_database", lambda *a, **k: None)
+    monkeypatch.setattr("tests.conftest.apply_current_schema", lambda *a, **k: None)
+    monkeypatch.setattr("tests.conftest.seed_standard_test_data", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "tests.conftest._drop_test_database_with_real_connection", lambda *a, **k: None
+    )
+
+    def _create(*args, **kwargs):
+        pool = _FakePool()
+        created.append(pool)
+        return pool
+
+    class _Node:
+        def get_closest_marker(self, name):
+            return None
+
+    class _Request:
+        node = _Node()
+        fixturenames = []
+
+    isolate_impl = isolate_fixture.__wrapped__
+    # Simular el escenario del hallazgo: la app del módulo NO tiene pool previo.
+    application_app.extensions.pop("pg_pool", None)
+    pg_pool_mod._global_pool = None
+    pg_pool_mod._global_pool_app_owned = False
+
+    try:
+        with patch("database.pg_pool.create_pg_pool", side_effect=_create):
+            gen = isolate_impl(_Request(), monkeypatch)
+            next(gen)
+            assert len(created) == 1
+            assert application_app.extensions.get("pg_pool") is created[0]
+            assert created[0].closed is False
+            gen.close()
+    finally:
+        application_app.config.clear()
+        application_app.config.update(old_config)
+        database.DATABASE_PATH = old_db_path
+        application_app.extensions.pop("pg_pool", None)
+        pg_pool_mod._global_pool = orig_global
+        pg_pool_mod._global_pool_app_owned = orig_owned
+
+    assert len(created) == 1
+    assert created[0].closed is True
+    assert created[0].close_calls == 1
+    assert application_app.config.get("DATABASE_URL") == old_config.get("DATABASE_URL")
+    assert database.DATABASE_PATH == old_db_path
+
+
+@pytest.mark.no_pg
 def test_pg_isolate_module_app_global_pool_comportamiento(_pg_app_factory):
     """Cerrar el pool de app limpia respaldo global si era el mismo objeto."""
     import database.pg_pool as pg_pool_mod
