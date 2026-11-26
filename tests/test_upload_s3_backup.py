@@ -1114,9 +1114,13 @@ def test_upload_lock_is_exclusive_and_released(tmp_path: Path):
 def test_upload_lock_released_on_exception(tmp_path: Path):
     """Una excepción dentro del bloque no deja el lock abandonado."""
     lock_path = str(tmp_path / "upload.lock")
-    with pytest.raises(RuntimeError, match="boom"):
+
+    def raise_inside_lock() -> None:
         with upload_lock(lock_path):
             raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        raise_inside_lock()
 
     probe = os.open(lock_path, os.O_RDWR)
     try:
