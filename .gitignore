@@ -25,3 +25,8 @@ run_*.ps1
 
 # Resultados de pruebas visuales (capturas de pantalla)
 tests/visual/results/
+
+# Configuraciones locales de agentes de IA
+.claude/
+.kilo/
+.opencode/
